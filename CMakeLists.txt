@@ -329,3 +329,32 @@ target_link_libraries(copybench PRIVATE d3d12 dxgi d3dcompiler)
 add_executable(splatlab EXCLUDE_FROM_ALL tools/splatlab/splatlab.cpp)
 target_compile_definitions(splatlab PRIVATE NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
 target_link_libraries(splatlab PRIVATE windowscodecs ole32)
+
+# Look-around shaders (src/shaders/Look.hlsl), compiled at build time like the
+# converter's: each entry point a header of bytecode, g_Look_<entry>.
+set(LOOK_HLSL "${CMAKE_SOURCE_DIR}/src/shaders/Look.hlsl")
+set(LOOK_ENTRIES
+    VSFull:vs_5_0 VSSplat:vs_5_0 PSDownFirst:ps_5_0 PSDownNext:ps_5_0 PSGrad:ps_5_0 PSMatchFull:ps_5_0 PSMatchRefine:ps_5_0
+    PSCheck:ps_5_0 PSFill:ps_5_0 PSMedian:ps_5_0 PSSplat:ps_5_0 PSHole:ps_5_0 PSCompose:ps_5_0 PSUnseen:ps_5_0)
+set(LOOK_SHADER_HEADERS)
+foreach(E ${LOOK_ENTRIES})
+    string(REPLACE ":" ";" P "${E}")
+    list(GET P 0 ENTRY)
+    list(GET P 1 PROFILE)
+    set(OUT "${SHADER_OUT_DIR}/Look_${ENTRY}.h")
+    add_custom_command(OUTPUT "${OUT}"
+        COMMAND "${FXC_EXE}" /nologo /T ${PROFILE} /E ${ENTRY} /O3 /Vn g_Look_${ENTRY} /Fh "${OUT}" "${LOOK_HLSL}"
+        DEPENDS "${LOOK_HLSL}"
+        COMMENT "fxc: Look ${ENTRY}"
+        VERBATIM)
+    list(APPEND LOOK_SHADER_HEADERS "${OUT}")
+endforeach()
+set_source_files_properties("${LOOK_HLSL}" PROPERTIES VS_TOOL_OVERRIDE "None")
+
+# looktest: look-around on the GPU, off the screen, scored against a quilt's own
+# views (as tools/splatlab scores the CPU version). Not part of the app:
+#   cmake --build build/x64 --config Release --target looktest
+add_executable(looktest EXCLUDE_FROM_ALL tools/looktest/looktest.cpp src/LookAround.cpp ${LOOK_SHADER_HEADERS})
+target_include_directories(looktest PRIVATE ${CMAKE_SOURCE_DIR}/src ${SHADER_OUT_DIR})
+target_compile_definitions(looktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
+target_link_libraries(looktest PRIVATE d3d11 dxgi user32 windowscodecs ole32)
