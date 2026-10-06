@@ -166,7 +166,7 @@ set_source_files_properties("${CONVERTER_HLSL}" PROPERTIES VS_TOOL_OVERRIDE "Non
 set(LOOK_HLSL "${CMAKE_SOURCE_DIR}/src/shaders/Look.hlsl")
 set(LOOK_ENTRIES
     VSFull:vs_5_0 VSSplat:vs_5_0 PSDownFirst:ps_5_0 PSDownNext:ps_5_0 PSGrad:ps_5_0 PSMatchFull:ps_5_0 PSMatchRefine:ps_5_0
-    PSCheck:ps_5_0 PSFill:ps_5_0 PSMedian:ps_5_0 PSSpread:ps_5_0 PSFine:ps_5_0 PSGuide:ps_5_0 PSFuse:ps_5_0 PSSplat:ps_5_0 PSHole:ps_5_0 PSCompose:ps_5_0 PSUnseen:ps_5_0 PSPlate:ps_5_0 PSFillDown:ps_5_0 PSLKSum:ps_5_0 PSLKSolve:ps_5_0)
+    PSCheck:ps_5_0 PSFill:ps_5_0 PSMedian:ps_5_0 PSSpread:ps_5_0 PSFine:ps_5_0 PSGuide:ps_5_0 PSFuse:ps_5_0 PSDilate:ps_5_0 PSSplat:ps_5_0 PSHole:ps_5_0 PSCompose:ps_5_0 PSUnseen:ps_5_0 PSPlate:ps_5_0 PSFillDown:ps_5_0 PSLKSum:ps_5_0 PSLKSolve:ps_5_0)
 set(LOOK_SHADER_HEADERS)
 foreach(E ${LOOK_ENTRIES})
     string(REPLACE ":" ";" P "${E}")

@@ -68,11 +68,13 @@ namespace srw
         // A trial: a disparity from another matcher in place of the one found here. tex: both eyes side by
         // side at MapSize (R16G16B16A16_FLOAT, .r in that map's texels; the left eye's point is at x - d in
         // the right, the right's at x + d in the left). nullptr: its own again.
-        void SetExternalDisparity(ID3D11Texture2D* tex) { m_extDisp = tex; m_haveMaps = false; }
+        void SetExternalDisparity(ID3D11Texture2D* tex) { m_extDisp = tex; m_haveMaps = false; m_plateHave = false; }   // (the plate was made with the other depth: begun again)
         void MapSize(int eyeW, int eyeH, int& w, int& h) const;
         void SetExternalStage(int s) { m_extStage = s; m_haveMaps = false; }
         void SetFuseBias(float b) { m_fuseBias = b; m_haveMaps = false; }
-        void SetFuseEdge(bool on) { m_fuseEdge = on; m_haveMaps = false; }   // (at a step in the other matcher's map, its answer stands)
+        void SetFuseEdge(bool on) { m_fuseEdge = on; m_haveMaps = false; }
+        void SetFuseReach(float t) { m_fuseReach = t; m_haveMaps = false; }
+        void SetExternalDilate(int texels) { m_extDilate = texels; m_haveMaps = false; }   // (at a step in the other matcher's map, its answer stands)
         void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
         void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
@@ -94,7 +96,7 @@ namespace srw
         ID3D11DeviceContext* m_context = nullptr;
         ID3D11VertexShader*  m_vsFull = nullptr, *m_vsSplat = nullptr;
         ID3D11PixelShader*   m_psDownFirst = nullptr, *m_psDownNext = nullptr, *m_psGrad = nullptr, *m_psMatchFull = nullptr,
-                            *m_psMatchRefine = nullptr, *m_psCheck = nullptr, *m_psFill = nullptr, *m_psMedian = nullptr, *m_psSpread = nullptr, *m_psFine = nullptr, *m_psGuide = nullptr, *m_psFuse = nullptr,
+                            *m_psMatchRefine = nullptr, *m_psCheck = nullptr, *m_psFill = nullptr, *m_psMedian = nullptr, *m_psSpread = nullptr, *m_psFine = nullptr, *m_psGuide = nullptr, *m_psFuse = nullptr, *m_psDilate = nullptr,
                             *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr, *m_psPlate = nullptr, *m_psFillDown = nullptr, *m_psLKSum = nullptr, *m_psLKSolve = nullptr;
         ID3D11Buffer*            m_cb = nullptr;
         ID3D11SamplerState*      m_sampler = nullptr;
@@ -134,6 +136,8 @@ namespace srw
         float m_fuseBias = 0.5f;    // (4: its own is taken where it costs less than this share of the other's)
         Tex   m_extCopy;
         bool  m_fuseEdge = true;
+        int   m_extDilate = 1;      // (with the other matcher's depth: a thing's outline carried this many texels outward -- PSDilate)
+        float m_fuseReach = 1.5f;   // (how far, in texels, its own may be from the other matcher's and still be taken; 0: any distance)
         // (Measured 2026-10-06, quilts: these four together about 1 dB between the eyes, 0.4 beyond them, for 1.7 ms.)
         float m_opt[4] = { 2.0f, 0.02f, 0.01f, 3.0f };
         float m_fineR = 1.0f;       // (3x3: 5x5 measured 0.2 dB more for a millisecond more)

@@ -82,6 +82,8 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (const wchar_t* ff = _wgetenv(L"LOOKTEST_FARFILL")) look.SetFarFill(_wtoi(ff) != 0);
     if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
     if (const wchar_t* fe = _wgetenv(L"LOOKTEST_FUSEEDGE")) look.SetFuseEdge(_wtoi(fe) != 0);
+    if (const wchar_t* fr = _wgetenv(L"LOOKTEST_FUSEREACH")) look.SetFuseReach((float)_wtof(fr));
+    if (const wchar_t* xd = _wgetenv(L"LOOKTEST_DILATE")) look.SetExternalDilate(_wtoi(xd));
     // LOOKTEST_NEURAL: the trained matcher as SR Loom runs it (src/NeuralDepth: ONNX Runtime, the model
     // beside the exe), on this picture -- its depth in place of the look-around's own.
     NeuralDepth neural; ID3D11Texture2D* neuralTex = nullptr;
@@ -275,6 +277,8 @@ static int RunMb(const std::wstring& dir)
     if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
     if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
     if (const wchar_t* fe = _wgetenv(L"LOOKTEST_FUSEEDGE")) look.SetFuseEdge(_wtoi(fe) != 0);
+    if (const wchar_t* fr = _wgetenv(L"LOOKTEST_FUSEREACH")) look.SetFuseReach((float)_wtof(fr));
+    if (const wchar_t* xd = _wgetenv(L"LOOKTEST_DILATE")) look.SetExternalDilate(_wtoi(xd));
     if (const wchar_t* dp = _wgetenv(L"LOOKTEST_DUMPPAIR")) { SavePNG(std::wstring(dp) + L"/left.png", a, (UINT)ew, (UINT)eh); SavePNG(std::wstring(dp) + L"/right.png", b, (UINT)ew, (UINT)eh); }
     LookAround::View v0; look.Render(srv, ew, eh, v0);
     D3D11_TEXTURE2D_DESC dd{}; look.DisparityTexture()->GetDesc(&dd);
@@ -384,6 +388,8 @@ int wmain(int argc, wchar_t** argv)
     if (const wchar_t* ff = _wgetenv(L"LOOKTEST_FARFILL")) look.SetFarFill(_wtoi(ff) != 0);
     if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
     if (const wchar_t* fe = _wgetenv(L"LOOKTEST_FUSEEDGE")) look.SetFuseEdge(_wtoi(fe) != 0);
+    if (const wchar_t* fr = _wgetenv(L"LOOKTEST_FUSEREACH")) look.SetFuseReach((float)_wtof(fr));
+    if (const wchar_t* xd = _wgetenv(L"LOOKTEST_DILATE")) look.SetExternalDilate(_wtoi(xd));
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
 
     // A moving picture, for the plate: LOOKTEST_SEQ=n,m gives n earlier pictures first, the camera m views

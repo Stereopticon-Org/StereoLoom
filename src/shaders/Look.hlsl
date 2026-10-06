@@ -629,9 +629,13 @@ float4 PSUnseen(VSOut i) : SV_Target
                 const float4 t = tex3.Load(int3(pane * ew + q.x, q.y, m));
                 const float wk = ((k & 1) ? f.x : 1.0 - f.x) * ((k >> 1) ? f.y : 1.0 - f.y);
                 // (As far as the gap's far side, or farther; a little leave the coarser it is.)
-                if (t.a < db + 1.0 + 0.5 * (float)m) { c += t.rgb * wk; sw += wk; }
+                // (... by degrees, not at a line: a line shows as blocks.)
+                const float far = saturate(db + 1.5 + 0.5 * (float)m - t.a);
+                c += t.rgb * wk * far; sw += wk * far;
             }
-            const float take = left * saturate(sw * 2.0 - 0.3);
+            // (A level counts in full only where all four round the pixel have it; where fewer, the
+            // coarser ones make up the rest -- two or three texels alone showed as blocks too.)
+            const float take = left * saturate(sw * 1.6 - 0.6);
             if (sw > 1e-4) acc += c / sw * take;
             left -= take;
         }
@@ -958,6 +962,17 @@ float4 PSFuse(VSOut i) : SV_Target
     if (g_opt.z > 0.5 && hi - lo > 1.5) return float4(nn.r, nn.g, nn.b, 0);
     if (abs(nn.r - own.r) < 0.25) return float4(own.r, nn.g, nn.b, 0);     // (they agree: the windows' fraction is the finer)
     const float cn = FuseCost(tex1, p, half, w, h), co = FuseCost(tex2, p, half, w, h);
+    // (g_opt.x: how far from the trained matcher's answer the windows' may be and still be taken. It
+    // says which surface; the windows only say more finely where on it. Without that limit a see-
+    // through or plain thing came out in patches of two depths -- seen twice, once at each.)
+    // (... where it is sure, that is: where its answer for this eye and its answer for the other eye,
+    // made apart, meet at the same point. Where they do not -- a soft or plain region it has guessed
+    // at, or what one eye cannot see -- the choice is open as before.)
+    const float xo = (float)p.x + 0.5 - (half == 0 ? 1.0 : -1.0) * nn.r;
+    const bool inO = xo > 0.5 && xo < (float)w - 0.5;
+    const float nnO = tex1.SampleLevel(sampLinear, float2(((float)((1 - half) * w) + clamp(xo, 0.5, (float)w - 0.5)) / (float)(2 * w), ((float)p.y + 0.5) / (float)h), 0).r;
+    const bool sure = inO && abs(nnO - nn.r) < 1.0;
+    if (g_opt.x > 0.0 && sure && abs(own.r - nn.r) > g_opt.x) return float4(nn.r, nn.g, nn.b, 0);
     return (co < cn * g_opt.w - 0.5 / 255.0) ? float4(own.r, own.g, own.b, 0) : float4(nn.r, nn.g, nn.b, 0);
 }
 
@@ -987,9 +1002,9 @@ float4 PSFillDown(VSOut i) : SV_Target
             // (Not one beside a nearer thing: at an outline the colours of the two sides run together.)
             const int2 mq = int2(clamp((int)(((float)q.x + 0.5) / g_scale.x), 0, w0 - 1), clamp((int)(((float)q.y + 0.5) / g_scale.y), 0, h0 - 1));
             float nearest = d;
-            [unroll] for (int e = 0; e < 4; ++e)
+            [unroll] for (int e = 0; e < 8; ++e)
             {
-                const int2 o = int2(e == 0 ? -1 : e == 1 ? 1 : 0, e == 2 ? -1 : e == 3 ? 1 : 0);
+                const int2 o = int2((e & 3) == 0 ? -1 : (e & 3) == 1 ? 1 : 0, (e & 3) == 2 ? -1 : (e & 3) == 3 ? 1 : 0) * (e < 4 ? 1 : 2);
                 nearest = max(nearest, tex2.Load(int3(half * w0 + clamp(mq.x + o.x, 0, w0 - 1), clamp(mq.y + o.y, 0, h0 - 1), 0)).r);
             }
             t.a = (t.a > 0.5 && nearest < d + 1.0) ? d : 1e4;
@@ -1000,4 +1015,27 @@ float4 PSFillDown(VSOut i) : SV_Target
     float3 c = 0; float n = 0;
     [unroll] for (int k2 = 0; k2 < 4; ++k2) if (ch[k2].a < dmin + 0.75) { c += ch[k2].rgb; n += 1.0; }
     return float4(c / n, dmin);
+}
+
+// ---- A thing's outline taken a texel wide ---------------------------------------
+// A sharp map cuts a thing out at its outline exactly -- and the outline's own
+// pixels are part thing, part what is behind: fur, hair, a soft edge. Left on
+// the far side they stay behind when the thing moves, a rim of it at the wrong
+// depth, seen twice. So at a step the nearer side is carried one texel
+// outward, and the rim goes with the thing it belongs to.
+// (tex1: the disparity. g_winR: the reach, in texels.)
+float4 PSDilate(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    const int w = (int)g_size.x, h = (int)g_size.y;
+    const float4 own = tex1.Load(int3(half * w + p.x, p.y, 0));
+    const int R = (int)g_winR;
+    float best = own.r;
+    [loop] for (int j = -R; j <= R; ++j)
+    [loop] for (int k = -R; k <= R; ++k)
+    {
+        const float v = tex1.Load(int3(InEye(p + int2(k, j), half, w, h), 0)).r;
+        if (v > own.r + 1.5) best = max(best, v);
+    }
+    return float4(best, own.g, own.b, 0);
 }

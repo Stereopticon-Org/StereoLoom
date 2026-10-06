@@ -18,6 +18,7 @@
 #include "Look_PSFine.h"
 #include "Look_PSGuide.h"
 #include "Look_PSFuse.h"
+#include "Look_PSDilate.h"
 #include "Look_PSSplat.h"
 #include "Look_PSHole.h"
 #include "Look_PSCompose.h"
@@ -48,6 +49,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSFine,        sizeof(g_Look_PSFine),        &m_psFine },
         { g_Look_PSGuide,       sizeof(g_Look_PSGuide),       &m_psGuide },
         { g_Look_PSFuse,        sizeof(g_Look_PSFuse),        &m_psFuse },
+        { g_Look_PSDilate,      sizeof(g_Look_PSDilate),      &m_psDilate },
         { g_Look_PSSplat,       sizeof(g_Look_PSSplat),       &m_psSplat },
         { g_Look_PSHole,        sizeof(g_Look_PSHole),        &m_psHole },
         { g_Look_PSCompose,     sizeof(g_Look_PSCompose),     &m_psCompose },
@@ -95,7 +97,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_disjoint); for (auto& q : m_ts) SAFE_RELEASE(q);
     SAFE_RELEASE(m_raster); SAFE_RELEASE(m_depthOn); SAFE_RELEASE(m_sampler); SAFE_RELEASE(m_cb);
     SAFE_RELEASE(m_psFillDown); SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
-    SAFE_RELEASE(m_psSpread); SAFE_RELEASE(m_psFine); SAFE_RELEASE(m_psGuide); SAFE_RELEASE(m_psFuse);
+    SAFE_RELEASE(m_psSpread); SAFE_RELEASE(m_psFine); SAFE_RELEASE(m_psGuide); SAFE_RELEASE(m_psFuse); SAFE_RELEASE(m_psDilate);
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
@@ -279,9 +281,9 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         if (k == 0 && m_extDisp && m_extStage == 4 && Ensure(m_extCopy, 2 * w[0], h[0], DXGI_FORMAT_R16G16B16A16_FLOAT))
         {
             m_context->CopyResource(m_extCopy.tex, m_extDisp);
-            const float keep = cb.opt[3], keep2 = cb.opt[2]; cb.opt[3] = m_fuseBias; cb.opt[2] = m_fuseEdge ? 1.0f : 0.0f;
+            const float keep = cb.opt[3], keep2 = cb.opt[2], keep0 = cb.opt[0]; cb.opt[3] = m_fuseBias; cb.opt[2] = m_fuseEdge ? 1.0f : 0.0f; cb.opt[0] = m_fuseReach;
             Pass(m_psFuse, m_dispA[0], cb, m_lvl[0].srv, m_extCopy.srv, m_dispB[0].srv);
-            cb.opt[3] = keep; cb.opt[2] = keep2;
+            cb.opt[3] = keep; cb.opt[2] = keep2; cb.opt[0] = keep0;
             m_context->CopyResource(m_dispB[0].tex, m_dispA[0].tex);
         }
         // (3: ... and first put right in its detail, within two texels of where it was: PSGuide.)
@@ -297,6 +299,15 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             cb.srcSize[0] = (float)eyeW; cb.srcSize[1] = (float)eyeH; cb.winR = m_fineR;
             Pass(m_psFine, m_dispA[0], cb, src, m_dispB[0].srv);
             result[0] = &m_dispA[0];
+        }
+        // (With the other matcher's depth: its outlines taken a texel wide -- PSDilate. The answer is
+        // left where it was: in A where it was made finer, else in B.)
+        if (k == 0 && m_extDisp && m_extDilate > 0)
+        {
+            sized(0); cb.winR = (float)m_extDilate;
+            Tex& at = m_fine ? m_dispA[0] : m_dispB[0]; Tex& other = m_fine ? m_dispB[0] : m_dispA[0];
+            Pass(m_psDilate, other, cb, nullptr, at.srv);
+            m_context->CopyResource(at.tex, other.tex);
         }
     }
     m_haveMaps = true;
