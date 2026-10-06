@@ -8065,7 +8065,7 @@ namespace
                     {
                         const int ew = app.converter.OutputPerEyeWidth(), eh = app.converter.OutputHeight();
                         int mw = 0, mh = 0; app.look.MapSize(ew, eh, mw, mh);
-                        if (!app.neuralActive && !app.neural.Busy() && app.neuralSubmitted != app.lookSerial && GetTickCount64() - app.neuralTick > 400 && app.converter.OutputTexture())
+                        if (!app.neuralActive && !app.neural.Busy() && app.neuralSubmitted != app.lookSerial && GetTickCount64() - app.neuralTick > 150 && app.converter.OutputTexture())
                         {
                             // (The picture read back: once a picture, and only one that has stood still.)
                             D3D11_TEXTURE2D_DESC td{}; app.converter.OutputTexture()->GetDesc(&td);

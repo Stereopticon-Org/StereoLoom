@@ -2860,7 +2860,7 @@ bool Gui::Render(GuiState& state)
                     "outlines; moving pictures still use the built-in matcher. Neural + Built-in takes whichever fits better "
                     "at each point. The neural options need the network's files beside SR Loom. Applies straight away.");
                 ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
-                std::string shown = m_lookModel.empty() ? std::string("Fast-FoundationStereo.onnx") : m_lookModel;
+                std::string shown = m_lookModel.empty() ? std::string("Lite Any Stereo H 1024x576.onnx") : m_lookModel;
                 if (shown.size() > 5 && shown.compare(shown.size() - 5, 5, ".onnx") == 0) shown.resize(shown.size() - 5);
                 ImGui::SetNextItemWidth(halfW);
                 if (ImGui::BeginCombo("##lookmodel", shown.c_str()))
@@ -2876,7 +2876,7 @@ bool Gui::Render(GuiState& state)
                     for (const std::string& f : m_lookModels)
                     {
                         std::string label = f; if (label.size() > 5) label.resize(label.size() - 5);
-                        const bool cur = f == (m_lookModel.empty() ? std::string("Fast-FoundationStereo.onnx") : m_lookModel);
+                        const bool cur = f == (m_lookModel.empty() ? std::string("Lite Any Stereo H 1024x576.onnx") : m_lookModel);
                         if (ImGui::Selectable(label.c_str(), cur)) { m_lookModel = f; Settings::WriteLookModel(std::wstring(f.begin(), f.end())); }
                     }
                     ImGui::EndCombo();

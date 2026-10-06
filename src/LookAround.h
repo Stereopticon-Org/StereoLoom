@@ -59,6 +59,10 @@ namespace srw
         void ForgetPlate() { m_plateHave = false; }
         void SetMarkFill(bool on) { m_markFill = on; }   // (a test: what the plate filled drawn magenta, what it could not green)
         void SetFarFill(bool on) { m_fillOn = on; }   // (what neither eye sees filled from the far side, level by level; off: the mirrored row)
+        // A background painted for the picture in hand (the left eye with near things lifted off and what is
+        // behind them painted in): any size, rgb linear, .a that background's disparity in MapSize's texels.
+        // What neither eye sees is taken from it first. nullptr: none. It is the caller's to keep alive.
+        void SetLayer(ID3D11ShaderResourceView* srv) { m_layer = srv; }
         // The motion between pictures found from the pictures themselves (on, as a rule; off: only what
         // SetMotion gives). ReadMotion: what was found for the last picture -- x, y, per-disparity x, y,
         // how badly it fitted, the share of the picture that counted. It waits for the GPU: for tests.
@@ -121,6 +125,7 @@ namespace srw
         ID3D11RenderTargetView* m_fillRtv[kFillMax] = {}; ID3D11ShaderResourceView* m_fillMip[kFillMax] = {};
         int   m_fillMips = 0, m_fillW = 0, m_fillH = 0;
         bool  m_fillOn = true;
+        ID3D11ShaderResourceView* m_layer = nullptr;
         bool  m_findMotion = true, m_prevHave = false, m_estHave = false;
         Tex   m_prevTmp[kLevels];                    // the levels' colour of the picture before
         Tex   m_lkSum[4], m_est[2], m_estQ;          // the motion finder's sums; the motion (one texel), and the one before; how well it fitted

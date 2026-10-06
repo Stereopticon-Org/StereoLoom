@@ -123,7 +123,7 @@ namespace srw::Settings
     // alone. LookDepth.
     int  ReadLookDepth();
     void WriteLookDepth(int mode);
-    // The trained matcher's model: a file name in the neural folder beside the exe (none: Fast-FoundationStereo.onnx). LookModel.
+    // The trained matcher's model: a file name in the neural folder beside the exe (none: Lite Any Stereo H 1024x576.onnx). LookModel.
     std::wstring ReadLookModel();
     void WriteLookModel(const std::wstring& file);
     void WriteLookParallax(int pct);

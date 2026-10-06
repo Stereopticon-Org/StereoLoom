@@ -58,6 +58,7 @@ static bool SavePNG(const std::wstring& path, const std::vector<uint8_t>& rgba, 
 // spacing's move from one view -- and compared with the real right eye. Then
 // views from beside the pair are written out to look at.
 static ID3D11Texture2D* LoadDsp(ID3D11Device* dev, LookAround& look, const wchar_t* file, int ew, int eh);
+static ID3D11ShaderResourceView* LoadLayer(ID3D11Device* dev, LookAround& look, const wchar_t* file, int ew, int eh);
 static int RunSbs(const wchar_t* file, const std::wstring& outdir)
 {
     std::vector<uint8_t> px; UINT W = 0, H = 0;
@@ -78,6 +79,8 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (const wchar_t* bs = _wgetenv(L"LOOKTEST_BASE")) look.SetBase(_wtoi(bs));
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
     if (const wchar_t* ds = _wgetenv(L"LOOKTEST_DSP")) look.SetExternalDisparity(LoadDsp(dev, look, ds, ew, eh));
+    if (const wchar_t* ly = _wgetenv(L"LOOKTEST_LAYER")) look.SetLayer(LoadLayer(dev, look, ly, ew, eh));
+    if (_wgetenv(L"LOOKTEST_MARKFILL")) look.SetMarkFill(true);   // (what filled each unseen pixel, by colour: yellow the painted background, magenta the plate, blue the far side, green the mirrored row)
     if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
     if (const wchar_t* ff = _wgetenv(L"LOOKTEST_FARFILL")) look.SetFarFill(_wtoi(ff) != 0);
     if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
@@ -234,6 +237,32 @@ static ID3D11Texture2D* LoadDsp(ID3D11Device* dev, LookAround& look, const wchar
     ID3D11Texture2D* t = nullptr; dev->CreateTexture2D(&td, &sd, &t);
     if (t) wprintf(L"disparity from %s, as a %dx%d map\n", file, mw, mh);
     return t;
+}
+
+// A painted background (LOOKTEST_LAYER: 'LYR1', width, height, then rows of four floats -- red, green, blue
+// 0..255 as stored, and the disparity as a share of the width) as LookAround::SetLayer takes it.
+static ID3D11ShaderResourceView* LoadLayer(ID3D11Device* dev, LookAround& look, const wchar_t* file, int ew, int eh)
+{
+    FILE* f = nullptr; _wfopen_s(&f, file, L"rb");
+    if (!f) return nullptr;
+    char tag[4]; int w = 0, h = 0;
+    if (fread(tag, 1, 4, f) != 4 || fread(&w, 4, 1, f) != 1 || fread(&h, 4, 1, f) != 1 || w < 8 || h < 8) { fclose(f); return nullptr; }
+    std::vector<float> v((size_t)w * h * 4);
+    fread(v.data(), sizeof(float), v.size(), f); fclose(f);
+    int mw = 0, mh = 0; look.MapSize(ew, eh, mw, mh);
+    for (size_t k = 0; k < (size_t)w * h; ++k)
+    {
+        for (int c = 0; c < 3; ++c) { const float s = v[k * 4 + c] / 255.0f; v[k * 4 + c] = s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f); }
+        v[k * 4 + 3] *= (float)mw;
+    }
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = (UINT)w; td.Height = (UINT)h; td.MipLevels = 1; td.ArraySize = 1; td.SampleDesc.Count = 1;
+    td.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA sd{ v.data(), (UINT)(w * 16), 0 };
+    ID3D11Texture2D* t = nullptr; ID3D11ShaderResourceView* srv = nullptr;
+    if (SUCCEEDED(dev->CreateTexture2D(&td, &sd, &t))) { dev->CreateShaderResourceView(t, nullptr, &srv); t->Release(); }
+    if (srv) wprintf(L"painted background from %s (%dx%d)\n", file, w, h);
+    return srv;
 }
 
 // Against a measured truth: a Middlebury 2014 scene (im0.png, im1.png and

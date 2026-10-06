@@ -53,7 +53,7 @@ cbuffer Params : register(b0)
     float  g_only;      // a test: -1 both eyes are used; 0 / 1 that eye alone
     float4 g_opt;       // switches under trial: .x the reach, in texels, that PSCompose looks for other surfaces; .y what a surface the maps call hidden must beat (0: it is not tried); .z how softly surfaces mix; .w spare
     float4 g_motion;    // how the picture moved since the one before: .xy everything alike, in its own pixels; .zw times its disparity more (a camera a tenth of an eye spacing to the side: 0.1)
-    float4 g_plate;     // .x 1: there is a plate from before (PSPlate). .y 1: PSUnseen may fill from the plate. .z a test: what it fills is marked. .w spare
+    float4 g_plate;     // .x 1: there is a plate from before (PSPlate). .y 1: PSUnseen may fill from the plate. .z a test: what it fills is marked. .w 1: there is a painted background (tex4)
     float4 g_pad;       // .xy: the plate's margin round the eye's picture, in pixels -- what has gone out of the picture's side is kept a while too. .z: how many levels the far-side fill has (tex3, PSFillDown); 0: none
     float4 g_lk;        // the motion finder: .x picture pixels a texel of this level; .y the disparity (picture pixels) counted as one; .z this level's disparity texels to picture pixels; .w 1: PSPlate takes the motion found (tex3)
 };
@@ -571,6 +571,37 @@ float4 PSUnseen(VSOut i) : SV_Target
     const int2 p = int2((int)i.pos.x - pane * W, (int)i.pos.y);
     const float4 v = tex0.Load(int3(pane * W + p.x, p.y, 0));
     if (v.a > 0.5) return float4(v.rgb, 1);
+    // (Before all: a background painted for this picture -- tex4, the LEFT eye with every near
+    // thing lifted off at its edges and what is behind it painted in, and that background's own
+    // disparity in .a. It is looked up as the plate is: where the surface behind this gap would be
+    // in the left eye, by the layer's own disparity there.)
+    [branch] if (g_plate.w > 0.5)
+    {
+        const int w0 = (int)g_srcSize.x, h0 = (int)g_srcSize.y;
+        const float2 full = float2((float)p.x + 0.5, (float)p.y + 0.5);
+        const float2 uv = full / g_size;
+        const float t = pane == 0 ? g_tL : g_tR;
+        const float db = tex2.Load(int3(pane * w0 + clamp((int)(full.x / g_scale.x), 0, w0 - 1), clamp((int)(full.y / g_scale.y), 0, h0 - 1), 0)).r;
+        // (Begun from the gap's far side as the geometry has it; and, failing that, from the painted
+        // background's own disparity hereabouts -- the two are guesses of the same thing.)
+        const float dHere = tex4.SampleLevel(sampLinear, clamp(uv, 0.001, 0.999), 0).a;
+        float3 got = 0; bool hit = false;
+        [unroll] for (int st = 0; st < 2; ++st)
+        {
+        float d = st == 0 ? db : min(db, dHere); float4 ly = float4(0, 0, 0, -1e4); bool ok = false, live = !hit;
+        [unroll] for (int it = 0; it < 3; ++it)
+        {
+            const float2 q = full + d * Move(0.0, t, uv) * g_scale;
+            const bool inside = q.x >= 0.5 && q.x <= g_size.x - 0.5 && q.y >= 0.5 && q.y <= g_size.y - 0.5;
+            const float4 s = tex4.SampleLevel(sampLinear, clamp(q / g_size, 0.001, 0.999), 0);
+            const bool near3 = inside && abs(s.a - d) <= 6.0;
+            if (live) { ok = near3 && abs(s.a - d) < (it == 0 ? 6.0 : 1.0); if (near3) { ly = s; d = s.a; } }
+            live = live && near3;
+        }
+        if (!hit && ok && d <= db + 2.0) { got = ly.rgb; hit = true; }
+        }
+        if (hit) return float4(g_plate.z > 0.5 ? float3(1, 1, 0) : got, 1);
+    }
     // (First: was it in sight in an earlier picture? The plate has what was
     // farthest at each place of each eye. The surface behind this gap -- the
     // farther side's disparity -- is looked for in the plate where each eye

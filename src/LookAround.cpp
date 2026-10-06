@@ -430,9 +430,10 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         cb.pad[2] = (float)m_fillMips;
     }
     cb.plate[1] = (m_plateOn && m_plateHave) ? 1.0f : 0.0f; cb.plate[2] = m_markFill ? 1.0f : 0.0f;
-    { ID3D11ShaderResourceView* fa = cb.pad[2] > 0.5f ? m_fillAll : nullptr; m_context->PSSetShaderResources(3, 1, &fa); }
+    cb.plate[3] = m_layer ? 1.0f : 0.0f;
+    { ID3D11ShaderResourceView* fa[2] = { cb.pad[2] > 0.5f ? m_fillAll : nullptr, m_layer }; m_context->PSSetShaderResources(3, 2, fa); }
     Pass(m_psUnseen, m_out[1], cb, m_out[0].srv, m_plate[m_plateCur].srv, m_targetFilled.srv);
-    { ID3D11ShaderResourceView* fa = nullptr; m_context->PSSetShaderResources(3, 1, &fa); }
+    { ID3D11ShaderResourceView* fa[2] = { nullptr, nullptr }; m_context->PSSetShaderResources(3, 2, fa); }
     mark(4);
     if (m_timing) { m_context->End(m_disjoint); m_timePending = true; m_timing = false; }
     m_context->RSSetState(nullptr);

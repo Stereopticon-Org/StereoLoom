@@ -63,7 +63,9 @@ bool NeuralDepth::Start(const std::wstring& exeDir, const std::wstring& modelFil
 {
 #ifdef SRLOOM_NEURAL
     if (m_thread.joinable()) return true;
-    m_model = exeDir + L"\\neural\\" + (modelFile.empty() ? std::wstring(L"Fast-FoundationStereo.onnx") : modelFile);
+    m_model = exeDir + L"\\neural\\" + (modelFile.empty() ? std::wstring(L"Lite Any Stereo H 1024x576.onnx") : modelFile);
+    // (A model chosen once and since taken away: the usual one.)
+    if (!Exists(m_model)) m_model = exeDir + L"\\neural\\Lite Any Stereo H 1024x576.onnx";
     if (!Exists(exeDir + L"\\onnxruntime.dll") || !Exists(exeDir + L"\\DirectML.dll") || !Exists(m_model))
     {
         Log("NeuralDepth: not there (onnxruntime.dll, DirectML.dll beside the exe and neural\\stereo.onnx are all needed)");
