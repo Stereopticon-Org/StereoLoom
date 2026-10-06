@@ -401,10 +401,98 @@ static void Put(std::vector<uint8_t>& sheet, int sw, const Img& im, int ox, int 
     }
 }
 
+// ---- An ordinary stereo pair ------------------------------------------------
+// Two real views and nothing else (a game's side-by-side frame, a photo pair):
+// what SR Loom's converter hands on for every two-view format. There is no
+// third view to score against, so each eye is predicted from the OTHER eye
+// alone and compared with the real one -- a whole eye spacing's move, from one
+// view: harder than anything look-around asks. Then views from beside and
+// between the pair are written out to look at.
+static Img FromRGBA(const std::vector<uint8_t>& px, int W, int x0, int y0, int w, int h)
+{
+    Img im; im.w = w; im.h = h; im.p.resize((size_t)w * h * 3);
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x)
+    {
+        const uint8_t* s = &px[((size_t)(y0 + y) * W + x0 + x) * 4];
+        float* d = im.at(x, y); d[0] = s[0]; d[1] = s[1]; d[2] = s[2];
+    }
+    return im;
+}
+static double BadShare(const Img& a, const Img& b, int margin)
+{
+    size_t bad = 0, n = 0;
+    for (int y = margin; y < a.h - margin; ++y) for (int x = margin; x < a.w - margin; ++x, ++n)
+    {
+        float m = 0; for (int k = 0; k < 3; ++k) m = (std::max)(m, std::fabs(a.at(x, y)[k] - b.at(x, y)[k]));
+        bad += m > 40.0f;
+    }
+    return 100.0 * bad / (std::max)(n, (size_t)1);
+}
+static int PairMode(Img A, Img B, const std::wstring& outdir)
+{
+    // (Worked on at 720 px across at most: this is slow CPU code.)
+    while (A.w > 720) { A = Halve(A); B = Halve(B); }
+    const int W = A.w, H = A.h;
+    const int range = _wgetenv(L"SPLATLAB_RANGE") ? _wtoi(_wgetenv(L"SPLATLAB_RANGE")) : (std::max)(8, W / 8);
+    Map dA, cA, dB, cB;
+    MatchPair(A, B, range, dA, cA, dB, cB);
+    double lo = 1e9, hi = -1e9, okc = 0;
+    for (size_t i = 0; i < dA.v.size(); ++i) { lo = (std::min)(lo, (double)dA.v[i]); hi = (std::max)(hi, (double)dA.v[i]); okc += cA.v[i] > 0.0f; }
+    wprintf(L"pair %dx%d; disparity %.1f .. %.1f px, %.1f%% of pixels matched both ways\n", W, H, lo, hi, 100.0 * okc / dA.v.size());
+    const Ref ra{ &A, &dA, &cA, 0.0f }, rb{ &B, &dB, &cB, 1.0f };
+    const int margin = W / 12;
+    // Each eye from the other alone.
+    Img w1, w2, s1, s2; Map h1, h2;
+    WarpOne(ra, 1.0f, w1); WarpOne(rb, 0.0f, w2);
+    Splat({ ra }, 1.0f, s1, h1); Splat({ rb }, 0.0f, s2, h2);
+    wprintf(L"\neach eye made from the other eye alone       PSNR dB   pixels off by > 40\n");
+    wprintf(L"  warp:   right from left / left from right   %.2f / %.2f   %.2f%% / %.2f%%\n", Psnr(w1, B, margin), Psnr(w2, A, margin), BadShare(w1, B, margin), BadShare(w2, A, margin));
+    wprintf(L"  splats: right from left / left from right   %.2f / %.2f   %.2f%% / %.2f%%   (holes before filling %.1f%% / %.1f%%)\n",
+            Psnr(s1, B, margin), Psnr(s2, A, margin), BadShare(s1, B, margin), BadShare(s2, A, margin), Share(h1), Share(h2));
+    if (!outdir.empty())
+    {
+        // Rows: from half a spacing to the left of the pair, between them, half a
+        // spacing to the right. Columns: warp from the nearer view, two-view warp, splats.
+        const float ts[3] = { -0.5f, 0.5f, 1.5f };
+        std::vector<uint8_t> sheet((size_t)W * 3 * H * 3 * 4, 0);
+        for (int r = 0; r < 3; ++r)
+        {
+            Img o1, o2, o3; Map hh2, hh3;
+            WarpOne(ts[r] < 0.5f ? ra : rb, ts[r], o1); WarpTwo(ra, rb, ts[r], o2, hh2); Splat({ ra, rb }, ts[r], o3, hh3);
+            Put(sheet, W * 3, o1, 0, H * r); Put(sheet, W * 3, o2, W, H * r); Put(sheet, W * 3, o3, W * 2, H * r);
+        }
+        SavePNG(outdir + L"\\pair_views.png", sheet, (UINT)(W * 3), (UINT)(H * 3));
+        // (The disparity found for the left view, as a grey picture: near is light.)
+        std::vector<uint8_t> dm((size_t)W * H * 4);
+        for (int i = 0; i < W * H; ++i) { const uint8_t g = (uint8_t)(std::max)(0.0, (std::min)(255.0, 255.0 * (dA.v[i] - lo) / (std::max)(hi - lo, 1e-3))); dm[i * 4] = dm[i * 4 + 1] = dm[i * 4 + 2] = g; dm[i * 4 + 3] = 255; }
+        SavePNG(outdir + L"\\pair_disparity.png", dm, (UINT)W, (UINT)H);
+        wprintf(L"written: pair_views.png (rows: half a spacing left, between, half a spacing right; columns: warp, two-view warp, splats) and pair_disparity.png\n");
+    }
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv)
 {
-    if (argc < 2) { fwprintf(stderr, L"usage: splatlab <quilt_qsCxR.png> [refA refB] [reach] [outdir]\n"); return 1; }
+    if (argc < 2)
+    {
+        fwprintf(stderr, L"usage: splatlab <quilt_qsCxR.png> [refA refB] [reach] [outdir]\n"
+                         L"       splatlab pair <left.png> <right.png> [outdir]\n"
+                         L"       splatlab sbs <side-by-side.png> [outdir]      (left eye in the left half)\n");
+        return 1;
+    }
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (argc >= 4 && !wcscmp(argv[1], L"pair"))
+    {
+        std::vector<uint8_t> l, r; UINT lw = 0, lh = 0, rw = 0, rh = 0;
+        if (!LoadRGBA(argv[2], l, lw, lh) || !LoadRGBA(argv[3], r, rw, rh) || lw != rw || lh != rh) { fwprintf(stderr, L"the two pictures must load and match in size\n"); return 1; }
+        return PairMode(FromRGBA(l, (int)lw, 0, 0, (int)lw, (int)lh), FromRGBA(r, (int)rw, 0, 0, (int)rw, (int)rh), argc > 4 ? argv[4] : L"");
+    }
+    if (argc >= 3 && !wcscmp(argv[1], L"sbs"))
+    {
+        std::vector<uint8_t> s; UINT sw = 0, sh = 0;
+        if (!LoadRGBA(argv[2], s, sw, sh)) { fwprintf(stderr, L"can't load the picture\n"); return 1; }
+        return PairMode(FromRGBA(s, (int)sw, 0, 0, (int)sw / 2, (int)sh), FromRGBA(s, (int)sw, (int)sw / 2, 0, (int)sw / 2, (int)sh), argc > 3 ? argv[3] : L"");
+    }
     std::wstring path = argv[1];
     int C = 8, R = 6;
     { const size_t q = path.rfind(L"qs"); if (q != std::wstring::npos) swscanf_s(path.c_str() + q, L"qs%dx%d", &C, &R); }
