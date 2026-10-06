@@ -178,19 +178,49 @@ float4 PSMatchRefine(VSOut i) : SV_Target
     int half; int2 p; Place(i.pos, half, p);
     const int w = (int)g_size.x, h = (int)g_size.y, r = (int)g_range;
     const int lw = w / 2, lh = h / 2;
-    float best = 1e30; int bd = 0;
-    static const int2 kN[5] = { int2(0, 0), int2(-3, 0), int2(3, 0), int2(0, -3), int2(0, 3) };
-    [loop] for (int n = 0; n < 5; ++n)
+    const int R = (int)g_winR;
+    const int sgn = half == 0 ? 1 : -1;
+    // Its own start and two either side: five candidates a texel apart, so the
+    // window is read once for all five -- its own eye's texel once, the other
+    // eye's five in a row. (Each on its own read both again: twice the reads.)
+    const int c0 = clamp((int)round(2.0 * tex1.Load(int3(InEye(p / 2, half, lw, lh), 0)).r), -r + 2, r - 2);
+    float c5[5] = { 0, 0, 0, 0, 0 };
+    [loop] for (int j = -R; j <= R; ++j)
+    [loop] for (int k = -R; k <= R; ++k)
+    {
+        const int xa = clamp(p.x + k, 0, w - 1), ya = clamp(p.y + j, 0, h - 1);
+        const float4 a = tex0.Load(int3(half * w + xa, ya, 0));
+        [unroll] for (int m = 0; m < 5; ++m)
+        {
+            const int xb = xa - sgn * (c0 + m - 2);
+            if (xb < 0 || xb >= w) { c5[m] += kOut; continue; }
+            const float4 b = tex0.Load(int3((1 - half) * w + xb, ya, 0));
+            c5[m] += 0.35 * min(dot(abs(a.rgb - b.rgb), 1.0 / 3.0), kCapA) + 0.65 * min(abs(a.a - b.a), kCapG);
+        }
+    }
+    float best = c5[0]; int bm = 0;
+    [unroll] for (int m2 = 1; m2 < 5; ++m2) if (c5[m2] < best) { best = c5[m2]; bm = m2; }
+    int bd = c0 + bm - 2; bool five = true;
+    // Its neighbours' starts, as they are, where they are not among those five.
+    static const int2 kN[4] = { int2(-3, 0), int2(3, 0), int2(0, -3), int2(0, 3) };
+    [loop] for (int n = 0; n < 4; ++n)
     {
         const int2 q = clamp(p + kN[n], 0, int2(w - 1, h - 1));
-        const int c0 = (int)round(2.0 * tex1.Load(int3(InEye(q / 2, half, lw, lh), 0)).r);
-        const int reach = n == 0 ? 2 : 0;
-        [loop] for (int k = -reach; k <= reach; ++k)
-        {
-            const int d = clamp(c0 + k, -r, r);
-            const float c = Cost(p, half, d, w, h);
-            if (c < best) { best = c; bd = d; }
-        }
+        const int cn = clamp((int)round(2.0 * tex1.Load(int3(InEye(q / 2, half, lw, lh), 0)).r), -r, r);
+        if (abs(cn - c0) <= 2) continue;
+        const float c = Cost(p, half, cn, w, h);
+        if (c < best) { best = c; bd = cn; five = false; }
+    }
+    // (Between candidates: where the best is one of the five with one each
+    // side, the parabola is through costs already here.)
+    if (five && bm > 0 && bm < 4)
+    {
+        float cm = 0, cp = 0;
+        [unroll] for (int m3 = 0; m3 < 5; ++m3) { cm = (m3 == bm - 1) ? c5[m3] : cm; cp = (m3 == bm + 1) ? c5[m3] : cp; }
+        const float den = cm - 2.0 * best + cp;
+        const float sub = den > 1e-6 ? clamp(0.5 * (cm - cp) / den, -0.5, 0.5) : 0.0;
+        const float nw = (2.0 * g_winR + 1.0) * (2.0 * g_winR + 1.0);
+        return float4((float)bd + sub, saturate(den / (nw * 2.0 / 255.0)), 0, 0);
     }
     return Settle(p, half, bd, best, w, h);
 }
@@ -202,21 +232,34 @@ float4 PSMatchRefine(VSOut i) : SV_Target
 // whether one of the disparities found a few texels away suits it better than
 // its own -- the choice is only among answers already found nearby, so a small
 // window's noise cannot invent one. Its own stands unless another is clearly
-// better. (tex0: the level. tex1: the disparity. g_winR: 1.)
+// better. Where all eight neighbours looked at have its own disparity -- the
+// inside of a surface, most of the picture -- there is nothing to ask.
+// (tex0: the level. tex1: the disparity. g_winR: 1.)
 float4 PSSpread(VSOut i) : SV_Target
 {
     int half; int2 p; Place(i.pos, half, p);
     const int w = (int)g_size.x, h = (int)g_size.y;
     const float4 own = tex1.Load(int3(half * w + p.x, p.y, 0));
+    static const int2 kS[8] = { int2(-3, 0), int2(3, 0), int2(0, -3), int2(0, 3), int2(-6, 0), int2(6, 0), int2(0, -6), int2(0, 6) };
+    float cd[8]; bool any = false;
+    [unroll] for (int n = 0; n < 8; ++n)
+    {
+        cd[n] = tex1.Load(int3(InEye(p + kS[n], half, w, h), 0)).r;
+        any = any || abs(cd[n] - own.r) >= 0.75;
+    }
+    [branch] if (!any) return own;
     float bestD = own.r;
     float best = Cost(p, half, (int)round(own.r), w, h) * 0.85;
-    static const int2 kS[8] = { int2(-3, 0), int2(3, 0), int2(0, -3), int2(0, 3), int2(-6, 0), int2(6, 0), int2(0, -6), int2(0, 6) };
-    [loop] for (int n = 0; n < 8; ++n)
+    [unroll] for (int n2 = 0; n2 < 8; ++n2)
     {
-        const float d = tex1.Load(int3(InEye(p + kS[n], half, w, h), 0)).r;
-        if (abs(d - own.r) < 0.75) continue;
-        const float c = Cost(p, half, (int)round(d), w, h);
-        if (c < best) { best = c; bestD = d; }
+        // (One that differs from its own, and from those already tried.)
+        bool fresh = abs(cd[n2] - own.r) >= 0.75;
+        [unroll] for (int m = 0; m < n2; ++m) fresh = fresh && abs(cd[n2] - cd[m]) >= 0.5;
+        [branch] if (fresh)
+        {
+            const float c = Cost(p, half, (int)round(cd[n2]), w, h);
+            if (c < best) { best = c; bestD = cd[n2]; }
+        }
     }
     return float4(bestD, own.g, own.b, 0);
 }
@@ -392,11 +435,12 @@ float4 PSCompose(VSOut i) : SV_Target
         return float4(tex0.Load(int3((int)round(t) * W + (int)full.x, (int)full.y, 0)).rgb, 1);
     const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
     const float2 lo = full / g_scale - 0.5;
-    const int x0 = clamp((int)floor(lo.x), 0, w - 1), y0 = clamp((int)floor(lo.y), 0, h - 1);
-    const int x1 = min(x0 + 1, w - 1), y1 = min(y0 + 1, h - 1);
+    // (The four texels round it in one read. Kept a texel inside the eye's
+    // right edge and the bottom, so the four are all this eye's.)
+    const int x0 = clamp((int)floor(lo.x), 0, w - 2), y0 = clamp((int)floor(lo.y), 0, h - 2);
     const float2 f = saturate(lo - float2(x0, y0));
-    const float d00 = tex2.Load(int3(pane * w + x0, y0, 0)).r, d10 = tex2.Load(int3(pane * w + x1, y0, 0)).r;
-    const float d01 = tex2.Load(int3(pane * w + x0, y1, 0)).r, d11 = tex2.Load(int3(pane * w + x1, y1, 0)).r;
+    const float4 g4 = tex2.GatherRed(sampLinear, float2((float)(pane * w + x0) + 1.0, (float)y0 + 1.0) / float2(2 * w, h));
+    const float d00 = g4.w, d10 = g4.z, d01 = g4.x, d11 = g4.y;
     const float dBi = lerp(lerp(d00, d10, f.x), lerp(d01, d11, f.x), f.y);
     float3 col; float cost, seen;
     Try(dBi, lo, full, t, w, h, col, cost, seen);

@@ -8018,15 +8018,18 @@ namespace
                     // head's -- 650 mm taken as the eyes' own). No limit on any of them:
                     // far enough out the picture comes apart, and that is the viewer's
                     // to find.
-                    float l[3] = {}, r[3] = {}, tx = 0.0f, ty = 0.0f, rho = 1.0f, spacing = 63.0f;
+                    // (The eyes not found this loop -- too near the camera, looking away:
+                    // the view stays where it was. Falling back to the middle was a
+                    // cut-off: lean in far enough and the picture snapped flat.)
+                    float l[3] = {}, r[3] = {}, tx = app.lookX, ty = app.lookY, rho = app.lookRho, spacing = 63.0f;
                     if (app.weaver.GetPredictedEyePositions(l, r))
                     {
                         spacing = (std::max)(40.0f, std::fabs(r[0] - l[0]));
                         tx = 0.5f * (l[0] + r[0]) / spacing * app.lookParallax;
                         ty = -0.5f * (l[1] + r[1]) / spacing * app.lookParallax;   // (the tracker's y is up; the picture's is down)
                         const float z = 0.5f * (l[2] + r[2]);
-                        if (z > 100.0f) rho = 1.0f + (650.0f / z - 1.0f) * std::fabs(app.lookParallax);
-                        rho = (std::max)(0.25f, (std::min)(4.0f, rho));
+                        if (z > 20.0f) rho = 1.0f + (650.0f / z - 1.0f) * std::fabs(app.lookParallax);
+                        rho = (std::max)(0.05f, rho);   // (no limit on how near; only never nought)
                     }
                     app.lookX += (tx - app.lookX) * 0.5f; app.lookY += (ty - app.lookY) * 0.5f; app.lookRho += (rho - app.lookRho) * 0.5f;
                     LookAround::View v;

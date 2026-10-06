@@ -84,7 +84,7 @@ namespace srw
         ID3D11DepthStencilView* m_dsv = nullptr;
         Tex m_out[2];                                // the new views: composed, then filled
         int   m_eyeW = 0, m_eyeH = 0;
-        float m_maxShare = 0.06f;
+        float m_maxShare = 0.10f;
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
         int   m_spread = 1;
 
