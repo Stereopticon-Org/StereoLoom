@@ -725,6 +725,7 @@ namespace
         float                        lookY = 0.0f, lookRho = 1.0f;   // (... up and down; and how near: the eyes' own distance over the head's)
         unsigned                     lookSerial = 0;           // (the converter's picture the look-around last matched)
         bool                         lookShow = false;         // (Settings LookShow: the depth found shown in place of the picture)
+        int                          lookSize = 0;             // (Settings LookSize: the matching size asked for)
         int                          asyncSlowRun = 0;         // (slow conversions in a row)
         unsigned                     asyncSeenSerial = 0;
         ULONGLONG                    asyncSlowAt = 0;          // (when one last took over 2.5 ms)
@@ -9905,6 +9906,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                 app.perfLog = Settings::ReadPerfLog();
                 app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
                 app.lookShow = Settings::ReadLookShow();
+                { const int ls = Settings::ReadLookSize(); if (ls != app.lookSize) { app.lookSize = ls; app.look.SetBase(ls); } }
                 app.renderer.SetAutoPlane(Settings::ReadAutoPlane(), Settings::ReadAutoPlaneDX12(), Settings::ReadAutoPlaneHold());   // (the panel's Straight to Display toggle)
                 app.renderer.SetLatencyStats(app.perfLog);
                 app.eyeOrderDetect = Settings::ReadEyeOrderDetect();

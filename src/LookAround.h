@@ -50,6 +50,7 @@ namespace srw
         // The largest disparity looked for, as a share of the eye's width (0.25:
         // further than anything can pop out and still be one picture -- a smaller limit showed as a wall things stopped at).
         void SetMaxDisparity(float share) { m_maxShare = share; }
+        void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
         void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
         void SetFine(int taps) { m_fine = taps > 0; m_fineR = (float)(taps > 0 ? taps : 1); m_haveMaps = false; }   // (0 off; else the window: 1 3x3, 2 5x5)
@@ -77,7 +78,7 @@ namespace srw
         ID3D11DepthStencilState* m_depthOn = nullptr;
         ID3D11RasterizerState*   m_raster = nullptr;
 
-        static constexpr int kLevels = 4;            // the eye at 1/base, and halved three times (base: 8 for a 4K eye, 4 for a 2K one)
+        static constexpr int kLevels = 7;            // the most levels: four as a rule (the eye at 1/base and halved three times), more when a finer base is asked for
         Tex m_tmp[kLevels], m_lvl[kLevels];          // colour; colour + slope
         Tex m_dispA[kLevels], m_dispB[kLevels];      // disparity, two to go between
         Tex m_target, m_targetFilled;                // the new views' disparity
@@ -88,6 +89,7 @@ namespace srw
         float m_maxShare = 0.25f;   // (a quarter of the eye's width: no pop-out a picture can hold is past it)
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
         int   m_spread = 1;
+        int   m_base = 0;
         float m_fineR = 1.0f;       // (3x3: 5x5 measured 0.2 dB more for a millisecond more)
         bool  m_fine = true;        // the answer tried again against the full-size picture (PSFine)
 

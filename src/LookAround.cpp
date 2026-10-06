@@ -126,12 +126,15 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     // The sizes: the finest about 480 texels across -- 1/8 of a 4K eye, 1/4 of a
     // 2K one (the eyes of a side-by-side game on a 4K screen: at 1/8 a head was
     // five texels wide, and came out wrong) -- then half that, and half again.
-    const int base = eyeW >= 2600 ? 8 : eyeW >= 1300 ? 4 : 2;
+    const int autoBase = eyeW >= 2600 ? 8 : eyeW >= 1300 ? 4 : 2;
+    // (m_base: the finest size asked for -- 1 the eye's own. A level more for each halving, so the smallest stays as small.)
+    const int base = m_base > 0 ? (std::min)(m_base, autoBase) : autoBase;
+    int levels = 4; for (int b = base; b < autoBase; b *= 2) ++levels;
     int w[kLevels], h[kLevels];
     w[0] = eyeW / base; h[0] = eyeH / base;
-    for (int k = 1; k < kLevels; ++k) { w[k] = (std::max)(1, w[k - 1] / 2); h[k] = (std::max)(1, h[k - 1] / 2); }
+    for (int k = 1; k < levels; ++k) { w[k] = (std::max)(1, w[k - 1] / 2); h[k] = (std::max)(1, h[k - 1] / 2); }
     bool ok = true;
-    for (int k = 0; k < kLevels && ok; ++k)
+    for (int k = 0; k < levels && ok; ++k)
         ok = Ensure(m_tmp[k], 2 * w[k], h[k], DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_lvl[k], 2 * w[k], h[k], DXGI_FORMAT_R16G16B16A16_FLOAT) &&
              Ensure(m_dispA[k], 2 * w[k], h[k], DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_dispB[k], 2 * w[k], h[k], DXGI_FORMAT_R16G16B16A16_FLOAT);
     ok = ok && Ensure(m_target, 2 * w[0], h[0], DXGI_FORMAT_R16G16_FLOAT) && Ensure(m_targetFilled, 2 * w[0], h[0], DXGI_FORMAT_R16G16_FLOAT) &&
@@ -196,7 +199,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     sized(0); cb.srcSize[0] = (float)eyeW; cb.srcSize[1] = (float)eyeH;
     Pass(m_psDownFirst, m_tmp[0], cb, src);
     Pass(m_psGrad, m_lvl[0], cb, m_tmp[0].srv);
-    for (int k = 1; k < kLevels; ++k)
+    for (int k = 1; k < levels; ++k)
     {
         sized(k); cb.srcSize[0] = (float)w[k - 1]; cb.srcSize[1] = (float)h[k - 1];
         Pass(m_psDownNext, m_tmp[k], cb, m_tmp[k - 1].srv);
@@ -207,17 +210,17 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
 
     // 2. Disparity, coarse to fine. After each size: checked, filled, cleaned.
     const Tex* result[kLevels] = {};
-    for (int k = 0; k < kLevels; ++k) result[k] = &m_dispB[k];
+    for (int k = 0; k < levels; ++k) result[k] = &m_dispB[k];
     if (m_fine) result[0] = &m_dispA[0];
     if (match)
     {
-    for (int k = kLevels - 1; k >= 0; --k)
+    for (int k = levels - 1; k >= 0; --k)
     {
         sized(k);
         cb.range = std::ceil(m_maxShare * (float)w[k]) + 1.0f;
         // (7x7 at the two smaller sizes; 5x5 at 1/8, where the window is most of the cost.)
         cb.winR = k == 0 ? 2.0f : 3.0f;
-        if (k == kLevels - 1) Pass(m_psMatchFull, m_dispA[k], cb, m_lvl[k].srv);
+        if (k == levels - 1) Pass(m_psMatchFull, m_dispA[k], cb, m_lvl[k].srv);
         else                  Pass(m_psMatchRefine, m_dispA[k], cb, m_lvl[k].srv, result[k + 1]->srv);
         Pass(m_psCheck, m_dispB[k], cb, m_dispA[k].srv);
         Pass(m_psFill, m_dispA[k], cb, m_dispB[k].srv);
