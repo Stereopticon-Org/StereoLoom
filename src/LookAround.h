@@ -64,6 +64,11 @@ namespace srw
         void SetFindMotion(bool on) { m_findMotion = on; }
         bool ReadMotion(float out[6]);
         void SetMotion(float x, float y, float perDx, float perDy) { m_motion[0] = x; m_motion[1] = y; m_motion[2] = perDx; m_motion[3] = perDy; }
+        // A trial: a disparity from another matcher in place of the one found here. tex: both eyes side by
+        // side at MapSize (R16G16B16A16_FLOAT, .r in that map's texels; the left eye's point is at x - d in
+        // the right, the right's at x + d in the left). nullptr: its own again.
+        void SetExternalDisparity(ID3D11Texture2D* tex) { m_extDisp = tex; m_haveMaps = false; }
+        void MapSize(int eyeW, int eyeH, int& w, int& h) const;
         void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
         void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
@@ -114,6 +119,7 @@ namespace srw
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
         int   m_spread = 1;
         int   m_base = 0;
+        ID3D11Texture2D* m_extDisp = nullptr;
         // (Measured 2026-10-06, quilts: these four together about 1 dB between the eyes, 0.4 beyond them, for 1.7 ms.)
         float m_opt[4] = { 2.0f, 0.02f, 0.01f, 3.0f };
         float m_fineR = 1.0f;       // (3x3: 5x5 measured 0.2 dB more for a millisecond more)

@@ -245,6 +245,9 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         cb.winR = k == 0 ? 2.0f : 3.0f;
         if (k == levels - 1) Pass(m_psMatchFull, m_dispA[k], cb, m_lvl[k].srv);
         else                  Pass(m_psMatchRefine, m_dispA[k], cb, m_lvl[k].srv, result[k + 1]->srv);
+        // (A disparity from elsewhere -- another matcher's, under trial: it takes the place of the one
+        // found, and is checked, cleaned, drawn in at its edges and made finer as that would be.)
+        if (k == 0 && m_extDisp) m_context->CopyResource(m_dispA[0].tex, m_extDisp);
         Pass(m_psCheck, m_dispB[k], cb, m_dispA[k].srv);
         Pass(m_psFill, m_dispA[k], cb, m_dispB[k].srv);
         Pass(m_psMedian, m_dispB[k], cb, m_dispA[k].srv);
@@ -392,4 +395,11 @@ bool LookAround::ReadMotion(float out[6])
     out[4] = f[4]; out[5] = f[5];
     m_context->Unmap(m_estRead, 0);
     return true;
+}
+
+void LookAround::MapSize(int eyeW, int eyeH, int& w, int& h) const
+{
+    const int autoBase = eyeW >= 2600 ? 8 : eyeW >= 1300 ? 4 : 2;
+    const int base = m_base > 0 ? (std::min)(m_base, autoBase) : autoBase;
+    w = eyeW / base; h = eyeH / base;
 }

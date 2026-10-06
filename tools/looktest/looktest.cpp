@@ -55,6 +55,7 @@ static bool SavePNG(const std::wstring& path, const std::vector<uint8_t>& rgba, 
 // against, so the right eye is made from the LEFT eye alone -- a whole eye
 // spacing's move from one view -- and compared with the real right eye. Then
 // views from beside the pair are written out to look at.
+static ID3D11Texture2D* LoadDsp(ID3D11Device* dev, LookAround& look, const wchar_t* file, int ew, int eh);
 static int RunSbs(const wchar_t* file, const std::wstring& outdir)
 {
     std::vector<uint8_t> px; UINT W = 0, H = 0;
@@ -74,6 +75,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (const wchar_t* fn = _wgetenv(L"LOOKTEST_FINE")) look.SetFine(_wtoi(fn));
     if (const wchar_t* bs = _wgetenv(L"LOOKTEST_BASE")) look.SetBase(_wtoi(bs));
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
+    if (const wchar_t* ds = _wgetenv(L"LOOKTEST_DSP")) look.SetExternalDisparity(LoadDsp(dev, look, ds, ew, eh));
     ID3D11Texture2D* staging = nullptr;
     auto read = [&](std::vector<uint8_t>& out) {
         D3D11_TEXTURE2D_DESC od{}; look.OutputTexture()->GetDesc(&od);
@@ -156,6 +158,47 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     }
     look.Shutdown();
     return 0;
+}
+
+// A disparity from another matcher (LOOKTEST_DSP: 'DSP1', width, height, then
+// the left and the right eye's disparity in the picture's own pixels, float
+// rows) made into the texture LookAround::SetExternalDisparity takes: each
+// texel of the map the mean of the pixels it covers, in the map's texels.
+static ID3D11Texture2D* LoadDsp(ID3D11Device* dev, LookAround& look, const wchar_t* file, int ew, int eh)
+{
+    FILE* f = nullptr; _wfopen_s(&f, file, L"rb");
+    if (!f) return nullptr;
+    char tag[4]; int w = 0, h = 0;
+    if (fread(tag, 1, 4, f) != 4 || fread(&w, 4, 1, f) != 1 || fread(&h, 4, 1, f) != 1 || w != ew || h != eh) { fclose(f); fwprintf(stderr, L"the disparity file is not this picture's size\n"); return nullptr; }
+    std::vector<float> d((size_t)w * h * 2);
+    fread(d.data(), sizeof(float), d.size(), f); fclose(f);
+    int mw = 0, mh = 0; look.MapSize(ew, eh, mw, mh);
+    const int kx = ew / mw, ky = eh / mh;
+    // (A test: the disparity scaled and shifted, LOOKTEST_DSPGAIN / LOOKTEST_DSPBIAS (pixels).)
+    const float gain = _wgetenv(L"LOOKTEST_DSPGAIN") ? (float)_wtof(_wgetenv(L"LOOKTEST_DSPGAIN")) : 1.0f, bias = _wgetenv(L"LOOKTEST_DSPBIAS") ? (float)_wtof(_wgetenv(L"LOOKTEST_DSPBIAS")) : 0.0f;
+    auto toHalf = [](float v) -> uint16_t {
+        uint32_t x; memcpy(&x, &v, 4);
+        const uint32_t sign = (x >> 16) & 0x8000; int e = (int)((x >> 23) & 0xff) - 127 + 15; uint32_t m = x & 0x7fffff;
+        if (e <= 0) { if (e < -10) return (uint16_t)sign; m = (m | 0x800000) >> (1 - e); return (uint16_t)(sign | (m >> 13)); }
+        if (e >= 31) return (uint16_t)(sign | 0x7c00);
+        return (uint16_t)(sign | (e << 10) | (m >> 13));
+    };
+    std::vector<uint16_t> px((size_t)mw * 2 * mh * 4, 0);
+    for (int eye = 0; eye < 2; ++eye)
+        for (int y = 0; y < mh; ++y) for (int x = 0; x < mw; ++x)
+        {
+            double s = 0;
+            for (int j = 0; j < ky; ++j) for (int i = 0; i < kx; ++i) s += d[(size_t)eye * w * h + (size_t)(y * ky + j) * w + (x * kx + i)];
+            px[((size_t)y * mw * 2 + eye * mw + x) * 4] = toHalf(((float)(s / (kx * ky)) * gain + bias) / (float)kx);
+            px[((size_t)y * mw * 2 + eye * mw + x) * 4 + 1] = toHalf(1.0f);   // (.g: sure of it)
+        }
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = (UINT)(mw * 2); td.Height = (UINT)mh; td.MipLevels = 1; td.ArraySize = 1; td.SampleDesc.Count = 1;
+    td.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA sd{ px.data(), (UINT)(mw * 2 * 8), 0 };
+    ID3D11Texture2D* t = nullptr; dev->CreateTexture2D(&td, &sd, &t);
+    if (t) wprintf(L"disparity from %s, as a %dx%d map\n", file, mw, mh);
+    return t;
 }
 
 // Against a measured truth: a Middlebury 2014 scene (im0.png, im1.png and
