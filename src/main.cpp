@@ -8075,7 +8075,7 @@ namespace
                                 app.renderer.Device()->CreateTexture2D(&st, nullptr, &app.neuralStage);
                             }
                             D3D11_MAPPED_SUBRESOURCE m{};
-                            if (app.neuralStage && td.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
+                            if (app.neuralStage && (td.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS || td.Format == DXGI_FORMAT_R8G8B8A8_UNORM || td.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB))   // (the converter's is typeless, seen through an sRGB view)
                             {
                                 app.renderer.Context()->CopyResource(app.neuralStage, app.converter.OutputTexture());
                                 if (SUCCEEDED(app.renderer.Context()->Map(app.neuralStage, 0, D3D11_MAP_READ, 0, &m)))
@@ -8085,7 +8085,7 @@ namespace
                                     app.renderer.Context()->Unmap(app.neuralStage, 0);
                                 }
                             }
-                            else Log("NeuralDepth: the picture is not 8-bit sRGB (format %d): left alone", (int)td.Format);
+                            else Log("NeuralDepth: the picture is not 8-bit RGBA (format %d): left alone", (int)td.Format);
                             app.neuralSubmitted = app.lookSerial;
                         }
                         std::vector<uint16_t> res; int rw = 0, rh = 0; unsigned rs = 0; double rms = 0.0;
