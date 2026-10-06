@@ -42,12 +42,16 @@ namespace srw
         ID3D11ShaderResourceView* OutputSRV() const { return m_out[1].srv; }
         ID3D11Texture2D*          OutputTexture() const { return m_out[1].tex; }
         DXGI_FORMAT               OutputFormat() const { return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; }
+        // The disparity found for the two eyes (side by side, .r in texels of its own size): for looking at.
+        ID3D11Texture2D* DisparityTexture() const { return m_dispB[0].tex; }
         int OutputPerEyeWidth() const { return m_eyeW; }
         int OutputHeight() const { return m_eyeH; }
 
         // The largest disparity looked for, as a share of the eye's width (0.06:
         // more than any comfortable stereo picture has).
         void SetMaxDisparity(float share) { m_maxShare = share; }
+        // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
+        void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
 
         // GPU time of the last timed frame, by stage (ms): the levels, the
         // matching, the geometry, the new views; false while none is in.
@@ -65,7 +69,7 @@ namespace srw
         ID3D11DeviceContext* m_context = nullptr;
         ID3D11VertexShader*  m_vsFull = nullptr, *m_vsSplat = nullptr;
         ID3D11PixelShader*   m_psDownFirst = nullptr, *m_psDownNext = nullptr, *m_psGrad = nullptr, *m_psMatchFull = nullptr,
-                            *m_psMatchRefine = nullptr, *m_psCheck = nullptr, *m_psFill = nullptr, *m_psMedian = nullptr,
+                            *m_psMatchRefine = nullptr, *m_psCheck = nullptr, *m_psFill = nullptr, *m_psMedian = nullptr, *m_psSpread = nullptr,
                             *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr;
         ID3D11Buffer*            m_cb = nullptr;
         ID3D11SamplerState*      m_sampler = nullptr;
@@ -82,6 +86,7 @@ namespace srw
         int   m_eyeW = 0, m_eyeH = 0;
         float m_maxShare = 0.06f;
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
+        int   m_spread = 1;
 
         // (Timing: every so many frames, five timestamps.)
         ID3D11Query* m_disjoint = nullptr; ID3D11Query* m_ts[5] = {};

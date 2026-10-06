@@ -195,6 +195,32 @@ float4 PSMatchRefine(VSOut i) : SV_Target
     return Settle(p, half, bd, best, w, h);
 }
 
+// Edges drawn in: the windows above are several texels across, so an object's
+// disparity spreads that far past its outline (what shows as a halo, and a
+// flat sign cut out too generously), and a small thing can be outvoted by
+// what is behind it. Here each texel asks again, with a window of 3x3 only,
+// whether one of the disparities found a few texels away suits it better than
+// its own -- the choice is only among answers already found nearby, so a small
+// window's noise cannot invent one. Its own stands unless another is clearly
+// better. (tex0: the level. tex1: the disparity. g_winR: 1.)
+float4 PSSpread(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    const int w = (int)g_size.x, h = (int)g_size.y;
+    const float4 own = tex1.Load(int3(half * w + p.x, p.y, 0));
+    float bestD = own.r;
+    float best = Cost(p, half, (int)round(own.r), w, h) * 0.85;
+    static const int2 kS[8] = { int2(-3, 0), int2(3, 0), int2(0, -3), int2(0, 3), int2(-6, 0), int2(6, 0), int2(0, -6), int2(0, 6) };
+    [loop] for (int n = 0; n < 8; ++n)
+    {
+        const float d = tex1.Load(int3(InEye(p + kS[n], half, w, h), 0)).r;
+        if (abs(d - own.r) < 0.75) continue;
+        const float c = Cost(p, half, (int)round(d), w, h);
+        if (c < best) { best = c; bestD = d; }
+    }
+    return float4(bestD, own.g, own.b, 0);
+}
+
 // The other eye's disparity at a place between its texels. (tex: .r)
 float DispAt(Texture2D t, float x, int y, int half, int w, int h)
 {

@@ -117,6 +117,29 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     }
     if (!outdir.empty())
     {
+        // The left eye's disparity as a grey picture (near is light), at its own size.
+        LookAround::View v0; look.Render(srv, ew, eh, v0);
+        D3D11_TEXTURE2D_DESC dd{}; look.DisparityTexture()->GetDesc(&dd);
+        D3D11_TEXTURE2D_DESC sd2 = dd; sd2.Usage = D3D11_USAGE_STAGING; sd2.BindFlags = 0; sd2.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        ID3D11Texture2D* st = nullptr; dev->CreateTexture2D(&sd2, nullptr, &st);
+        ctx->CopyResource(st, look.DisparityTexture());
+        D3D11_MAPPED_SUBRESOURCE m{}; ctx->Map(st, 0, D3D11_MAP_READ, 0, &m);
+        const int dw = (int)dd.Width / 2, dh = (int)dd.Height;
+        auto half = [](uint16_t hh) { const uint32_t s = (hh >> 15) & 1, e = (hh >> 10) & 31, mm = hh & 1023; float v = e == 0 ? std::ldexp((float)mm, -24) : std::ldexp((float)(mm | 1024), (int)e - 25); return s ? -v : v; };
+        std::vector<float> dv((size_t)dw * dh); float lo = 1e9f, hi = -1e9f;
+        for (int y = 0; y < dh; ++y) for (int x = 0; x < dw; ++x)
+        {
+            const uint16_t* p = (const uint16_t*)((const uint8_t*)m.pData + (size_t)y * m.RowPitch) + (size_t)x * 4;
+            const float v = half(p[0]); dv[(size_t)y * dw + x] = v; lo = (std::min)(lo, v); hi = (std::max)(hi, v);
+        }
+        ctx->Unmap(st, 0); st->Release();
+        std::vector<uint8_t> g((size_t)dw * dh * 4);
+        for (int k = 0; k < dw * dh; ++k) { const uint8_t c = (uint8_t)(255.0f * (dv[k] - lo) / (std::max)(hi - lo, 1e-3f)); g[k * 4] = g[k * 4 + 1] = g[k * 4 + 2] = c; g[k * 4 + 3] = 255; }
+        SavePNG(outdir + L"\\look_disparity.png", g, (UINT)dw, (UINT)dh);
+        wprintf(L"written: look_disparity.png (%dx%d, disparity %.1f .. %.1f texels)\n", dw, dh, lo, hi);
+    }
+    if (!outdir.empty())
+    {
         // To look at, one under another (both eyes each): the head an eye spacing
         // to the left; half a spacing to the right and up; nearer the screen.
         LookAround::View vs[3];
@@ -191,6 +214,7 @@ int wmain(int argc, wchar_t** argv)
     LookAround look;
     if (!look.Initialize(dev, ctx)) { fwprintf(stderr, L"look-around init failed\n"); return 1; }
     if (const wchar_t* m = _wgetenv(L"LOOKTEST_MAXDISP")) look.SetMaxDisparity((float)_wtof(m));
+    if (const wchar_t* sp = _wgetenv(L"LOOKTEST_SPREAD")) look.SetSpread(_wtoi(sp));
 
     // The left half of the output read back (the left eye's new view).
     ID3D11Texture2D* staging = nullptr;

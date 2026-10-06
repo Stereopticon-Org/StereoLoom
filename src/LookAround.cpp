@@ -14,6 +14,7 @@
 #include "Look_PSCheck.h"
 #include "Look_PSFill.h"
 #include "Look_PSMedian.h"
+#include "Look_PSSpread.h"
 #include "Look_PSSplat.h"
 #include "Look_PSHole.h"
 #include "Look_PSCompose.h"
@@ -36,6 +37,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSCheck,       sizeof(g_Look_PSCheck),       &m_psCheck },
         { g_Look_PSFill,        sizeof(g_Look_PSFill),        &m_psFill },
         { g_Look_PSMedian,      sizeof(g_Look_PSMedian),      &m_psMedian },
+        { g_Look_PSSpread,      sizeof(g_Look_PSSpread),      &m_psSpread },
         { g_Look_PSSplat,       sizeof(g_Look_PSSplat),       &m_psSplat },
         { g_Look_PSHole,        sizeof(g_Look_PSHole),        &m_psHole },
         { g_Look_PSCompose,     sizeof(g_Look_PSCompose),     &m_psCompose },
@@ -72,6 +74,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_disjoint); for (auto& q : m_ts) SAFE_RELEASE(q);
     SAFE_RELEASE(m_raster); SAFE_RELEASE(m_depthOn); SAFE_RELEASE(m_sampler); SAFE_RELEASE(m_cb);
     SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
+    SAFE_RELEASE(m_psSpread);
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
@@ -217,6 +220,19 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         Pass(m_psFill, m_dispA[k], cb, m_dispB[k].srv);
         Pass(m_psMedian, m_dispB[k], cb, m_dispA[k].srv);
         result[k] = &m_dispB[k];
+        // (At the finest size: the edges drawn in, twice -- PSSpread.)
+        if (k == 0 && m_spread > 0)
+        {
+            cb.winR = 1.0f;
+            for (int it = 0; it < m_spread; ++it)
+            {
+                Pass(m_psSpread, m_dispA[k], cb, m_lvl[k].srv, m_dispB[k].srv);
+                Pass(m_psSpread, m_dispB[k], cb, m_lvl[k].srv, m_dispA[k].srv);
+            }
+            // (... and the single texels that a 3x3 window's noise moved, put back.)
+            Pass(m_psMedian, m_dispA[k], cb, m_dispB[k].srv);
+            Pass(m_psMedian, m_dispB[k], cb, m_dispA[k].srv);
+        }
     }
     m_haveMaps = true;
     }
