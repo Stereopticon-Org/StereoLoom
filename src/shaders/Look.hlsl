@@ -54,7 +54,7 @@ cbuffer Params : register(b0)
     float4 g_opt;       // switches under trial: .x the reach, in texels, that PSCompose looks for other surfaces; .y what a surface the maps call hidden must beat (0: it is not tried); .z how softly surfaces mix; .w spare
     float4 g_motion;    // how the picture moved since the one before: .xy everything alike, in its own pixels; .zw times its disparity more (a camera a tenth of an eye spacing to the side: 0.1)
     float4 g_plate;     // .x 1: there is a plate from before (PSPlate). .y 1: PSUnseen may fill from the plate. .z a test: what it fills is marked. .w spare
-    float4 g_pad;       // .xy: the plate's margin round the eye's picture, in pixels -- what has gone out of the picture's side is kept a while too
+    float4 g_pad;       // .xy: the plate's margin round the eye's picture, in pixels -- what has gone out of the picture's side is kept a while too. .z: how many levels the far-side fill has (tex3, PSFillDown); 0: none
     float4 g_lk;        // the motion finder: .x picture pixels a texel of this level; .y the disparity (picture pixels) counted as one; .z this level's disparity texels to picture pixels; .w 1: PSPlate takes the motion found (tex3)
 };
 
@@ -401,6 +401,9 @@ float4 PSHole(VSOut i) : SV_Target
 // (g_srcSize is its eye's size). tex2: the new views' disparity, small.
 // One candidate disparity tried: each eye's colour through it, whether each eye
 // sees it, and what it costs -- how far the eyes that see it differ.
+// (Set by PSCompose: nothing of either eye landed anywhere round this pixel -- a gap. There the
+// eyes agreeing is chance, and is not believed.)
+static bool s_gap = false;
 void Try(float d, float2 lo, float2 full, float t, int w, int h, out float3 col, out float cost, out float seen)
 {
     float3 c[2]; float vis[2]; float wg[2];
@@ -431,7 +434,7 @@ void Try(float d, float2 lo, float2 full, float t, int w, int h, out float3 col,
     // through this disparity better than the maps' word is worth, they are
     // believed.)
     bool agreed = false;
-    [branch] if (nv < 1.5 && g_opt.y > 0.0 && g_only < -0.5 && both + g_opt.y < cost)
+    [branch] if (nv < 1.5 && g_opt.y > 0.0 && g_only < -0.5 && !s_gap && both + g_opt.y < cost)
     {
         // (... but only at an outline: where an eye's map has this surface within
         // a few texels of the place. Further in, hidden is hidden -- two places
@@ -479,6 +482,8 @@ float4 PSCompose(VSOut i) : SV_Target
     const int x0 = clamp((int)floor(lo.x), 0, w - 2), y0 = clamp((int)floor(lo.y), 0, h - 2);
     const float2 f = saturate(lo - float2(x0, y0));
     const float4 g4 = tex2.GatherRed(sampLinear, float2((float)(pane * w + x0) + 1.0, (float)y0 + 1.0) / float2(2 * w, h));
+    const float4 l4 = tex2.GatherGreen(sampLinear, float2((float)(pane * w + x0) + 1.0, (float)y0 + 1.0) / float2(2 * w, h));
+    s_gap = max(max(l4.x, l4.y), max(l4.z, l4.w)) < 0.5;
     const float d00 = g4.w, d10 = g4.z, d01 = g4.x, d11 = g4.y;
     const float dBi = lerp(lerp(d00, d10, f.x), lerp(d01, d11, f.x), f.y);
     // (To look at: the geometry itself -- the new view's disparity as grey, the
@@ -596,6 +601,41 @@ float4 PSUnseen(VSOut i) : SV_Target
             if (!hit && ok && d <= db + 1.0) { got = pl.rgb; hit = true; }
         }
         if (hit) return float4(g_plate.z > 0.5 ? float3(1, 0, 1) : got, 1);
+    }
+    // (Then: what lies BEHIND, carried in. tex3 is the picture made smaller and
+    // smaller, each texel keeping only the farthest of what it covers
+    // (PSFillDown). The gap takes the finest of those in which something as
+    // far as its own far side is found beside it -- near the gap's far edge a
+    // fine one, deep inside a coarse one -- so the background runs on into the
+    // gap, soft, where a mirrored row left streaks.)
+    [branch] if (g_pad.z > 0.5)
+    {
+        const int w0 = (int)g_srcSize.x, h0 = (int)g_srcSize.y;
+        const float2 full = float2((float)p.x + 0.5, (float)p.y + 0.5);
+        const float db = tex2.Load(int3(pane * w0 + clamp((int)(full.x / g_scale.x), 0, w0 - 1), clamp((int)(full.y / g_scale.y), 0, h0 - 1), 0)).r;
+        float3 acc = 0; float left = 1.0;
+        const int levels = (int)g_pad.z;
+        [loop] for (int m = 0; m < levels && left > 0.02; ++m)
+        {
+            uint mw, mh, mn; tex3.GetDimensions((uint)m, mw, mh, mn);
+            const int ew = (int)mw / 2;
+            const float2 u = full * float2((float)ew, (float)mh) / g_size - 0.5;
+            const int2 b = int2((int)floor(u.x), (int)floor(u.y));
+            const float2 f = u - float2(b);
+            float3 c = 0; float sw = 0;
+            [unroll] for (int k = 0; k < 4; ++k)
+            {
+                const int2 q = clamp(b + int2(k & 1, k >> 1), 0, int2(ew - 1, (int)mh - 1));
+                const float4 t = tex3.Load(int3(pane * ew + q.x, q.y, m));
+                const float wk = ((k & 1) ? f.x : 1.0 - f.x) * ((k >> 1) ? f.y : 1.0 - f.y);
+                // (As far as the gap's far side, or farther; a little leave the coarser it is.)
+                if (t.a < db + 1.0 + 0.5 * (float)m) { c += t.rgb * wk; sw += wk; }
+            }
+            const float take = left * saturate(sw * 2.0 - 0.3);
+            if (sw > 1e-4) acc += c / sw * take;
+            left -= take;
+        }
+        if (left < 0.5) return float4(g_plate.z > 0.5 ? float3(0, 0, 1) : acc / (1.0 - left), 1);
     }
     const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
     const int ly = clamp((int)((float)p.y / g_scale.y), 0, h - 1);
@@ -906,7 +946,58 @@ float4 PSFuse(VSOut i) : SV_Target
     const int w = (int)g_size.x, h = (int)g_size.y;
     const float4 nn = tex1.Load(int3(half * w + p.x, p.y, 0));
     const float4 own = tex2.Load(int3(half * w + p.x, p.y, 0));
+    // (At an outline the trained matcher is the one to believe: within two texels
+    // of a step in ITS map, its answer stands. The windows are fat there.)
+    float lo = nn.r, hi = nn.r;
+    static const int2 kE[8] = { int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1), int2(-2, 0), int2(2, 0), int2(0, -2), int2(0, 2) };
+    [unroll] for (int e = 0; e < 8; ++e)
+    {
+        const float v = tex1.Load(int3(InEye(p + kE[e], half, w, h), 0)).r;
+        lo = min(lo, v); hi = max(hi, v);
+    }
+    if (g_opt.z > 0.5 && hi - lo > 1.5) return float4(nn.r, nn.g, nn.b, 0);
     if (abs(nn.r - own.r) < 0.25) return float4(own.r, nn.g, nn.b, 0);     // (they agree: the windows' fraction is the finer)
     const float cn = FuseCost(tex1, p, half, w, h), co = FuseCost(tex2, p, half, w, h);
     return (co < cn * g_opt.w - 0.5 / 255.0) ? float4(own.r, own.g, own.b, 0) : float4(nn.r, nn.g, nn.b, 0);
+}
+
+// ---- The far side of things, for filling what is hidden ----------------------
+// The new view made smaller, level by level; each texel keeps the FARTHEST of
+// the four it covers -- their disparity, and the colour of those of the four
+// that are about that far. What neither eye saw is left out. Near things are
+// thus dropped level by level and what is behind them spreads: at some level
+// every gap has background beside it.
+// g_eye 0, the first level: tex0 the new view at full size (.a 1 seen), tex2
+// its disparity (g_srcSize, g_scale). g_eye 1: tex0 the level before.
+// g_size: this level's eye. Out: colour, and in .a the disparity (10000: nothing).
+float4 PSFillDown(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    uint sw, sh; tex0.GetDimensions(sw, sh);
+    const int ew = (int)sw / 2;
+    float4 ch[4]; float dmin = 1e4;
+    [unroll] for (int k = 0; k < 4; ++k)
+    {
+        const int2 q = clamp(p * 2 + int2(k & 1, k >> 1), 0, int2(ew - 1, (int)sh - 1));
+        float4 t = tex0.Load(int3(half * ew + q.x, q.y, 0));
+        if (g_eye < 0.5)
+        {
+            const int w0 = (int)g_srcSize.x, h0 = (int)g_srcSize.y;
+            const float d = tex2.Load(int3(half * w0 + clamp((int)(((float)q.x + 0.5) / g_scale.x), 0, w0 - 1), clamp((int)(((float)q.y + 0.5) / g_scale.y), 0, h0 - 1), 0)).r;
+            // (Not one beside a nearer thing: at an outline the colours of the two sides run together.)
+            const int2 mq = int2(clamp((int)(((float)q.x + 0.5) / g_scale.x), 0, w0 - 1), clamp((int)(((float)q.y + 0.5) / g_scale.y), 0, h0 - 1));
+            float nearest = d;
+            [unroll] for (int e = 0; e < 4; ++e)
+            {
+                const int2 o = int2(e == 0 ? -1 : e == 1 ? 1 : 0, e == 2 ? -1 : e == 3 ? 1 : 0);
+                nearest = max(nearest, tex2.Load(int3(half * w0 + clamp(mq.x + o.x, 0, w0 - 1), clamp(mq.y + o.y, 0, h0 - 1), 0)).r);
+            }
+            t.a = (t.a > 0.5 && nearest < d + 1.0) ? d : 1e4;
+        }
+        ch[k] = t; dmin = min(dmin, t.a);
+    }
+    if (dmin > 5000.0) return float4(0, 0, 0, 1e4);
+    float3 c = 0; float n = 0;
+    [unroll] for (int k2 = 0; k2 < 4; ++k2) if (ch[k2].a < dmin + 0.75) { c += ch[k2].rgb; n += 1.0; }
+    return float4(c / n, dmin);
 }

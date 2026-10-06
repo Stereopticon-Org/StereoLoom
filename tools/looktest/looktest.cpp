@@ -79,7 +79,9 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
     if (const wchar_t* ds = _wgetenv(L"LOOKTEST_DSP")) look.SetExternalDisparity(LoadDsp(dev, look, ds, ew, eh));
     if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
+    if (const wchar_t* ff = _wgetenv(L"LOOKTEST_FARFILL")) look.SetFarFill(_wtoi(ff) != 0);
     if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
+    if (const wchar_t* fe = _wgetenv(L"LOOKTEST_FUSEEDGE")) look.SetFuseEdge(_wtoi(fe) != 0);
     // LOOKTEST_NEURAL: the trained matcher as SR Loom runs it (src/NeuralDepth: ONNX Runtime, the model
     // beside the exe), on this picture -- its depth in place of the look-around's own.
     NeuralDepth neural; ID3D11Texture2D* neuralTex = nullptr;
@@ -269,6 +271,11 @@ static int RunMb(const std::wstring& dir)
     LookAround look;
     if (!srv || !look.Initialize(dev, ctx)) { fwprintf(stderr, L"look-around init failed\n"); return 1; }
     if (const wchar_t* bs = _wgetenv(L"LOOKTEST_BASE")) look.SetBase(_wtoi(bs));
+    if (const wchar_t* ds = _wgetenv(L"LOOKTEST_DSP")) look.SetExternalDisparity(LoadDsp(dev, look, ds, ew, eh));
+    if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
+    if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
+    if (const wchar_t* fe = _wgetenv(L"LOOKTEST_FUSEEDGE")) look.SetFuseEdge(_wtoi(fe) != 0);
+    if (const wchar_t* dp = _wgetenv(L"LOOKTEST_DUMPPAIR")) { SavePNG(std::wstring(dp) + L"/left.png", a, (UINT)ew, (UINT)eh); SavePNG(std::wstring(dp) + L"/right.png", b, (UINT)ew, (UINT)eh); }
     LookAround::View v0; look.Render(srv, ew, eh, v0);
     D3D11_TEXTURE2D_DESC dd{}; look.DisparityTexture()->GetDesc(&dd);
     D3D11_TEXTURE2D_DESC sd2 = dd; sd2.Usage = D3D11_USAGE_STAGING; sd2.BindFlags = 0; sd2.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -279,6 +286,9 @@ static int RunMb(const std::wstring& dir)
     auto half = [](uint16_t hh) { const uint32_t s = (hh >> 15) & 1, e = (hh >> 10) & 31, mm = hh & 1023; float v = e == 0 ? std::ldexp((float)mm, -24) : std::ldexp((float)(mm | 1024), (int)e - 25); return s ? -v : v; };
     const float sx = (float)ew / (float)dw, sy = (float)eh / (float)dh;
     size_t n = 0, b2 = 0, b4 = 0, b8 = 0; double sum = 0;
+    // (... and the same at outlines alone: texels within two of a step in the true disparity.)
+    size_t ne = 0, e4 = 0, e8 = 0;
+    auto gtAt = [&](int x, int y) { x = (std::max)(0, (std::min)(dw - 1, x)); y = (std::max)(0, (std::min)(dh - 1, y)); return gt[(size_t)(std::min)(eh - 1, (int)(((float)y + 0.5f) * sy)) * W + (std::min)(ew - 1, (int)(((float)x + 0.5f) * sx))]; };
     for (int y = 0; y < dh; ++y) for (int x = 0; x < dw; ++x)
     {
         const float g = gt[(size_t)(std::min)(eh - 1, (int)(((float)y + 0.5f) * sy)) * W + (std::min)(ew - 1, (int)(((float)x + 0.5f) * sx))];
@@ -286,11 +296,19 @@ static int RunMb(const std::wstring& dir)
         const uint16_t* p = (const uint16_t*)((const uint8_t*)m.pData + (size_t)y * m.RowPitch) + (size_t)x * 4;
         const float e = std::fabs(half(p[0]) * sx - g);
         ++n; sum += e; b2 += e > 2.0f; b4 += e > 4.0f; b8 += e > 8.0f;
+        bool edge = false;
+        for (int o = 1; o <= 2 && !edge; ++o)
+        {
+            const float nb[4] = { gtAt(x - o, y), gtAt(x + o, y), gtAt(x, y - o), gtAt(x, y + o) };
+            for (int q = 0; q < 4; ++q) if (std::isfinite(nb[q]) && nb[q] > 0.0f && std::fabs(nb[q] - g) > 1.5f * sx) edge = true;
+        }
+        if (edge) { ++ne; e4 += e > 4.0f; e8 += e > 8.0f; }
     }
     ctx->Unmap(st, 0); st->Release();
     const std::wstring name = dir.substr(dir.find_last_of(L"/") + 1);
     wprintf(L"%-20s %dx%d, map %dx%d: out by > 2 px %5.1f%% | > 4 px %5.1f%% | > 8 px %5.1f%% | mean error %.2f px\n", name.c_str(), ew, eh, dw, dh,
             100.0 * b2 / (std::max)(n, (size_t)1), 100.0 * b4 / (std::max)(n, (size_t)1), 100.0 * b8 / (std::max)(n, (size_t)1), sum / (std::max)(n, (size_t)1));
+    wprintf(L"%-20s at outlines (%.1f%% of the picture): out by > 4 px %5.1f%% | > 8 px %5.1f%%\n", name.c_str(), 100.0 * ne / (std::max)(n, (size_t)1), 100.0 * e4 / (std::max)(ne, (size_t)1), 100.0 * e8 / (std::max)(ne, (size_t)1));
     look.Shutdown();
     return 0;
 }
@@ -363,7 +381,9 @@ int wmain(int argc, wchar_t** argv)
     if (const wchar_t* dp = _wgetenv(L"LOOKTEST_DUMPPAIR")) { SavePNG(std::wstring(dp) + L"/left.png", A, (UINT)ew, (UINT)eh); SavePNG(std::wstring(dp) + L"/right.png", B, (UINT)ew, (UINT)eh); }
     if (const wchar_t* ds = _wgetenv(L"LOOKTEST_DSP")) look.SetExternalDisparity(LoadDsp(dev, look, ds, ew, eh));
     if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
+    if (const wchar_t* ff = _wgetenv(L"LOOKTEST_FARFILL")) look.SetFarFill(_wtoi(ff) != 0);
     if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
+    if (const wchar_t* fe = _wgetenv(L"LOOKTEST_FUSEEDGE")) look.SetFuseEdge(_wtoi(fe) != 0);
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
 
     // A moving picture, for the plate: LOOKTEST_SEQ=n,m gives n earlier pictures first, the camera m views

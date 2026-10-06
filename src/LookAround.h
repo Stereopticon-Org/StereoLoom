@@ -58,6 +58,7 @@ namespace srw
         void SetPlate(bool on) { m_plateOn = on; }
         void ForgetPlate() { m_plateHave = false; }
         void SetMarkFill(bool on) { m_markFill = on; }   // (a test: what the plate filled drawn magenta, what it could not green)
+        void SetFarFill(bool on) { m_fillOn = on; }   // (what neither eye sees filled from the far side, level by level; off: the mirrored row)
         // The motion between pictures found from the pictures themselves (on, as a rule; off: only what
         // SetMotion gives). ReadMotion: what was found for the last picture -- x, y, per-disparity x, y,
         // how badly it fitted, the share of the picture that counted. It waits for the GPU: for tests.
@@ -71,6 +72,7 @@ namespace srw
         void MapSize(int eyeW, int eyeH, int& w, int& h) const;
         void SetExternalStage(int s) { m_extStage = s; m_haveMaps = false; }
         void SetFuseBias(float b) { m_fuseBias = b; m_haveMaps = false; }
+        void SetFuseEdge(bool on) { m_fuseEdge = on; m_haveMaps = false; }   // (at a step in the other matcher's map, its answer stands)
         void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
         void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
@@ -93,7 +95,7 @@ namespace srw
         ID3D11VertexShader*  m_vsFull = nullptr, *m_vsSplat = nullptr;
         ID3D11PixelShader*   m_psDownFirst = nullptr, *m_psDownNext = nullptr, *m_psGrad = nullptr, *m_psMatchFull = nullptr,
                             *m_psMatchRefine = nullptr, *m_psCheck = nullptr, *m_psFill = nullptr, *m_psMedian = nullptr, *m_psSpread = nullptr, *m_psFine = nullptr, *m_psGuide = nullptr, *m_psFuse = nullptr,
-                            *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr, *m_psPlate = nullptr, *m_psLKSum = nullptr, *m_psLKSolve = nullptr;
+                            *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr, *m_psPlate = nullptr, *m_psFillDown = nullptr, *m_psLKSum = nullptr, *m_psLKSolve = nullptr;
         ID3D11Buffer*            m_cb = nullptr;
         ID3D11SamplerState*      m_sampler = nullptr;
         ID3D11DepthStencilState* m_depthOn = nullptr;
@@ -111,6 +113,12 @@ namespace srw
         bool  m_plateHave = false, m_plateOn = true;
         float m_motion[4] = {};
         bool  m_markFill = false;
+        // The far-side fill (PSFillDown): the new view made smaller level by level, in one texture's mips.
+        static constexpr int kFillMax = 9;
+        ID3D11Texture2D* m_fillTex = nullptr; ID3D11ShaderResourceView* m_fillAll = nullptr;
+        ID3D11RenderTargetView* m_fillRtv[kFillMax] = {}; ID3D11ShaderResourceView* m_fillMip[kFillMax] = {};
+        int   m_fillMips = 0, m_fillW = 0, m_fillH = 0;
+        bool  m_fillOn = true;
         bool  m_findMotion = true, m_prevHave = false, m_estHave = false;
         Tex   m_prevTmp[kLevels];                    // the levels' colour of the picture before
         Tex   m_lkSum[4], m_est[2], m_estQ;          // the motion finder's sums; the motion (one texel), and the one before; how well it fitted
@@ -123,8 +131,9 @@ namespace srw
         int   m_base = 0;
         ID3D11Texture2D* m_extDisp = nullptr;
         int   m_extStage = 4;       // (how it comes in: 0 before the checking, 1 before the edges are drawn in, 2 before the making finer, 3 put right in its detail, 4 the better of it and the look-around's own at each texel)
-        float m_fuseBias = 0.7f;    // (4: its own is taken where it costs less than this share of the other's)
+        float m_fuseBias = 0.5f;    // (4: its own is taken where it costs less than this share of the other's)
         Tex   m_extCopy;
+        bool  m_fuseEdge = true;
         // (Measured 2026-10-06, quilts: these four together about 1 dB between the eyes, 0.4 beyond them, for 1.7 ms.)
         float m_opt[4] = { 2.0f, 0.02f, 0.01f, 3.0f };
         float m_fineR = 1.0f;       // (3x3: 5x5 measured 0.2 dB more for a millisecond more)

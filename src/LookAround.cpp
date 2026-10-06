@@ -23,6 +23,7 @@
 #include "Look_PSCompose.h"
 #include "Look_PSUnseen.h"
 #include "Look_PSPlate.h"
+#include "Look_PSFillDown.h"
 #include "Look_PSLKSum.h"
 #include "Look_PSLKSolve.h"
 
@@ -52,6 +53,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSCompose,     sizeof(g_Look_PSCompose),     &m_psCompose },
         { g_Look_PSUnseen,      sizeof(g_Look_PSUnseen),      &m_psUnseen },
         { g_Look_PSPlate,       sizeof(g_Look_PSPlate),       &m_psPlate },
+        { g_Look_PSFillDown,    sizeof(g_Look_PSFillDown),    &m_psFillDown },
         { g_Look_PSLKSum,       sizeof(g_Look_PSLKSum),       &m_psLKSum },
         { g_Look_PSLKSolve,     sizeof(g_Look_PSLKSolve),     &m_psLKSolve },
     };
@@ -81,6 +83,8 @@ void LookAround::Release(Tex& t) { SAFE_RELEASE(t.srv); SAFE_RELEASE(t.rtv); SAF
 void LookAround::Shutdown()
 {
     Release(m_plate[0]); Release(m_plate[1]); Release(m_extCopy);
+    for (int k = 0; k < kFillMax; ++k) { SAFE_RELEASE(m_fillRtv[k]); SAFE_RELEASE(m_fillMip[k]); }
+    SAFE_RELEASE(m_fillAll); SAFE_RELEASE(m_fillTex); m_fillMips = 0;
     for (int k = 0; k < 4; ++k) Release(m_lkSum[k]);
     Release(m_est[0]); Release(m_est[1]); Release(m_estQ); SAFE_RELEASE(m_estRead);
     for (int k = 0; k < kLevels; ++k) Release(m_prevTmp[k]);
@@ -90,7 +94,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_dsv); SAFE_RELEASE(m_depthTex);
     SAFE_RELEASE(m_disjoint); for (auto& q : m_ts) SAFE_RELEASE(q);
     SAFE_RELEASE(m_raster); SAFE_RELEASE(m_depthOn); SAFE_RELEASE(m_sampler); SAFE_RELEASE(m_cb);
-    SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
+    SAFE_RELEASE(m_psFillDown); SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
     SAFE_RELEASE(m_psSpread); SAFE_RELEASE(m_psFine); SAFE_RELEASE(m_psGuide); SAFE_RELEASE(m_psFuse);
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
@@ -275,9 +279,9 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         if (k == 0 && m_extDisp && m_extStage == 4 && Ensure(m_extCopy, 2 * w[0], h[0], DXGI_FORMAT_R16G16B16A16_FLOAT))
         {
             m_context->CopyResource(m_extCopy.tex, m_extDisp);
-            const float keep = cb.opt[3]; cb.opt[3] = m_fuseBias;
+            const float keep = cb.opt[3], keep2 = cb.opt[2]; cb.opt[3] = m_fuseBias; cb.opt[2] = m_fuseEdge ? 1.0f : 0.0f;
             Pass(m_psFuse, m_dispA[0], cb, m_lvl[0].srv, m_extCopy.srv, m_dispB[0].srv);
-            cb.opt[3] = keep;
+            cb.opt[3] = keep; cb.opt[2] = keep2;
             m_context->CopyResource(m_dispB[0].tex, m_dispA[0].tex);
         }
         // (3: ... and first put right in its detail, within two texels of where it was: PSGuide.)
@@ -382,8 +386,42 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     // 4. The new views, at full size; then what neither eye saw.
     cb.size[0] = (float)eyeW; cb.size[1] = (float)eyeH; cb.srcSize[0] = (float)w[0]; cb.srcSize[1] = (float)h[0];
     Pass(m_psCompose, m_out[0], cb, src, result[0]->srv, m_targetFilled.srv);
+    // The far side of things, level by level, for what neither eye saw.
+    cb.pad[2] = 0.0f;
+    if (m_fillOn)
+    {
+        const int fw = (std::max)(2, eyeW / 2) * 2, fh = (std::max)(1, eyeH / 2);
+        if (!m_fillTex || m_fillW != fw || m_fillH != fh)
+        {
+            for (int k = 0; k < kFillMax; ++k) { SAFE_RELEASE(m_fillRtv[k]); SAFE_RELEASE(m_fillMip[k]); }
+            SAFE_RELEASE(m_fillAll); SAFE_RELEASE(m_fillTex); m_fillMips = 0; m_fillW = fw; m_fillH = fh;
+            int n = 1; for (int a = fw / 2, b = fh; n < kFillMax && a >= 16 && b >= 8; a /= 2, b /= 2) ++n;
+            D3D11_TEXTURE2D_DESC td{};
+            td.Width = (UINT)fw; td.Height = (UINT)fh; td.MipLevels = (UINT)n; td.ArraySize = 1; td.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+            bool made = SUCCEEDED(m_device->CreateTexture2D(&td, nullptr, &m_fillTex)) && SUCCEEDED(m_device->CreateShaderResourceView(m_fillTex, nullptr, &m_fillAll));
+            for (int k = 0; k < n && made; ++k)
+            {
+                D3D11_RENDER_TARGET_VIEW_DESC rv{}; rv.Format = td.Format; rv.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D; rv.Texture2D.MipSlice = (UINT)k;
+                D3D11_SHADER_RESOURCE_VIEW_DESC sv{}; sv.Format = td.Format; sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; sv.Texture2D.MostDetailedMip = (UINT)k; sv.Texture2D.MipLevels = 1;
+                made = SUCCEEDED(m_device->CreateRenderTargetView(m_fillTex, &rv, &m_fillRtv[k])) && SUCCEEDED(m_device->CreateShaderResourceView(m_fillTex, &sv, &m_fillMip[k]));
+            }
+            if (made) m_fillMips = n;
+        }
+        int mw = m_fillW, mh = m_fillH;
+        for (int k = 0; k < m_fillMips; ++k)
+        {
+            Tex t; t.rtv = m_fillRtv[k]; t.w = mw; t.h = mh;
+            CB c2 = cb; c2.size[0] = (float)(mw / 2); c2.size[1] = (float)mh; c2.eye = k == 0 ? 0.0f : 1.0f;
+            Pass(m_psFillDown, t, c2, k == 0 ? m_out[0].srv : m_fillMip[k - 1], nullptr, m_targetFilled.srv);
+            mw = (std::max)(1, mw / 2); mh = (std::max)(1, mh / 2);
+        }
+        cb.pad[2] = (float)m_fillMips;
+    }
     cb.plate[1] = (m_plateOn && m_plateHave) ? 1.0f : 0.0f; cb.plate[2] = m_markFill ? 1.0f : 0.0f;
+    { ID3D11ShaderResourceView* fa = cb.pad[2] > 0.5f ? m_fillAll : nullptr; m_context->PSSetShaderResources(3, 1, &fa); }
     Pass(m_psUnseen, m_out[1], cb, m_out[0].srv, m_plate[m_plateCur].srv, m_targetFilled.srv);
+    { ID3D11ShaderResourceView* fa = nullptr; m_context->PSSetShaderResources(3, 1, &fa); }
     mark(4);
     if (m_timing) { m_context->End(m_disjoint); m_timePending = true; m_timing = false; }
     m_context->RSSetState(nullptr);
