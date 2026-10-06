@@ -552,6 +552,8 @@ namespace
         LookAround   look;                  // new views from the two eyes as the head moves (an experiment: Settings LookAround)
         NeuralDepth  neural;                // a trained matcher's depth for a picture that stays (an experiment: Settings LookNeural)
         bool         lookNeural = false, neuralActive = false;   // (neuralActive: the look-around is on the trained matcher's depth)
+        int          lookDepth = -1;        // (Settings LookDepth: 0 its own matcher, 1 the trained one and its own, 2 the trained one alone)
+        std::wstring lookModel, exeDir;     // (Settings LookModel: the trained matcher's file, in the neural folder beside the exe)
         unsigned     neuralSubmitted = 0;   // (the converter's picture last handed to it)
         ULONGLONG    neuralTick = 0;        // (when the converter's picture last changed)
         ID3D11Texture2D* neuralTex = nullptr; ID3D11Texture2D* neuralStage = nullptr;
@@ -9969,7 +9971,20 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                 app.perfLog = Settings::ReadPerfLog();
                 app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
                 app.lookShow = Settings::ReadLookShow();
-                app.lookNeural = Settings::ReadLookNeural();
+                {
+                    const int ld = Settings::ReadLookDepth();
+                    if (ld != app.lookDepth) { app.lookDepth = ld; app.look.SetExternalStage(ld == 2 ? 2 : 4); }
+                    app.lookNeural = ld != 0;
+                    // (Another model chosen: the matcher begun again with it, and the picture handed over afresh.)
+                    const std::wstring lm = Settings::ReadLookModel();
+                    if (lm != app.lookModel && !app.neural.Busy())
+                    {
+                        app.lookModel = lm;
+                        app.neural.Shutdown(); app.neural.Start(app.exeDir, lm);
+                        if (app.neuralActive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; }
+                        app.neuralSubmitted = 0;
+                    }
+                }
                 { const int ls = Settings::ReadLookSize(); if (ls != app.lookSize) { app.lookSize = ls; app.look.SetBase(ls); } }
                 app.renderer.SetAutoPlane(Settings::ReadAutoPlane(), Settings::ReadAutoPlaneDX12(), Settings::ReadAutoPlaneHold());   // (the panel's Straight to Display toggle)
                 app.renderer.SetLatencyStats(app.perfLog);
@@ -10222,8 +10237,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
         // (The trained matcher, where its runtime and model are beside the exe.)
         wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
         std::wstring dir = exe; const size_t cut = dir.find_last_of(L"\\/"); if (cut != std::wstring::npos) dir.resize(cut);
-        app.lookNeural = Settings::ReadLookNeural();
-        app.neural.Start(dir);
+        app.exeDir = dir; app.lookModel = Settings::ReadLookModel();
+        app.lookDepth = Settings::ReadLookDepth(); app.lookNeural = app.lookDepth != 0;
+        app.look.SetExternalStage(app.lookDepth == 2 ? 2 : 4);
+        app.neural.Start(dir, app.lookModel);
     }
     app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
     app.converter.SetScrollReuse(Settings::ReadScrollReuse());

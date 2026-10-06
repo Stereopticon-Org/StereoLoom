@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <stdexcept>
 
 #ifdef SRLOOM_NEURAL
 // (onnxruntime.dll is delay-loaded: its API is fetched only once the DLL is
@@ -58,11 +59,11 @@ namespace
     }
 }
 
-bool NeuralDepth::Start(const std::wstring& exeDir)
+bool NeuralDepth::Start(const std::wstring& exeDir, const std::wstring& modelFile)
 {
 #ifdef SRLOOM_NEURAL
     if (m_thread.joinable()) return true;
-    m_model = exeDir + L"\\neural\\stereo.onnx";
+    m_model = exeDir + L"\\neural\\" + (modelFile.empty() ? std::wstring(L"Fast-FoundationStereo.onnx") : modelFile);
     if (!Exists(exeDir + L"\\onnxruntime.dll") || !Exists(exeDir + L"\\DirectML.dll") || !Exists(m_model))
     {
         Log("NeuralDepth: not there (onnxruntime.dll, DirectML.dll beside the exe and neural\\stereo.onnx are all needed)");
@@ -72,7 +73,7 @@ bool NeuralDepth::Start(const std::wstring& exeDir)
     m_thread = std::thread([this] { Run(); });
     return true;
 #else
-    (void)exeDir;
+    (void)exeDir; (void)modelFile;
     return false;
 #endif
 }
@@ -126,10 +127,20 @@ void NeuralDepth::Run()
         Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(so, 0));
         Ort::Session session(env, m_model.c_str(), so);
         const Ort::MemoryInfo mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        const char* inNames[2] = { "left_image", "right_image" };
-        const char* outNames[1] = { "disparity" };
+        // (The inputs and the output by the model's own names; and its size, where it has one fixed.)
+        Ort::AllocatorWithDefaultOptions alloc;
+        if (session.GetInputCount() < 2 || session.GetOutputCount() < 1) throw std::runtime_error("the model has not two inputs and an output");
+        const Ort::AllocatedStringPtr in0 = session.GetInputNameAllocated(0, alloc), in1 = session.GetInputNameAllocated(1, alloc), out0 = session.GetOutputNameAllocated(0, alloc);
+        const char* inNames[2] = { in0.get(), in1.get() };
+        const char* outNames[1] = { out0.get() };
+        int fixW = 0, fixH = 0;
+        {
+            const std::vector<int64_t> s = session.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
+            if (s.size() == 4 && s[2] > 0 && s[3] > 0) { fixH = (int)s[2]; fixW = (int)s[3]; }
+        }
         m_ready = true;
-        Log("NeuralDepth: model loaded");
+        Log("NeuralDepth: model loaded (%s)", fixW ? "a fixed size" : "any size");
+        if (fixW) Log("NeuralDepth: the model runs at %dx%d", fixW, fixH);
 
         for (;;)
         {
@@ -143,8 +154,8 @@ void NeuralDepth::Run()
             const auto t0 = std::chrono::steady_clock::now();
             // The size it is run at: 736 across (what it does best at), the
             // height by the picture's true shape, both in 32s.
-            const int w = 736;
-            const int h = (std::max)(64, (std::min)(1024, (int)std::lround((float)w / (std::max)(job.aspect, 0.25f) / 32.0f) * 32));
+            const int w = fixW ? fixW : 736;
+            const int h = fixH ? fixH : (std::max)(64, (std::min)(1024, (int)std::lround((float)w / (std::max)(job.aspect, 0.25f) / 32.0f) * 32));
             // (A camera's picture has nothing behind the screen -- no point further
             // RIGHT in the right eye than in the left -- and the model was never
             // shown one that has. A game's has. So the other eye is slid by a

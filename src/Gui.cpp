@@ -454,6 +454,8 @@ bool Gui::Init(HWND mainHwnd, ID3D11Device* device, ID3D11DeviceContext* context
     m_gpuRealtime           = Settings::ReadGpuRealtime();
     m_autoPlaneOn           = Settings::ReadAutoPlane();
     m_lookOn                = Settings::ReadLookAround();
+    m_lookDepth             = Settings::ReadLookDepth();
+    { const std::wstring lm = Settings::ReadLookModel(); m_lookModel.assign(lm.begin(), lm.end()); }
     m_eyeOrder              = Settings::ReadEyeOrderDetect();
     // The weave-skip test never survives a restart (a black 3D screen at
     // launch would look broken).
@@ -2841,6 +2843,47 @@ bool Gui::Render(GuiState& state)
             }
             tip("Experimental. Moving your head looks round things in any 3D picture or game: the two eyes' views "
                 "are redrawn from where your head is. Direct3D 11 weaver only for now. Applies straight away.");
+            // Under it, while it is on: where its depth is from, and the trained matcher's model.
+            if (m_lookOn)
+            {
+                static const char* kDepth[3] = { "Depth: Built-in", "Depth: Neural + Built-in", "Depth: Neural" };
+                if (m_lookDepth < 0 || m_lookDepth > 2) m_lookDepth = 2;
+                ImGui::SetNextItemWidth(halfW);
+                if (ImGui::BeginCombo("##lookdepth", kDepth[m_lookDepth]))
+                {
+                    for (int k = 0; k < 3; ++k)
+                        if (ImGui::Selectable(kDepth[k], m_lookDepth == k)) { m_lookDepth = k; Settings::WriteLookDepth(k); }
+                    ImGui::EndCombo();
+                }
+                tip("Where Look-Around gets its depth. Built-in: SR Loom's own fast matcher, on everything. Neural: a trained "
+                    "stereo network, used once a picture has stopped changing (it takes a second or more), with far cleaner "
+                    "outlines; moving pictures still use the built-in matcher. Neural + Built-in takes whichever fits better "
+                    "at each point. The neural options need the network's files beside SR Loom. Applies straight away.");
+                ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
+                std::string shown = m_lookModel.empty() ? std::string("Fast-FoundationStereo.onnx") : m_lookModel;
+                if (shown.size() > 5 && shown.compare(shown.size() - 5, 5, ".onnx") == 0) shown.resize(shown.size() - 5);
+                ImGui::SetNextItemWidth(halfW);
+                if (ImGui::BeginCombo("##lookmodel", shown.c_str()))
+                {
+                    if (ImGui::IsWindowAppearing())
+                    {
+                        m_lookModels.clear();
+                        WIN32_FIND_DATAA fd{};
+                        const HANDLE fh = FindFirstFileA(ExePath("neural\\*.onnx").c_str(), &fd);
+                        if (fh != INVALID_HANDLE_VALUE) { do { m_lookModels.push_back(fd.cFileName); } while (FindNextFileA(fh, &fd)); FindClose(fh); }
+                    }
+                    if (m_lookModels.empty()) ImGui::TextDisabled("No models found");
+                    for (const std::string& f : m_lookModels)
+                    {
+                        std::string label = f; if (label.size() > 5) label.resize(label.size() - 5);
+                        const bool cur = f == (m_lookModel.empty() ? std::string("Fast-FoundationStereo.onnx") : m_lookModel);
+                        if (ImGui::Selectable(label.c_str(), cur)) { m_lookModel = f; Settings::WriteLookModel(std::wstring(f.begin(), f.end())); }
+                    }
+                    ImGui::EndCombo();
+                }
+                tip("The neural network's model: any .onnx file in the neural folder beside SR Loom. Smaller ones answer "
+                    "sooner; larger ones find finer detail. Applies straight away (a new model takes a few seconds to load).");
+            }
         }
         }   // (SETTINGS)
     }

@@ -35,7 +35,7 @@ namespace srw
 
         // Begins loading the model (in the thread: it takes seconds). False: no
         // runtime or no model file -- not there at all.
-        bool Start(const std::wstring& exeDir);
+        bool Start(const std::wstring& exeDir, const std::wstring& modelFile = L"");   // (modelFile: a file in the neural folder beside the exe; none: Fast-FoundationStereo.onnx)
         void Shutdown();
         bool Ready() const { return m_ready.load(); }      // the model is loaded
         bool Busy() const { return m_busy.load(); }        // a picture is being worked on

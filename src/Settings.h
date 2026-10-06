@@ -4,6 +4,7 @@
 #pragma once
 
 #include <windows.h>   // RECT
+#include <string>
 
 namespace srw::Settings
 {
@@ -117,8 +118,14 @@ namespace srw::Settings
     bool ReadLookShow();
     // The look-around's matching size: 0 as it sees fit (about 480 texels across), 1 the picture's own size, 2 half, 4 a quarter. LookSize.
     int  ReadLookSize();
-    // 1: a picture that stays is given to the trained stereo matcher (src/NeuralDepth), where that is installed. LookNeural.
-    bool ReadLookNeural();
+    // Where the look-around's depth is from: 0 its own matcher; 1 a trained stereo matcher's (src/NeuralDepth, for a
+    // picture that stays, where that is installed) and its own, the better at each place; 2 the trained matcher's
+    // alone. LookDepth.
+    int  ReadLookDepth();
+    void WriteLookDepth(int mode);
+    // The trained matcher's model: a file name in the neural folder beside the exe (none: Fast-FoundationStereo.onnx). LookModel.
+    std::wstring ReadLookModel();
+    void WriteLookModel(const std::wstring& file);
     void WriteLookParallax(int pct);
     // HDR (no UI yet): capture, conversion and the weave's swap chain 16-bit float
     // (scRGB) instead of 8-bit, so brighter-than-white picture is kept, with

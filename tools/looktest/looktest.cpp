@@ -91,7 +91,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     {
         wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
         std::wstring dir = exe; const size_t cut = dir.find_last_of(L"/\134"); if (cut != std::wstring::npos) dir.resize(cut);
-        if (!neural.Start(dir)) { fwprintf(stderr, L"no neural matcher beside the exe\n"); return 1; }
+        if (!neural.Start(dir, _wgetenv(L"LOOKTEST_MODEL") ? _wgetenv(L"LOOKTEST_MODEL") : L"")) { fwprintf(stderr, L"no neural matcher beside the exe\n"); return 1; }
         for (int k = 0; k < 1200 && !neural.Ready() && !neural.Failed(); ++k) Sleep(100);
         if (!neural.Ready()) { fwprintf(stderr, L"the model did not load\n"); return 1; }
         int mw = 0, mh = 0; look.MapSize(ew, eh, mw, mh);

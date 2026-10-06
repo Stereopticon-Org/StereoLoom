@@ -32,6 +32,21 @@ namespace
         return v;
     }
 
+    std::wstring ReadText(const wchar_t* path, const wchar_t* name)
+    {
+        wchar_t buf[512] = {}; DWORD sz = sizeof(buf) - sizeof(wchar_t);
+        if (RegGetValueW(HKEY_CURRENT_USER, path, name, RRF_RT_REG_SZ, nullptr, buf, &sz) != ERROR_SUCCESS) return std::wstring();
+        return std::wstring(buf);
+    }
+
+    void WriteText(const wchar_t* path, const wchar_t* name, const std::wstring& value)
+    {
+        HKEY h = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, path, 0, nullptr, 0, KEY_WRITE, nullptr, &h, nullptr) != ERROR_SUCCESS) return;
+        RegSetValueExW(h, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()), (DWORD)((value.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(h);
+    }
+
     void WriteDword(const wchar_t* path, const wchar_t* name, DWORD value)
     {
         HKEY h = nullptr;
@@ -191,7 +206,10 @@ namespace srw::Settings
     bool ReadLookAround() { return ReadDword(kSettingsKey, L"LookAround", 0) != 0; }
     bool ReadLookShow() { return ReadDword(kSettingsKey, L"LookShow", 0) != 0; }
     int  ReadLookSize() { return (int)ReadDword(kSettingsKey, L"LookSize", 0); }
-    bool ReadLookNeural() { return ReadDword(kSettingsKey, L"LookNeural", 1) != 0; }
+    int  ReadLookDepth() { return (int)(std::min)((DWORD)2, ReadDword(kSettingsKey, L"LookDepth", 2)); }
+    void WriteLookDepth(int mode) { WriteDword(kSettingsKey, L"LookDepth", (DWORD)mode); }
+    std::wstring ReadLookModel() { return ReadText(kSettingsKey, L"LookModel"); }
+    void WriteLookModel(const std::wstring& file) { WriteText(kSettingsKey, L"LookModel", file); }
     void WriteLookAround(bool on) { WriteDword(kSettingsKey, L"LookAround", on ? 1 : 0); }
     int  ReadLookParallax() { const int v = (int)ReadDword(kSettingsKey, L"LookParallax", 1100) - 1000; return v >= -300 && v <= 300 ? v : 100; }   // (kept as the % + 1000)
     void WriteLookParallax(int pct) { WriteDword(kSettingsKey, L"LookParallax", (DWORD)((pct >= -300 && pct <= 300 ? pct : 100) + 1000)); }
