@@ -20,6 +20,9 @@
 #include "Look_PSHole.h"
 #include "Look_PSCompose.h"
 #include "Look_PSUnseen.h"
+#include "Look_PSPlate.h"
+#include "Look_PSLKSum.h"
+#include "Look_PSLKSolve.h"
 
 using namespace srw;
 
@@ -44,6 +47,9 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSHole,        sizeof(g_Look_PSHole),        &m_psHole },
         { g_Look_PSCompose,     sizeof(g_Look_PSCompose),     &m_psCompose },
         { g_Look_PSUnseen,      sizeof(g_Look_PSUnseen),      &m_psUnseen },
+        { g_Look_PSPlate,       sizeof(g_Look_PSPlate),       &m_psPlate },
+        { g_Look_PSLKSum,       sizeof(g_Look_PSLKSum),       &m_psLKSum },
+        { g_Look_PSLKSolve,     sizeof(g_Look_PSLKSolve),     &m_psLKSolve },
     };
     for (const auto& p : ps)
         if (SUCCEEDED(hr)) hr = device->CreatePixelShader(p.code, p.size, nullptr, p.out);
@@ -70,12 +76,17 @@ void LookAround::Release(Tex& t) { SAFE_RELEASE(t.srv); SAFE_RELEASE(t.rtv); SAF
 
 void LookAround::Shutdown()
 {
+    Release(m_plate[0]); Release(m_plate[1]);
+    for (int k = 0; k < 4; ++k) Release(m_lkSum[k]);
+    Release(m_est[0]); Release(m_est[1]); Release(m_estQ); SAFE_RELEASE(m_estRead);
+    for (int k = 0; k < kLevels; ++k) Release(m_prevTmp[k]);
+    SAFE_RELEASE(m_psLKSum); SAFE_RELEASE(m_psLKSolve);
     for (int k = 0; k < kLevels; ++k) { Release(m_tmp[k]); Release(m_lvl[k]); Release(m_dispA[k]); Release(m_dispB[k]); }
     Release(m_target); Release(m_targetFilled); Release(m_out[0]); Release(m_out[1]);
     SAFE_RELEASE(m_dsv); SAFE_RELEASE(m_depthTex);
     SAFE_RELEASE(m_disjoint); for (auto& q : m_ts) SAFE_RELEASE(q);
     SAFE_RELEASE(m_raster); SAFE_RELEASE(m_depthOn); SAFE_RELEASE(m_sampler); SAFE_RELEASE(m_cb);
-    SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
+    SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
     SAFE_RELEASE(m_psSpread); SAFE_RELEASE(m_psFine);
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
@@ -140,6 +151,17 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     ok = ok && Ensure(m_target, 2 * w[0], h[0], DXGI_FORMAT_R16G16_FLOAT) && Ensure(m_targetFilled, 2 * w[0], h[0], DXGI_FORMAT_R16G16_FLOAT) &&
          Ensure(m_out[0], 2 * eyeW, eyeH, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) &&
          Ensure(m_out[1], 2 * eyeW, eyeH, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
+    // (The plate: the eye's picture and an eighth of it more on every side.)
+    const int padX = eyeW / 8, padY = eyeH / 8, plateW = 2 * (eyeW + 2 * padX), plateH = eyeH + 2 * padY;
+    if (ok && (!m_plate[0].tex || m_plate[0].w != plateW || m_plate[0].h != plateH)) m_plateHave = false;
+    ok = ok && Ensure(m_plate[0], plateW, plateH, DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_plate[1], plateW, plateH, DXGI_FORMAT_R16G16B16A16_FLOAT);
+    for (int k = 0; k < levels && ok; ++k)
+    {
+        if (!m_prevTmp[k].tex || m_prevTmp[k].w != 2 * w[k] || m_prevTmp[k].h != h[k]) m_prevHave = false;
+        ok = Ensure(m_prevTmp[k], 2 * w[k], h[k], DXGI_FORMAT_R16G16B16A16_FLOAT);
+    }
+    for (int k = 0; k < 4 && ok; ++k) ok = Ensure(m_lkSum[k], 16, 16, DXGI_FORMAT_R32G32B32A32_FLOAT);
+    ok = ok && Ensure(m_est[0], 1, 1, DXGI_FORMAT_R32G32B32A32_FLOAT) && Ensure(m_est[1], 1, 1, DXGI_FORMAT_R32G32B32A32_FLOAT) && Ensure(m_estQ, 1, 1, DXGI_FORMAT_R32G32B32A32_FLOAT);
     if (ok && (!m_dsv || m_eyeW != eyeW || m_eyeH != eyeH))
     {
         SAFE_RELEASE(m_dsv); SAFE_RELEASE(m_depthTex);
@@ -188,6 +210,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
 
     CB cb{};
     cb.tL = view.tL; cb.tR = view.tR; cb.winR = 3.0f;
+    cb.pad[0] = (float)padX; cb.pad[1] = (float)padY;
     cb.ty = view.ty; cb.rho = view.rho; cb.kx = (view.rho - 1.0f) * view.screenW; cb.ky = (view.rho - 1.0f) * view.screenH; cb.only = (float)view.only; for (int q = 0; q < 4; ++q) cb.opt[q] = m_opt[q];
     cb.scale[0] = (float)eyeW / (float)w[0]; cb.scale[1] = (float)eyeH / (float)h[0];
     auto sized = [&](int k) { cb.size[0] = (float)w[k]; cb.size[1] = (float)h[k]; };
@@ -248,6 +271,58 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         }
     }
     m_haveMaps = true;
+    // How the picture moved since the one before: from the smallest level to the finest, twice at each.
+    m_estHave = false;
+    if (m_findMotion && m_prevHave && m_plateHave)
+    {
+        const float zero4[4] = {};
+        m_context->ClearRenderTargetView(m_est[m_estCur].rtv, zero4);
+        for (int k = levels - 1; k >= 0; --k)
+        for (int it = 0; it < 2; ++it)
+        {
+            sized(k);
+            cb.lk[0] = (float)eyeW / (float)w[k]; cb.lk[1] = 0.03f * (float)eyeW; cb.lk[2] = (float)eyeW / (float)w[k]; cb.lk[3] = 0.0f;
+            m_context->UpdateSubresource(m_cb, 0, nullptr, &cb, 0, 0);
+            D3D11_VIEWPORT vp{}; vp.Width = 16.0f; vp.Height = 16.0f; vp.MaxDepth = 1.0f;
+            ID3D11RenderTargetView* sums[4] = { m_lkSum[0].rtv, m_lkSum[1].rtv, m_lkSum[2].rtv, m_lkSum[3].rtv };
+            m_context->OMSetRenderTargets(4, sums, nullptr);
+            m_context->RSSetViewports(1, &vp);
+            m_context->VSSetShader(m_vsFull, nullptr, 0);
+            m_context->PSSetShader(m_psLKSum, nullptr, 0);
+            ID3D11ShaderResourceView* in1[5] = { m_tmp[k].srv, m_prevTmp[k].srv, result[k]->srv, m_est[m_estCur].srv, nullptr };
+            m_context->PSSetShaderResources(0, 5, in1);
+            m_context->Draw(3, 0);
+            ID3D11ShaderResourceView* none[5] = {};
+            m_context->PSSetShaderResources(0, 5, none);
+            vp.Width = 1.0f; vp.Height = 1.0f;
+            ID3D11RenderTargetView* outs[2] = { m_est[1 - m_estCur].rtv, m_estQ.rtv };
+            m_context->OMSetRenderTargets(2, outs, nullptr);
+            m_context->RSSetViewports(1, &vp);
+            m_context->PSSetShader(m_psLKSolve, nullptr, 0);
+            ID3D11ShaderResourceView* in2[5] = { m_lkSum[0].srv, m_lkSum[1].srv, m_lkSum[2].srv, m_lkSum[3].srv, m_est[m_estCur].srv };
+            m_context->PSSetShaderResources(0, 5, in2);
+            m_context->Draw(3, 0);
+            m_context->PSSetShaderResources(0, 5, none);
+            m_context->OMSetRenderTargets(0, nullptr, nullptr);
+            m_estCur = 1 - m_estCur;
+        }
+        m_estHave = true;
+    }
+    for (int k = 0; k < levels; ++k) m_context->CopyResource(m_prevTmp[k].tex, m_tmp[k].tex);
+    m_prevHave = true;
+    // The plate: the one before moved as the picture moved, and this picture put into it.
+    {
+        cb.size[0] = (float)eyeW; cb.size[1] = (float)eyeH; cb.srcSize[0] = (float)w[0]; cb.srcSize[1] = (float)h[0];
+        for (int q = 0; q < 4; ++q) cb.motion[q] = m_motion[q];
+        cb.plate[0] = m_plateHave ? 1.0f : 0.0f;
+        cb.lk[3] = m_estHave ? 1.0f : 0.0f;
+        ID3D11ShaderResourceView* est[2] = { m_estHave ? m_est[m_estCur].srv : nullptr, m_estHave ? m_estQ.srv : nullptr };
+        m_context->PSSetShaderResources(3, 2, est);
+        Pass(m_psPlate, m_plate[1 - m_plateCur], cb, src, result[0]->srv, m_plate[m_plateCur].srv);
+        est[0] = est[1] = nullptr; m_context->PSSetShaderResources(3, 2, est);
+        m_plateCur = 1 - m_plateCur; m_plateHave = true;
+        for (int q = 0; q < 4; ++q) m_motion[q] = 0.0f;   // (it was this picture's: the same picture given again has not moved)
+    }
     }
     mark(2);
 
@@ -282,7 +357,8 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     // 4. The new views, at full size; then what neither eye saw.
     cb.size[0] = (float)eyeW; cb.size[1] = (float)eyeH; cb.srcSize[0] = (float)w[0]; cb.srcSize[1] = (float)h[0];
     Pass(m_psCompose, m_out[0], cb, src, result[0]->srv, m_targetFilled.srv);
-    Pass(m_psUnseen, m_out[1], cb, m_out[0].srv, nullptr, m_targetFilled.srv);
+    cb.plate[1] = (m_plateOn && m_plateHave) ? 1.0f : 0.0f; cb.plate[2] = m_markFill ? 1.0f : 0.0f;
+    Pass(m_psUnseen, m_out[1], cb, m_out[0].srv, m_plate[m_plateCur].srv, m_targetFilled.srv);
     mark(4);
     if (m_timing) { m_context->End(m_disjoint); m_timePending = true; m_timing = false; }
     m_context->RSSetState(nullptr);
@@ -294,5 +370,26 @@ bool LookAround::TakeTimes(double ms[4])
     if (!m_haveTimes) return false;
     for (int k = 0; k < 4; ++k) ms[k] = m_ms[k];
     m_haveTimes = false;
+    return true;
+}
+
+bool LookAround::ReadMotion(float out[6])
+{
+    if (!m_estHave || !m_est[m_estCur].tex) return false;
+    if (!m_estRead)
+    {
+        D3D11_TEXTURE2D_DESC td{};
+        td.Width = 2; td.Height = 1; td.MipLevels = 1; td.ArraySize = 1; td.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_STAGING; td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        if (FAILED(m_device->CreateTexture2D(&td, nullptr, &m_estRead))) return false;
+    }
+    m_context->CopySubresourceRegion(m_estRead, 0, 0, 0, 0, m_est[m_estCur].tex, 0, nullptr);
+    m_context->CopySubresourceRegion(m_estRead, 0, 1, 0, 0, m_estQ.tex, 0, nullptr);
+    D3D11_MAPPED_SUBRESOURCE m{};
+    if (FAILED(m_context->Map(m_estRead, 0, D3D11_MAP_READ, 0, &m))) return false;
+    const float* f = (const float*)m.pData;
+    for (int k = 0; k < 4; ++k) out[k] = f[k];
+    out[4] = f[4]; out[5] = f[5];
+    m_context->Unmap(m_estRead, 0);
     return true;
 }

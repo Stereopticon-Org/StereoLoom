@@ -51,6 +51,19 @@ namespace srw
         // further than anything can pop out and still be one picture -- a smaller limit showed as a wall things stopped at).
         void SetMaxDisparity(float share) { m_maxShare = share; }
         void SetOpt(int i, float v) { if (i >= 0 && i < 4) m_opt[i] = v; }   // (switches under trial: see g_opt in Look.hlsl)
+        // The plate (what was in sight in earlier pictures, for filling what is hidden now): off or on;
+        // forgotten (a new scene); and how the picture has moved since the one before, in its own
+        // pixels -- x, y for everything -- and perD times its own disparity more (the camera a tenth of an
+        // eye spacing to the side: 0.1). It is for the next new picture only.
+        void SetPlate(bool on) { m_plateOn = on; }
+        void ForgetPlate() { m_plateHave = false; }
+        void SetMarkFill(bool on) { m_markFill = on; }   // (a test: what the plate filled drawn magenta, what it could not green)
+        // The motion between pictures found from the pictures themselves (on, as a rule; off: only what
+        // SetMotion gives). ReadMotion: what was found for the last picture -- x, y, per-disparity x, y,
+        // how badly it fitted, the share of the picture that counted. It waits for the GPU: for tests.
+        void SetFindMotion(bool on) { m_findMotion = on; }
+        bool ReadMotion(float out[6]);
+        void SetMotion(float x, float y, float perDx, float perDy) { m_motion[0] = x; m_motion[1] = y; m_motion[2] = perDx; m_motion[3] = perDy; }
         void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
         void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
@@ -64,7 +77,7 @@ namespace srw
         struct Tex { ID3D11Texture2D* tex = nullptr; ID3D11RenderTargetView* rtv = nullptr; ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; };
         bool Ensure(Tex& t, int w, int h, DXGI_FORMAT fmt, DXGI_FORMAT view = DXGI_FORMAT_UNKNOWN);
         void Release(Tex& t);
-        struct CB { float size[2]; float srcSize[2]; float range, tL, tR, eye; float winR, ty; float scale[2]; float rho, kx, ky, only; float opt[4]; };
+        struct CB { float size[2]; float srcSize[2]; float range, tL, tR, eye; float winR, ty; float scale[2]; float rho, kx, ky, only; float opt[4]; float motion[4]; float plate[4]; float pad[4]; float lk[4]; };
         void Pass(ID3D11PixelShader* ps, const Tex& target, const CB& cb, ID3D11ShaderResourceView* t0,
                   ID3D11ShaderResourceView* t1 = nullptr, ID3D11ShaderResourceView* t2 = nullptr);
 
@@ -73,7 +86,7 @@ namespace srw
         ID3D11VertexShader*  m_vsFull = nullptr, *m_vsSplat = nullptr;
         ID3D11PixelShader*   m_psDownFirst = nullptr, *m_psDownNext = nullptr, *m_psGrad = nullptr, *m_psMatchFull = nullptr,
                             *m_psMatchRefine = nullptr, *m_psCheck = nullptr, *m_psFill = nullptr, *m_psMedian = nullptr, *m_psSpread = nullptr, *m_psFine = nullptr,
-                            *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr;
+                            *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr, *m_psPlate = nullptr, *m_psLKSum = nullptr, *m_psLKSolve = nullptr;
         ID3D11Buffer*            m_cb = nullptr;
         ID3D11SamplerState*      m_sampler = nullptr;
         ID3D11DepthStencilState* m_depthOn = nullptr;
@@ -86,6 +99,16 @@ namespace srw
         ID3D11Texture2D*        m_depthTex = nullptr;
         ID3D11DepthStencilView* m_dsv = nullptr;
         Tex m_out[2];                                // the new views: composed, then filled
+        Tex m_plate[2];                              // what was farthest at each place lately (PSPlate), and the one before
+        int   m_plateCur = 0;
+        bool  m_plateHave = false, m_plateOn = true;
+        float m_motion[4] = {};
+        bool  m_markFill = false;
+        bool  m_findMotion = true, m_prevHave = false, m_estHave = false;
+        Tex   m_prevTmp[kLevels];                    // the levels' colour of the picture before
+        Tex   m_lkSum[4], m_est[2], m_estQ;          // the motion finder's sums; the motion (one texel), and the one before; how well it fitted
+        int   m_estCur = 0;
+        ID3D11Texture2D* m_estRead = nullptr;
         int   m_eyeW = 0, m_eyeH = 0;
         float m_maxShare = 0.25f;   // (a quarter of the eye's width: no pop-out a picture can hold is past it)
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)

@@ -32,6 +32,8 @@
 Texture2D    tex0 : register(t0);
 Texture2D    tex1 : register(t1);
 Texture2D    tex2 : register(t2);
+Texture2D    tex3 : register(t3);
+Texture2D    tex4 : register(t4);
 SamplerState sampLinear : register(s0);
 
 cbuffer Params : register(b0)
@@ -50,6 +52,10 @@ cbuffer Params : register(b0)
     float  g_ky;        // ... and its height
     float  g_only;      // a test: -1 both eyes are used; 0 / 1 that eye alone
     float4 g_opt;       // switches under trial: .x the reach, in texels, that PSCompose looks for other surfaces; .y what a surface the maps call hidden must beat (0: it is not tried); .z how softly surfaces mix; .w spare
+    float4 g_motion;    // how the picture moved since the one before: .xy everything alike, in its own pixels; .zw times its disparity more (a camera a tenth of an eye spacing to the side: 0.1)
+    float4 g_plate;     // .x 1: there is a plate from before (PSPlate). .y 1: PSUnseen may fill from the plate. .z a test: what it fills is marked. .w spare
+    float4 g_pad;       // .xy: the plate's margin round the eye's picture, in pixels -- what has gone out of the picture's side is kept a while too
+    float4 g_lk;        // the motion finder: .x picture pixels a texel of this level; .y the disparity (picture pixels) counted as one; .z this level's disparity texels to picture pixels; .w 1: PSPlate takes the motion found (tex3)
 };
 
 struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -539,6 +545,15 @@ float4 PSCompose(VSOut i) : SV_Target
     }
     return float4(col, seen > 0.5 ? 1.0 : 0.0);
 }
+// The plate of eye r at a place of that eye's picture (pixels; it may be in the
+// margin). .a its disparity; under -1000: nothing there.
+float4 PlateAt(Texture2D t, int r, float2 q)
+{
+    const float2 P = g_size + 2.0 * g_pad.xy;
+    const float2 pp = q + g_pad.xy;
+    if (pp.x < 0.5 || pp.x > P.x - 0.5 || pp.y < 0.5 || pp.y > P.y - 0.5) return float4(0, 0, 0, -1e4);
+    return t.SampleLevel(sampLinear, float2(((float)r * P.x + pp.x) / (2.0 * P.x), pp.y / P.y), 0);
+}
 // What neither eye sees is behind something: it is given the background beside
 // it, carried on as in a mirror -- the pixel as far beyond the gap's FARTHER
 // edge as this one is inside it. (A single colour dragged across the gap, as
@@ -551,6 +566,37 @@ float4 PSUnseen(VSOut i) : SV_Target
     const int2 p = int2((int)i.pos.x - pane * W, (int)i.pos.y);
     const float4 v = tex0.Load(int3(pane * W + p.x, p.y, 0));
     if (v.a > 0.5) return float4(v.rgb, 1);
+    // (First: was it in sight in an earlier picture? The plate has what was
+    // farthest at each place of each eye. The surface behind this gap -- the
+    // farther side's disparity -- is looked for in the plate where each eye
+    // would have it; the plate's own disparity there is then believed and the
+    // place looked up again, and it stands if the two agree.)
+    [branch] if (g_plate.y > 0.5)
+    {
+        const int w0 = (int)g_srcSize.x, h0 = (int)g_srcSize.y;
+        const float2 full = float2((float)p.x + 0.5, (float)p.y + 0.5);
+        const float2 uv = full / g_size;
+        const float t = pane == 0 ? g_tL : g_tR;
+        const float db = tex2.Load(int3(pane * w0 + clamp((int)(full.x / g_scale.x), 0, w0 - 1), clamp((int)(full.y / g_scale.y), 0, h0 - 1), 0)).r;
+        const int first = abs(t) <= abs(t - 1.0) ? 0 : 1;
+        float3 got = 0; bool hit = false;
+        [unroll] for (int e = 0; e < 2; ++e)
+        {
+            const int r = e == 0 ? first : 1 - first;
+            const bool allowed = !(g_only > -0.5 && g_only < 1.5 && abs(g_only - (float)r) > 0.5);
+            float d = db; float4 pl = float4(0, 0, 0, -1e4); bool ok = false, live = allowed;
+            [unroll] for (int it = 0; it < 3; ++it)
+            {
+                const float2 q = full + d * Move((float)r, t, uv) * g_scale;
+                const float4 s = PlateAt(tex1, r, q);
+                const bool near3 = s.a > -1000.0 && abs(s.a - d) <= 3.0;
+                if (live) { ok = near3 && abs(s.a - d) < (it == 0 ? 3.0 : 0.5); if (near3) { pl = s; d = s.a; } }
+                live = live && near3;
+            }
+            if (!hit && ok && d <= db + 1.0) { got = pl.rgb; hit = true; }
+        }
+        if (hit) return float4(g_plate.z > 0.5 ? float3(1, 0, 1) : got, 1);
+    }
     const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
     const int ly = clamp((int)((float)p.y / g_scale.y), 0, h - 1);
     int nl = 0, nr = 0; float dl = 1e30, dr = 1e30;
@@ -567,6 +613,7 @@ float4 PSUnseen(VSOut i) : SV_Target
     if (sr == 0) sr = W - p.x;
     [loop] for (int r = max(sr - 3, 1); r <= sr && p.x + r < W; ++r)
         if (tex0.Load(int3(pane * W + p.x + r, p.y, 0)).a > 0.5) { nr = r; dr = tex2.Load(int3(pane * w + clamp((int)((float)(p.x + r) / g_scale.x), 0, w - 1), ly, 0)).r; break; }
+    if (g_plate.z > 0.5) return float4(0, 1, 0, 1);   // (a test: what the plate did not have, marked)
     if (nl == 0 && nr == 0) return float4(v.rgb, 1);
     const bool left = nr == 0 || (nl != 0 && dl < dr);
     // (The mirrored pixel, if it was seen; else the edge's own.)
@@ -625,4 +672,151 @@ float4 PSFine(VSOut i) : SV_Target
     const float sub = den > flat ? clamp(0.5 * (cm - cp) / den, -0.5, 0.5) : 0.0;
     if (bm == 2 && den <= flat) return own;    // (nothing there to match on)
     return float4(own.r + ((float)(bm - 2) + sub) * 0.25, own.g, own.b, 0);
+}
+
+// ---- The plate: what was in sight before -------------------------------------
+// Two eyes see only what two eyes see: what is behind a thing from both cannot
+// be had from this picture at all. But a moving picture showed it a moment ago
+// -- the thing was elsewhere, or the camera was. So each eye keeps a plate: at
+// every place, the FARTHEST surface seen there lately, its colour and its
+// disparity. Each new picture the old plate is first moved as the picture
+// moved (g_motion: a shift for everything, and more for the nearer -- a camera
+// turning and a camera stepping sideways); then a place takes the new
+// picture's surface where that is as far as the plate's or farther, and keeps
+// the plate's where the new one is nearer -- something has come in front.
+// (tex0: the eyes, full size, g_size. tex1: their disparity, g_srcSize.
+// tex2: the plate before, full size; .a its disparity, under -1000 none.)
+float4 PSPlate(VSOut i) : SV_Target
+{
+    // (The plate is the eye's picture and a margin round it.)
+    const float2 P = g_size + 2.0 * g_pad.xy;
+    const int half = i.pos.x >= P.x ? 1 : 0;
+    const float2 pf = float2(i.pos.x - (float)half * P.x, i.pos.y) - g_pad.xy;
+    const bool inPic = pf.x > 0.0 && pf.x < g_size.x && pf.y > 0.0 && pf.y < g_size.y;
+    const int2 p = clamp(int2((int)pf.x, (int)pf.y), 0, int2((int)g_size.x - 1, (int)g_size.y - 1));
+    const int W = (int)g_size.x, w = (int)g_srcSize.x, h = (int)g_srcSize.y;
+    const float3 cur = tex0.Load(int3(half * W + p.x, p.y, 0)).rgb;
+    const float2 lo = clamp(pf / g_scale, 0.5, float2(w, h) - 0.5);
+    const float dcur = tex1.SampleLevel(sampLinear, float2(((float)(half * w) + lo.x) / (float)(2 * w), lo.y / (float)h), 0).r;
+    // (A change of scene: little of the new picture is the old one moved -- the
+    // motion finder's count (tex4 .g) is low. The plate is begun again.)
+    const bool cut = g_lk.w > 0.5 && tex4.Load(int3(0, 0, 0)).g < 0.6;
+    if (g_plate.x < 0.5 || cut) return inPic ? float4(cur, dcur) : float4(0, 0, 0, -1e4);
+    // (Where the plate's surface here was before: by its own disparity, which is
+    // not known until it is found -- the new picture's first, then its own.)
+    // (Begun from the far side: begun from a near thing's own disparity the
+    // search lands where that thing was, and finds the thing. So the farthest
+    // the new picture has within reach along the row is where it begins.)
+    float dfar = dcur;
+    static const int kR[8] = { -2, 2, -6, 6, -14, 14, -30, 30 };
+    [unroll] for (int n = 0; n < 8; ++n)
+    {
+        const float xn = clamp(lo.x + (float)kR[n], 0.5, (float)w - 0.5);
+        dfar = min(dfar, tex1.SampleLevel(sampLinear, float2(((float)(half * w) + xn) / (float)(2 * w), lo.y / (float)h), 0).r);
+    }
+    const float4 mo = g_motion + (g_lk.w > 0.5 ? tex3.Load(int3(0, 0, 0)) : float4(0, 0, 0, 0));
+    float d = dfar; float4 pl = float4(0, 0, 0, -1e4); bool have = true;
+    [unroll] for (int it = 0; it < 3; ++it)
+    {
+        const float2 q = pf - (mo.xy + d * g_scale * mo.zw);
+        const float4 s = PlateAt(tex2, half, q);
+        have = have && s.a > -1000.0;
+        if (have) { pl = s; d = s.a; }
+    }
+    // (In the margin there is no new picture: the plate's, moved, or nothing.)
+    if (!inPic) return have ? pl : float4(0, 0, 0, -1e4);
+    if (!have || dcur <= pl.a + 0.75) return float4(cur, dcur);
+    return pl;
+}
+
+// ---- How the picture moved ----------------------------------------------------
+// For the plate to be carried from one picture to the next it must be known how
+// the picture moved. A camera that turns moves everything alike; one that steps
+// sideways or up moves each thing by its nearness -- by its disparity, which is
+// known. So four numbers are looked for: a shift (x, y) and a shift for each
+// unit of disparity (x, y). They are found the usual way for a small motion:
+// where the picture's brightness slopes, the change in brightness between the
+// two pictures says how far it moved along the slope; all the picture's texels
+// together say it for the four numbers (least squares), a texel that does not
+// fit -- something moving of itself -- counting for little. From the smallest
+// level to the finest, each starting from the one before.
+// PSLKSum: 16 x 16 tiles of sums, into four targets. (tex0: this level's
+// colour, now. tex1: the same of the picture before. tex2: this level's
+// disparity. tex3: the motion so far, one texel. The left eye only.)
+struct LKOut { float4 a0 : SV_Target0; float4 a1 : SV_Target1; float4 a2 : SV_Target2; float4 a3 : SV_Target3; };
+LKOut PSLKSum(VSOut i)
+{
+    const int T = 16;
+    const int2 tile = int2((int)i.pos.x, (int)i.pos.y);
+    const int w = (int)g_size.x, h = (int)g_size.y;
+    const int bw = (w + T - 1) / T, bh = (h + T - 1) / T;
+    const float4 g = tex3.Load(int3(0, 0, 0));
+    float4 s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+    [loop] for (int y = 0; y < bh; ++y)
+    [loop] for (int x = 0; x < bw; ++x)
+    {
+        const int2 p = tile * int2(bw, bh) + int2(x, y);
+        if (p.x < 2 || p.x >= w - 2 || p.y < 2 || p.y >= h - 2) continue;
+        const float dfull = tex2.Load(int3(p, 0)).r * g_lk.z;
+        const float2 flow = (g.xy + dfull * g.zw) / g_lk.x;
+        const float2 q = float2(p) + 0.5 - flow;
+        if (q.x < 1.0 || q.x > (float)w - 1.0 || q.y < 1.0 || q.y > (float)h - 1.0) continue;
+        const float I1 = Luma(tex0.Load(int3(p, 0)).rgb);
+        const float I0 = Luma(tex1.SampleLevel(sampLinear, float2(q.x / (float)(2 * w), q.y / (float)h), 0).rgb);
+        const float Gx = 0.5 * (Luma(tex0.Load(int3(p + int2(1, 0), 0)).rgb) - Luma(tex0.Load(int3(p - int2(1, 0), 0)).rgb));
+        const float Gy = 0.5 * (Luma(tex0.Load(int3(p + int2(0, 1), 0)).rgb) - Luma(tex0.Load(int3(p - int2(0, 1), 0)).rgb));
+        const float r = I1 - I0;
+        const float wt = 1.0 / (1.0 + (r / 0.06) * (r / 0.06));
+        const float dn = dfull / g_lk.y;
+        const float4 J = float4(Gx, Gy, dn * Gx, dn * Gy);
+        s0 += wt * J.x * J;                                    // (the matrix, row by row: 00 01 02 03)
+        s1 += wt * float4(J.y * J.y, J.y * J.z, J.y * J.w, J.z * J.z);   // (11 12 13 22)
+        s2 += wt * float4(J.z * J.w, J.w * J.w, -J.x * r, -J.y * r);     // (23 33, and the right side 0 1)
+        s3 += wt * float4(-J.z * r, -J.w * r, abs(r), 1.0);              // (the right side 2 3; how badly it fits; how many)
+    }
+    LKOut o; o.a0 = s0; o.a1 = s1; o.a2 = s2; o.a3 = s3;
+    return o;
+}
+// PSLKSolve: the tiles added up and the four numbers put right by what they
+// say. (tex0..3: the sums. tex4: the motion so far.) The second target: how
+// badly the picture fits the motion (.r -- high at a change of scene), and the
+// share of the picture that counted (.g).
+struct SolveOut { float4 g : SV_Target0; float4 q : SV_Target1; };
+SolveOut PSLKSolve(VSOut i)
+{
+    float4 s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+    [loop] for (int y = 0; y < 16; ++y)
+    [loop] for (int x = 0; x < 16; ++x)
+    {
+        s0 += tex0.Load(int3(x, y, 0)); s1 += tex1.Load(int3(x, y, 0));
+        s2 += tex2.Load(int3(x, y, 0)); s3 += tex3.Load(int3(x, y, 0));
+    }
+    float A[4][4] = { { s0.x, s0.y, s0.z, s0.w }, { s0.y, s1.x, s1.y, s1.z }, { s0.z, s1.y, s1.w, s2.x }, { s0.w, s1.z, s2.x, s2.y } };
+    float b[4] = { s2.z, s2.w, s3.x, s3.y };
+    // (What the picture cannot say -- no slope, or everything at one depth -- is left as it was.)
+    const float lam = 1e-3 * (A[0][0] + A[1][1] + A[2][2] + A[3][3]) * 0.25 + 1e-12;
+    [unroll] for (int k = 0; k < 4; ++k) A[k][k] += lam;
+    [unroll] for (int c = 0; c < 4; ++c)
+    {
+        const float inv = 1.0 / A[c][c];
+        [unroll] for (int r = c + 1; r < 4; ++r)
+        {
+            const float f = A[r][c] * inv;
+            [unroll] for (int m = c; m < 4; ++m) A[r][m] -= f * A[c][m];
+            b[r] -= f * b[c];
+        }
+    }
+    float d[4] = { 0, 0, 0, 0 };
+    [unroll] for (int c2 = 3; c2 >= 0; --c2)
+    {
+        float v = b[c2];
+        [unroll] for (int m2 = c2 + 1; m2 < 4; ++m2) v -= A[c2][m2] * d[m2];
+        d[c2] = v / A[c2][c2];
+    }
+    // (In this level's texels; no more than a texel and a half at a step.)
+    float4 dl = clamp(float4(d[0], d[1], d[2], d[3]), -1.5, 1.5);
+    SolveOut o;
+    o.g = tex4.Load(int3(0, 0, 0)) + float4(dl.xy * g_lk.x, dl.zw * g_lk.x / g_lk.y);
+    o.q = float4(s3.z / max(s3.w, 1e-6), s3.w / max(g_size.x * g_size.y, 1.0), 0, 0);
+    return o;
 }

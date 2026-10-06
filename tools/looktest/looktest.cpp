@@ -222,6 +222,36 @@ int wmain(int argc, wchar_t** argv)
     if (const wchar_t* bs = _wgetenv(L"LOOKTEST_BASE")) look.SetBase(_wtoi(bs));
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
 
+    // A moving picture, for the plate: LOOKTEST_SEQ=n,m gives n earlier pictures first, the camera m views
+    // further left for each one back -- so what the views to the left of the eyes need was in sight
+    // before. LOOKTEST_PLATE=0: the plate is kept but not filled from.
+    if (const wchar_t* pt = _wgetenv(L"LOOKTEST_PLATE")) look.SetPlate(_wtoi(pt) != 0);
+    if (const wchar_t* sq = _wgetenv(L"LOOKTEST_SEQ"))
+    {
+        int n = 0, m = 1; swscanf_s(sq, L"%d,%d", &n, &m);
+        float sign = 1.0f; if (const wchar_t* sg = _wgetenv(L"LOOKTEST_SEQSIGN")) sign = (float)_wtof(sg);
+        for (int k = n; k >= 0; --k)
+        {
+            const int va = ia - k * m, vb = ib - k * m;
+            if (va < 0) continue;
+            std::vector<uint8_t> a2, b2, s2((size_t)ew * 2 * eh * 4);
+            view(va, a2); view(vb, b2);
+            for (int y = 0; y < eh; ++y)
+            {
+                memcpy(&s2[(size_t)y * ew * 2 * 4], &a2[(size_t)y * ew * 4], (size_t)ew * 4);
+                memcpy(&s2[((size_t)y * ew * 2 + ew) * 4], &b2[(size_t)y * ew * 4], (size_t)ew * 4);
+            }
+            D3D11_SUBRESOURCE_DATA sd2{ s2.data(), (UINT)(ew * 2 * 4), 0 };
+            ID3D11Texture2D* t2 = nullptr; dev->CreateTexture2D(&td, &sd2, &t2);
+            ID3D11ShaderResourceView* v2 = nullptr; dev->CreateShaderResourceView(t2, &vd, &v2);
+            const bool known = _wgetenv(L"LOOKTEST_KNOWN") != nullptr;
+            look.SetFindMotion(!known);
+            if (k < n && known) look.SetMotion(0.0f, 0.0f, sign * (float)m / (float)step, 0.0f);
+            look.Render(v2, ew, eh, 0.0f, 1.0f); ctx->Flush();
+            { float mo[6]; if (look.ReadMotion(mo)) wprintf(L"motion found: shift %+.2f %+.2f px, per disparity %+.4f %+.4f (true %+.4f 0), misfit %.4f, counted %.2f\n", mo[0], mo[1], mo[2], mo[3], sign * (float)m / (float)step, mo[4], mo[5]); }
+            v2->Release(); t2->Release();
+        }
+    }
     // The left half of the output read back (the left eye's new view).
     ID3D11Texture2D* staging = nullptr;
     auto readLeft = [&](std::vector<uint8_t>& out) {
@@ -255,6 +285,18 @@ int wmain(int argc, wchar_t** argv)
         look.Render(srv, ew, eh, t, 1.0f + t);
         readLeft(o);
         const double p = psnr(o, truth);
+        if (_wgetenv(L"LOOKTEST_MARK"))
+        {
+            look.SetMarkFill(true); std::vector<uint8_t> mk; look.Render(srv, ew, eh, t, 1.0f + t); readLeft(mk); look.SetMarkFill(false);
+            size_t np = 0, ng = 0; double se = 0, seAll = 0;
+            for (size_t q = 0; q < (size_t)ew * eh; ++q)
+            {
+                const uint8_t* c = &mk[q * 4]; const bool pl = c[0] > 250 && c[1] < 5 && c[2] > 250, gr = c[0] < 5 && c[1] > 250 && c[2] < 5;
+                double e = 0; for (int k = 0; k < 3; ++k) { const double d = (double)o[q * 4 + k] - truth[q * 4 + k]; e += d * d; }
+                seAll += e; if (pl || gr) se += e; np += pl; ng += gr;
+            }
+            wprintf(L"        filled from the plate %.2f%%, guessed %.2f%%; those pixels carry %.0f%% of the error\n", 100.0 * np / ((double)ew * eh), 100.0 * ng / ((double)ew * eh), 100.0 * se / (std::max)(seAll, 1.0));
+        }
         wprintf(L"  %4d  %+6.2f     %.2f\n", v, t, p);
         if (t > 0 && t < 1) { in += p; ++nin; } else if (t >= -0.5f && t <= 1.5f) { edge += p; ++nedge; } else { far_ += p; ++nfar; }
         if (!outdir.empty() && (v == (std::max)(0, ia - reach) || v == (ia + ib) / 2 || v == (std::min)(N - 1, ib + reach)))
