@@ -47,8 +47,8 @@ namespace srw
         int OutputPerEyeWidth() const { return m_eyeW; }
         int OutputHeight() const { return m_eyeH; }
 
-        // The largest disparity looked for, as a share of the eye's width (0.06:
-        // more than any comfortable stereo picture has).
+        // The largest disparity looked for, as a share of the eye's width (0.25:
+        // further than anything can pop out and still be one picture -- a smaller limit showed as a wall things stopped at).
         void SetMaxDisparity(float share) { m_maxShare = share; }
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
         void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
@@ -76,7 +76,7 @@ namespace srw
         ID3D11DepthStencilState* m_depthOn = nullptr;
         ID3D11RasterizerState*   m_raster = nullptr;
 
-        static constexpr int kLevels = 3;            // the eye at 1/base, half that and half again (base: 8 for a 4K eye, 4 for a 2K one)
+        static constexpr int kLevels = 4;            // the eye at 1/base, and halved three times (base: 8 for a 4K eye, 4 for a 2K one)
         Tex m_tmp[kLevels], m_lvl[kLevels];          // colour; colour + slope
         Tex m_dispA[kLevels], m_dispB[kLevels];      // disparity, two to go between
         Tex m_target, m_targetFilled;                // the new views' disparity
@@ -84,7 +84,7 @@ namespace srw
         ID3D11DepthStencilView* m_dsv = nullptr;
         Tex m_out[2];                                // the new views: composed, then filled
         int   m_eyeW = 0, m_eyeH = 0;
-        float m_maxShare = 0.10f;
+        float m_maxShare = 0.25f;   // (a quarter of the eye's width: no pop-out a picture can hold is past it)
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
         int   m_spread = 1;
 

@@ -360,7 +360,7 @@ SplatOut VSSplat(uint id : SV_VertexID)
     SplatOut o;
     o.pos = float4(p.x / (float)w * 2.0 - 1.0, 1.0 - p.y / (float)h * 2.0, saturate(0.5 - d / (4.0 * max(g_range, 1.0))), 1.0);
     // (A test with one eye alone: the other's quads are not drawn.)
-    if (g_only > -0.5 && abs(g_only - (float)ref) > 0.5) o.pos = float4(2.0, 2.0, 2.0, 1.0);
+    if (g_only > -0.5 && g_only < 1.5 && abs(g_only - (float)ref) > 0.5) o.pos = float4(2.0, 2.0, 2.0, 1.0);
     o.d = d;
     return o;
 }
@@ -376,12 +376,12 @@ float4 PSHole(VSOut i) : SV_Target
     const float2 v = tex0.Load(int3(half * w + p.x, p.y, 0)).rg;
     if (v.g > 0.5) return float4(v.r, 1, 0, 0);
     float d = 0.0; bool have = false;
-    [loop] for (int l = 1; l <= 96 && p.x - l >= 0; ++l)
+    [loop] for (int l = 1; l <= 256 && p.x - l >= 0; ++l)
     {
         const float2 q = tex0.Load(int3(half * w + p.x - l, p.y, 0)).rg;
         if (q.g > 0.5) { d = q.r; have = true; break; }
     }
-    [loop] for (int r = 1; r <= 96 && p.x + r < w; ++r)
+    [loop] for (int r = 1; r <= 256 && p.x + r < w; ++r)
     {
         const float2 q = tex0.Load(int3(half * w + p.x + r, p.y, 0)).rg;
         if (q.g > 0.5) { d = have ? min(d, q.r) : q.r; break; }
@@ -413,7 +413,7 @@ void Try(float d, float2 lo, float2 full, float t, int w, int h, out float3 col,
         // nearer one, however far out the new place is.)
         const float away = abs(t - (float)r);
         wg[r] = max(1.0 - away, 0.02 * exp(-2.0 * away));
-        if (g_only > -0.5 && abs(g_only - (float)r) > 0.5) { vis[r] = 0.0; wg[r] = 0.0; }
+        if (g_only > -0.5 && g_only < 1.5 && abs(g_only - (float)r) > 0.5) { vis[r] = 0.0; wg[r] = 0.0; }
     }
     const float nv = vis[0] + vis[1];
     cost = nv < 0.5 ? 60.0 / 255.0 : 12.0 / 255.0;
@@ -442,6 +442,9 @@ float4 PSCompose(VSOut i) : SV_Target
     const float4 g4 = tex2.GatherRed(sampLinear, float2((float)(pane * w + x0) + 1.0, (float)y0 + 1.0) / float2(2 * w, h));
     const float d00 = g4.w, d10 = g4.z, d01 = g4.x, d11 = g4.y;
     const float dBi = lerp(lerp(d00, d10, f.x), lerp(d01, d11, f.x), f.y);
+    // (To look at: the geometry itself -- the new view's disparity as grey, the
+    // screen's own depth mid-grey, nearer lighter. g_only 2.)
+    if (g_only > 1.5) { const float g = saturate(0.5 + dBi / (0.5 * max(g_range, 1.0))); return float4(g * g, g * g, g * g, 1); }
     float3 col; float cost, seen;
     Try(dBi, lo, full, t, w, h, col, cost, seen);
     // (The four round it agree: one surface, nothing to choose between -- most
@@ -475,9 +478,18 @@ float4 PSUnseen(VSOut i) : SV_Target
     const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
     const int ly = clamp((int)((float)p.y / g_scale.y), 0, h - 1);
     int nl = 0, nr = 0; float dl = 1e30, dr = 1e30;
-    [loop] for (int l = 1; l <= 384 && p.x - l >= 0; ++l)
+    // (However wide the gap: four pixels at a stride until something seen, then
+    // back to its first pixel -- a quarter of the reads of walking it.)
+    int sl = 0, sr = 0;
+    [loop] for (int a = 4; a <= 4096 && p.x - a >= 0; a += 4)
+        if (tex0.Load(int3(pane * W + p.x - a, p.y, 0)).a > 0.5) { sl = a; break; }
+    if (sl == 0) sl = p.x + 1;
+    [loop] for (int l = max(sl - 3, 1); l <= sl && p.x - l >= 0; ++l)
         if (tex0.Load(int3(pane * W + p.x - l, p.y, 0)).a > 0.5) { nl = l; dl = tex2.Load(int3(pane * w + clamp((int)((float)(p.x - l) / g_scale.x), 0, w - 1), ly, 0)).r; break; }
-    [loop] for (int r = 1; r <= 384 && p.x + r < W; ++r)
+    [loop] for (int b = 4; b <= 4096 && p.x + b < W; b += 4)
+        if (tex0.Load(int3(pane * W + p.x + b, p.y, 0)).a > 0.5) { sr = b; break; }
+    if (sr == 0) sr = W - p.x;
+    [loop] for (int r = max(sr - 3, 1); r <= sr && p.x + r < W; ++r)
         if (tex0.Load(int3(pane * W + p.x + r, p.y, 0)).a > 0.5) { nr = r; dr = tex2.Load(int3(pane * w + clamp((int)((float)(p.x + r) / g_scale.x), 0, w - 1), ly, 0)).r; break; }
     if (nl == 0 && nr == 0) return float4(v.rgb, 1);
     const bool left = nr == 0 || (nl != 0 && dl < dr);

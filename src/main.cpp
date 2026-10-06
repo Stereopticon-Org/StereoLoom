@@ -724,6 +724,7 @@ namespace
         bool                         lookBound = false;        // (the weaver's input is the look-around's picture)
         float                        lookY = 0.0f, lookRho = 1.0f;   // (... up and down; and how near: the eyes' own distance over the head's)
         unsigned                     lookSerial = 0;           // (the converter's picture the look-around last matched)
+        bool                         lookShow = false;         // (Settings LookShow: the depth found shown in place of the picture)
         int                          asyncSlowRun = 0;         // (slow conversions in a row)
         unsigned                     asyncSeenSerial = 0;
         ULONGLONG                    asyncSlowAt = 0;          // (when one last took over 2.5 ms)
@@ -8036,6 +8037,7 @@ namespace
                     // (All but still: the picture as it is -- and exactly so.)
                     const bool still = std::fabs(app.lookX) < 0.004f && std::fabs(app.lookY) < 0.004f && std::fabs(app.lookRho - 1.0f) < 0.002f;
                     if (!still) { v.tL = app.lookX; v.tR = 1.0f + app.lookX; v.ty = app.lookY; v.rho = app.lookRho; }
+                    if (app.lookShow) v.only = 2;
                     v.screenW = 597.0f / spacing; v.screenH = 336.0f / spacing;   // (a 27 inch display; the picture taken to fill it)
                     // (The picture is matched again only when the converter has made a new
                     // one: between a game's frames only the head moves.)
@@ -9902,6 +9904,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                 }
                 app.perfLog = Settings::ReadPerfLog();
                 app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
+                app.lookShow = Settings::ReadLookShow();
                 app.renderer.SetAutoPlane(Settings::ReadAutoPlane(), Settings::ReadAutoPlaneDX12(), Settings::ReadAutoPlaneHold());   // (the panel's Straight to Display toggle)
                 app.renderer.SetLatencyStats(app.perfLog);
                 app.eyeOrderDetect = Settings::ReadEyeOrderDetect();

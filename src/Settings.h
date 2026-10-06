@@ -113,6 +113,8 @@ namespace srw::Settings
     bool ReadLookAround();
     void WriteLookAround(bool on);
     int  ReadLookParallax();
+    // 1: the look-around shows its geometry -- the depth it found, as grey (nearer lighter) -- in place of the picture. For looking at what it is working from. LookShow.
+    bool ReadLookShow();
     void WriteLookParallax(int pct);
     // HDR (no UI yet): capture, conversion and the weave's swap chain 16-bit float
     // (scRGB) instead of 8-bit, so brighter-than-white picture is kept, with
