@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 #include "LookAround.h"
+#include "NeuralDepth.h"
+#include <string>
 
 using namespace srw;
 
@@ -76,6 +78,35 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (const wchar_t* bs = _wgetenv(L"LOOKTEST_BASE")) look.SetBase(_wtoi(bs));
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
     if (const wchar_t* ds = _wgetenv(L"LOOKTEST_DSP")) look.SetExternalDisparity(LoadDsp(dev, look, ds, ew, eh));
+    if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
+    if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
+    // LOOKTEST_NEURAL: the trained matcher as SR Loom runs it (src/NeuralDepth: ONNX Runtime, the model
+    // beside the exe), on this picture -- its depth in place of the look-around's own.
+    NeuralDepth neural; ID3D11Texture2D* neuralTex = nullptr;
+    if (_wgetenv(L"LOOKTEST_NEURAL"))
+    {
+        wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring dir = exe; const size_t cut = dir.find_last_of(L"/\134"); if (cut != std::wstring::npos) dir.resize(cut);
+        if (!neural.Start(dir)) { fwprintf(stderr, L"no neural matcher beside the exe\n"); return 1; }
+        for (int k = 0; k < 1200 && !neural.Ready() && !neural.Failed(); ++k) Sleep(100);
+        if (!neural.Ready()) { fwprintf(stderr, L"the model did not load\n"); return 1; }
+        int mw = 0, mh = 0; look.MapSize(ew, eh, mw, mh);
+        const float aspect = _wgetenv(L"LOOKTEST_ASPECT") ? (float)_wtof(_wgetenv(L"LOOKTEST_ASPECT")) : 16.0f / 9.0f;
+        for (int run = 0; run < 2; ++run)   // (twice: the first has the model's warming up in it)
+        {
+            neural.Submit(px.data(), (int)W * 4, ew, eh, aspect, mw, mh, 1u);
+            std::vector<uint16_t> res; int rw = 0, rh = 0; unsigned rs = 0; double ms = 0;
+            while (!neural.Take(res, rw, rh, rs, ms)) { if (neural.Failed()) { fwprintf(stderr, L"the model failed\n"); return 1; } Sleep(20); }
+            wprintf(L"neural matcher: both eyes in %.0f ms, map %dx%d\n", ms, rw, rh);
+            if (run == 0) continue;
+            D3D11_TEXTURE2D_DESC nd{};
+            nd.Width = (UINT)(rw * 2); nd.Height = (UINT)rh; nd.MipLevels = 1; nd.ArraySize = 1; nd.SampleDesc.Count = 1;
+            nd.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; nd.Usage = D3D11_USAGE_DEFAULT; nd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            D3D11_SUBRESOURCE_DATA init{ res.data(), (UINT)(rw * 2 * 8), 0 };
+            dev->CreateTexture2D(&nd, &init, &neuralTex);
+            look.SetExternalDisparity(neuralTex);
+        }
+    }
     ID3D11Texture2D* staging = nullptr;
     auto read = [&](std::vector<uint8_t>& out) {
         D3D11_TEXTURE2D_DESC od{}; look.OutputTexture()->GetDesc(&od);
@@ -327,6 +358,12 @@ int wmain(int argc, wchar_t** argv)
     if (const wchar_t* sp = _wgetenv(L"LOOKTEST_SPREAD")) look.SetSpread(_wtoi(sp));
     if (const wchar_t* fn = _wgetenv(L"LOOKTEST_FINE")) look.SetFine(_wtoi(fn));
     if (const wchar_t* bs = _wgetenv(L"LOOKTEST_BASE")) look.SetBase(_wtoi(bs));
+    // LOOKTEST_DUMPPAIR=dir: the two eyes written out (left.png, right.png) for another matcher to work on;
+    // LOOKTEST_DSP: its answer taken in place of the look-around's own (LOOKTEST_EXTSTAGE: where).
+    if (const wchar_t* dp = _wgetenv(L"LOOKTEST_DUMPPAIR")) { SavePNG(std::wstring(dp) + L"/left.png", A, (UINT)ew, (UINT)eh); SavePNG(std::wstring(dp) + L"/right.png", B, (UINT)ew, (UINT)eh); }
+    if (const wchar_t* ds = _wgetenv(L"LOOKTEST_DSP")) look.SetExternalDisparity(LoadDsp(dev, look, ds, ew, eh));
+    if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
+    if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
 
     // A moving picture, for the plate: LOOKTEST_SEQ=n,m gives n earlier pictures first, the camera m views
@@ -378,6 +415,31 @@ int wmain(int argc, wchar_t** argv)
     };
 
     wprintf(L"quilt %dx%d views of %dx%d, enlarged x%d to %dx%d eyes; references %d and %d\n", C, R, vw, vh, scale, ew, eh, ia, ib);
+    // LOOKTEST_DUMPDISP=file: the disparity in use (after everything), both eyes, as a .dsp at the map's
+    // size and in the PICTURE's pixels -- to set beside another matcher's.
+    if (const wchar_t* dd = _wgetenv(L"LOOKTEST_DUMPDISP"))
+    {
+        look.Render(srv, ew, eh, 0.3f, 1.3f);
+        D3D11_TEXTURE2D_DESC d0{}; look.DisparityTexture()->GetDesc(&d0);
+        D3D11_TEXTURE2D_DESC s0 = d0; s0.Usage = D3D11_USAGE_STAGING; s0.BindFlags = 0; s0.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        ID3D11Texture2D* st0 = nullptr; dev->CreateTexture2D(&s0, nullptr, &st0);
+        ctx->CopyResource(st0, look.DisparityTexture());
+        D3D11_MAPPED_SUBRESOURCE m0{}; ctx->Map(st0, 0, D3D11_MAP_READ, 0, &m0);
+        const int dw = (int)d0.Width / 2, dh = (int)d0.Height;
+        auto hf = [](uint16_t hh) { const uint32_t s = (hh >> 15) & 1, e = (hh >> 10) & 31, mm = hh & 1023; float v = e == 0 ? std::ldexp((float)mm, -24) : std::ldexp((float)(mm | 1024), (int)e - 25); return s ? -v : v; };
+        FILE* f = nullptr; _wfopen_s(&f, dd, L"wb");
+        if (f)
+        {
+            fwrite("DSP1", 1, 4, f); fwrite(&dw, 4, 1, f); fwrite(&dh, 4, 1, f);
+            for (int eye = 0; eye < 2; ++eye) for (int y = 0; y < dh; ++y) for (int x = 0; x < dw; ++x)
+            {
+                const uint16_t* p = (const uint16_t*)((const uint8_t*)m0.pData + (size_t)y * m0.RowPitch) + (size_t)(eye * dw + x) * 4;
+                const float v = hf(p[0]) * (float)ew / (float)dw; fwrite(&v, 4, 1, f);
+            }
+            fclose(f);
+        }
+        ctx->Unmap(st0, 0); st0->Release();
+    }
     // With no move, the picture must be the one that went in.
     { std::vector<uint8_t> o; look.Render(srv, ew, eh, 0.0f, 1.0f); readLeft(o); wprintf(L"no move: %.2f dB against the eye that went in (the higher the better; over 50 is the same picture)\n", psnr(o, A)); }
 

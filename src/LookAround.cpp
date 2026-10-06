@@ -16,6 +16,8 @@
 #include "Look_PSMedian.h"
 #include "Look_PSSpread.h"
 #include "Look_PSFine.h"
+#include "Look_PSGuide.h"
+#include "Look_PSFuse.h"
 #include "Look_PSSplat.h"
 #include "Look_PSHole.h"
 #include "Look_PSCompose.h"
@@ -43,6 +45,8 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSMedian,      sizeof(g_Look_PSMedian),      &m_psMedian },
         { g_Look_PSSpread,      sizeof(g_Look_PSSpread),      &m_psSpread },
         { g_Look_PSFine,        sizeof(g_Look_PSFine),        &m_psFine },
+        { g_Look_PSGuide,       sizeof(g_Look_PSGuide),       &m_psGuide },
+        { g_Look_PSFuse,        sizeof(g_Look_PSFuse),        &m_psFuse },
         { g_Look_PSSplat,       sizeof(g_Look_PSSplat),       &m_psSplat },
         { g_Look_PSHole,        sizeof(g_Look_PSHole),        &m_psHole },
         { g_Look_PSCompose,     sizeof(g_Look_PSCompose),     &m_psCompose },
@@ -76,7 +80,7 @@ void LookAround::Release(Tex& t) { SAFE_RELEASE(t.srv); SAFE_RELEASE(t.rtv); SAF
 
 void LookAround::Shutdown()
 {
-    Release(m_plate[0]); Release(m_plate[1]);
+    Release(m_plate[0]); Release(m_plate[1]); Release(m_extCopy);
     for (int k = 0; k < 4; ++k) Release(m_lkSum[k]);
     Release(m_est[0]); Release(m_est[1]); Release(m_estQ); SAFE_RELEASE(m_estRead);
     for (int k = 0; k < kLevels; ++k) Release(m_prevTmp[k]);
@@ -87,7 +91,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_disjoint); for (auto& q : m_ts) SAFE_RELEASE(q);
     SAFE_RELEASE(m_raster); SAFE_RELEASE(m_depthOn); SAFE_RELEASE(m_sampler); SAFE_RELEASE(m_cb);
     SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
-    SAFE_RELEASE(m_psSpread); SAFE_RELEASE(m_psFine);
+    SAFE_RELEASE(m_psSpread); SAFE_RELEASE(m_psFine); SAFE_RELEASE(m_psGuide); SAFE_RELEASE(m_psFuse);
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
@@ -247,11 +251,12 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         else                  Pass(m_psMatchRefine, m_dispA[k], cb, m_lvl[k].srv, result[k + 1]->srv);
         // (A disparity from elsewhere -- another matcher's, under trial: it takes the place of the one
         // found, and is checked, cleaned, drawn in at its edges and made finer as that would be.)
-        if (k == 0 && m_extDisp) m_context->CopyResource(m_dispA[0].tex, m_extDisp);
+        if (k == 0 && m_extDisp && m_extStage == 0) m_context->CopyResource(m_dispA[0].tex, m_extDisp);
         Pass(m_psCheck, m_dispB[k], cb, m_dispA[k].srv);
         Pass(m_psFill, m_dispA[k], cb, m_dispB[k].srv);
         Pass(m_psMedian, m_dispB[k], cb, m_dispA[k].srv);
         result[k] = &m_dispB[k];
+        if (k == 0 && m_extDisp && m_extStage == 1) m_context->CopyResource(m_dispB[0].tex, m_extDisp);   // (after the checking and cleaning, before the edges)
         // (At the finest size: the edges drawn in, twice -- PSSpread.)
         if (k == 0 && m_spread > 0)
         {
@@ -264,6 +269,23 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             // (... and the single texels that a 3x3 window's noise moved, put back.)
             Pass(m_psMedian, m_dispA[k], cb, m_dispB[k].srv);
             Pass(m_psMedian, m_dispB[k], cb, m_dispA[k].srv);
+        }
+        if (k == 0 && m_extDisp && m_extStage == 2) m_context->CopyResource(m_dispB[0].tex, m_extDisp);   // (after everything but the making finer)
+        // (4: the better of it and the look-around's own at each texel: PSFuse.)
+        if (k == 0 && m_extDisp && m_extStage == 4 && Ensure(m_extCopy, 2 * w[0], h[0], DXGI_FORMAT_R16G16B16A16_FLOAT))
+        {
+            m_context->CopyResource(m_extCopy.tex, m_extDisp);
+            const float keep = cb.opt[3]; cb.opt[3] = m_fuseBias;
+            Pass(m_psFuse, m_dispA[0], cb, m_lvl[0].srv, m_extCopy.srv, m_dispB[0].srv);
+            cb.opt[3] = keep;
+            m_context->CopyResource(m_dispB[0].tex, m_dispA[0].tex);
+        }
+        // (3: ... and first put right in its detail, within two texels of where it was: PSGuide.)
+        if (k == 0 && m_extDisp && m_extStage == 3)
+        {
+            m_context->CopyResource(m_dispA[0].tex, m_extDisp);
+            cb.winR = 2.0f;
+            Pass(m_psGuide, m_dispB[0], cb, m_lvl[0].srv, m_dispA[0].srv);
         }
         // (... and the answer made finer against the picture at its full size.)
         if (k == 0 && m_fine)

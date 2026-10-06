@@ -166,7 +166,7 @@ set_source_files_properties("${CONVERTER_HLSL}" PROPERTIES VS_TOOL_OVERRIDE "Non
 set(LOOK_HLSL "${CMAKE_SOURCE_DIR}/src/shaders/Look.hlsl")
 set(LOOK_ENTRIES
     VSFull:vs_5_0 VSSplat:vs_5_0 PSDownFirst:ps_5_0 PSDownNext:ps_5_0 PSGrad:ps_5_0 PSMatchFull:ps_5_0 PSMatchRefine:ps_5_0
-    PSCheck:ps_5_0 PSFill:ps_5_0 PSMedian:ps_5_0 PSSpread:ps_5_0 PSFine:ps_5_0 PSSplat:ps_5_0 PSHole:ps_5_0 PSCompose:ps_5_0 PSUnseen:ps_5_0 PSPlate:ps_5_0 PSLKSum:ps_5_0 PSLKSolve:ps_5_0)
+    PSCheck:ps_5_0 PSFill:ps_5_0 PSMedian:ps_5_0 PSSpread:ps_5_0 PSFine:ps_5_0 PSGuide:ps_5_0 PSFuse:ps_5_0 PSSplat:ps_5_0 PSHole:ps_5_0 PSCompose:ps_5_0 PSUnseen:ps_5_0 PSPlate:ps_5_0 PSLKSum:ps_5_0 PSLKSolve:ps_5_0)
 set(LOOK_SHADER_HEADERS)
 foreach(E ${LOOK_ENTRIES})
     string(REPLACE ":" ";" P "${E}")
@@ -195,6 +195,8 @@ add_executable(SRLoom WIN32
     src/CaptureDXGI.cpp
     src/Converter.cpp
     src/LookAround.cpp
+    src/NeuralDepth.cpp
+    src/NeuralDepth.h
     src/LookAround.h
     src/shaders/Look.hlsl
     src/RegionWeave.cpp
@@ -284,6 +286,24 @@ target_link_libraries(SRLoom PRIVATE
 # the POST_BUILD copy to assets/npclient/ has run by the time SRLoom starts.
 add_dependencies(SRLoom NPClient64)
 
+# The neural stereo matcher for still pictures (an experiment, src/NeuralDepth):
+# only where ONNX Runtime and DirectML have been unpacked into lib/onnxruntime
+# (the NuGet packages Microsoft.ML.OnnxRuntime.DirectML and Microsoft.AI.DirectML).
+# The DLL is delay-loaded, so SR Loom starts the same where it is missing.
+set(ORT_DIR "${CMAKE_SOURCE_DIR}/lib/onnxruntime")
+if(EXISTS "${ORT_DIR}/ort/build/native/include/onnxruntime_cxx_api.h" AND EXISTS "${ORT_DIR}/dml/bin/x64-win/DirectML.dll")
+    target_compile_definitions(SRLoom PRIVATE SRLOOM_NEURAL)
+    target_include_directories(SRLoom PRIVATE "${ORT_DIR}/ort/build/native/include")
+    target_link_libraries(SRLoom PRIVATE "${ORT_DIR}/ort/runtimes/win-x64/native/onnxruntime.lib" delayimp)
+    target_link_options(SRLoom PRIVATE /DELAYLOAD:onnxruntime.dll)
+    add_custom_command(TARGET SRLoom POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ORT_DIR}/ort/runtimes/win-x64/native/onnxruntime.dll"
+            "${ORT_DIR}/ort/runtimes/win-x64/native/onnxruntime_providers_shared.dll"
+            "${ORT_DIR}/dml/bin/x64-win/DirectML.dll"
+            "$<TARGET_FILE_DIR:SRLoom>")
+endif()
+
 # Nothing to copy beside the exe: the UI fonts are embedded as resources (app.rc) and
 # the SR runtime DLLs come from the installed SR Platform. The release is just the exe.
 
@@ -359,7 +379,13 @@ target_link_libraries(splatlab PRIVATE windowscodecs ole32)
 # looktest: look-around on the GPU, off the screen, scored against a quilt's own
 # views (as tools/splatlab scores the CPU version). Not part of the app:
 #   cmake --build build/x64 --config Release --target looktest
-add_executable(looktest EXCLUDE_FROM_ALL tools/looktest/looktest.cpp src/LookAround.cpp ${LOOK_SHADER_HEADERS})
+add_executable(looktest EXCLUDE_FROM_ALL tools/looktest/looktest.cpp src/LookAround.cpp src/NeuralDepth.cpp ${LOOK_SHADER_HEADERS})
 target_include_directories(looktest PRIVATE ${CMAKE_SOURCE_DIR}/src ${SHADER_OUT_DIR})
 target_compile_definitions(looktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
 target_link_libraries(looktest PRIVATE d3d11 dxgi user32 windowscodecs ole32)
+if(EXISTS "${ORT_DIR}/ort/build/native/include/onnxruntime_cxx_api.h" AND EXISTS "${ORT_DIR}/dml/bin/x64-win/DirectML.dll")
+    target_compile_definitions(looktest PRIVATE SRLOOM_NEURAL)
+    target_include_directories(looktest PRIVATE "${ORT_DIR}/ort/build/native/include")
+    target_link_libraries(looktest PRIVATE "${ORT_DIR}/ort/runtimes/win-x64/native/onnxruntime.lib" delayimp)
+    target_link_options(looktest PRIVATE /DELAYLOAD:onnxruntime.dll)
+endif()

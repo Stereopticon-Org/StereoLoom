@@ -820,3 +820,93 @@ SolveOut PSLKSolve(VSOut i)
     o.q = float4(s3.z / max(s3.w, 1e-6), s3.w / max(g_size.x * g_size.y, 1.0), 0, 0);
     return o;
 }
+
+// ---- A disparity from another matcher, put right in its detail -----------------
+// A trained matcher knows which surface a texel is on far better than the
+// windows above -- outlines, thin things, plain areas -- but it is good to half
+// a pixel or so, where two eyes mixed into one view want a tenth. So its
+// answer is kept as to WHERE and put right as to HOW MUCH: the candidates
+// are its own disparity and two texels either side, no further -- it cannot
+// be moved onto another surface -- costed as PSMatchRefine costs its five, and
+// between them by the parabola.
+// (tex0: the level. tex1: the other matcher's disparity, this size. g_winR.)
+float4 PSGuide(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    const int w = (int)g_size.x, h = (int)g_size.y;
+    const int R = (int)g_winR;
+    const int sgn = half == 0 ? 1 : -1;
+    const float4 own = tex1.Load(int3(half * w + p.x, p.y, 0));
+    const int c0 = (int)round(own.r);
+    float c5[5] = { 0, 0, 0, 0, 0 };
+    [loop] for (int j = -R; j <= R; ++j)
+    [loop] for (int k = -R; k <= R; ++k)
+    {
+        const int xa = clamp(p.x + k, 0, w - 1), ya = clamp(p.y + j, 0, h - 1);
+        // (Only the window's texels on the same surface count: the other matcher says which they are.)
+        const float dn = tex1.Load(int3(half * w + xa, ya, 0)).r;
+        if (abs(dn - own.r) > 1.5) continue;
+        const float4 a = tex0.Load(int3(half * w + xa, ya, 0));
+        [unroll] for (int m = 0; m < 5; ++m)
+        {
+            const int xb = xa - sgn * (c0 + m - 2);
+            if (xb < 0 || xb >= w) { c5[m] += kOut; continue; }
+            const float4 b = tex0.Load(int3((1 - half) * w + xb, ya, 0));
+            c5[m] += 0.35 * min(dot(abs(a.rgb - b.rgb), 1.0 / 3.0), kCapA) + 0.65 * min(abs(a.a - b.a), kCapG);
+        }
+    }
+    // (Its own stands unless another is clearly better: a plain area says nothing.)
+    int bm = 2; float best = c5[2] * 0.92;
+    [unroll] for (int m2 = 0; m2 < 5; ++m2) if (m2 != 2 && c5[m2] < best) { best = c5[m2]; bm = m2; }
+    if (bm == 2) best = c5[2];
+    float sub = 0.0;
+    if (bm > 0 && bm < 4)
+    {
+        float cm = 0, cp = 0;
+        [unroll] for (int m3 = 0; m3 < 5; ++m3) { cm = (m3 == bm - 1) ? c5[m3] : cm; cp = (m3 == bm + 1) ? c5[m3] : cp; }
+        const float den = cm - 2.0 * best + cp;
+        sub = den > 1e-5 ? clamp(0.5 * (cm - cp) / den, -0.5, 0.5) : 0.0;
+        // (Where its own stood and the costs say nothing, its own fraction is kept.)
+        if (bm == 2 && den <= 2.0 / 255.0) return own;
+    }
+    return float4(clamp((float)(c0 + bm - 2) + sub, own.r - 2.0, own.r + 2.0), own.g, own.b, 0);
+}
+
+// ---- Two matchers' answers, the better taken at each texel ---------------------
+// The trained matcher is right about outlines and wrong, sometimes, about a
+// whole soft or plain region; the windows above are the other way about. Each
+// answer is costed here on its own terms -- over the window's texels that ITS
+// map puts on the texel's own surface, so a thing's outline does not count
+// against the ground behind it -- and at its own fraction of a texel. The
+// trained one stands unless the other is clearly the better fit.
+// (tex0: the level. tex1: the trained matcher's disparity. tex2: the windows'.)
+float FuseCost(Texture2D map, int2 p, int half, int w, int h)
+{
+    const float d0 = map.Load(int3(half * w + p.x, p.y, 0)).r;
+    const float sgn = half == 0 ? 1.0 : -1.0;
+    float s = 0, n = 0;
+    [loop] for (int j = -2; j <= 2; ++j)
+    [loop] for (int k = -2; k <= 2; ++k)
+    {
+        const int xa = clamp(p.x + k, 0, w - 1), ya = clamp(p.y + j, 0, h - 1);
+        if (abs(map.Load(int3(half * w + xa, ya, 0)).r - d0) > 1.5) continue;
+        const float xb = (float)xa + 0.5 - sgn * d0;
+        if (xb < 0.5 || xb > (float)w - 0.5) continue;
+        const float4 a = tex0.Load(int3(half * w + xa, ya, 0));
+        const float4 b = tex0.SampleLevel(sampLinear, float2(((float)((1 - half) * w) + xb) / (float)(2 * w), ((float)ya + 0.5) / (float)h), 0);
+        s += 0.35 * min(dot(abs(a.rgb - b.rgb), 1.0 / 3.0), kCapA) + 0.65 * min(abs(a.a - b.a), kCapG);
+        n += 1.0;
+    }
+    // (Few texels to go on: little is known, and that counts against it a little.)
+    return n > 0.5 ? s / n + 0.004 * (25.0 - n) / 25.0 : 1.0;
+}
+float4 PSFuse(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    const int w = (int)g_size.x, h = (int)g_size.y;
+    const float4 nn = tex1.Load(int3(half * w + p.x, p.y, 0));
+    const float4 own = tex2.Load(int3(half * w + p.x, p.y, 0));
+    if (abs(nn.r - own.r) < 0.25) return float4(own.r, nn.g, nn.b, 0);     // (they agree: the windows' fraction is the finer)
+    const float cn = FuseCost(tex1, p, half, w, h), co = FuseCost(tex2, p, half, w, h);
+    return (co < cn * g_opt.w - 0.5 / 255.0) ? float4(own.r, own.g, own.b, 0) : float4(nn.r, nn.g, nn.b, 0);
+}

@@ -12,6 +12,7 @@
 #include "CaptureDXGI.h"
 #include "Converter.h"
 #include "LookAround.h"
+#include "NeuralDepth.h"
 #include "RegionWeave.h"
 #include "ScreenAnalysis.h"
 #include "GpuTrack.h"
@@ -549,6 +550,11 @@ namespace
         CaptureDXGI  captureDxgi;    // Output Duplication fallback for exclusive-fullscreen sources
         Converter    converter;
         LookAround   look;                  // new views from the two eyes as the head moves (an experiment: Settings LookAround)
+        NeuralDepth  neural;                // a trained matcher's depth for a picture that stays (an experiment: Settings LookNeural)
+        bool         lookNeural = false, neuralActive = false;   // (neuralActive: the look-around is on the trained matcher's depth)
+        unsigned     neuralSubmitted = 0;   // (the converter's picture last handed to it)
+        ULONGLONG    neuralTick = 0;        // (when the converter's picture last changed)
+        ID3D11Texture2D* neuralTex = nullptr; ID3D11Texture2D* neuralStage = nullptr;
         // Auto Stereo (region weaving). While autoStereo is on, the weave
         // window covers the SR display (Fullscreen mode, click-through) but
         // is clipped to the regions in regionWeaver; each region is converted
@@ -8044,6 +8050,63 @@ namespace
                     // one: between a game's frames only the head moves.)
                     const bool fresh = app.converter.Serial() != app.lookSerial;
                     app.lookSerial = app.converter.Serial();
+                    // A picture that stays is handed to the trained matcher (NeuralDepth), and
+                    // its depth taken in place of the look-around's own when it comes. The
+                    // picture changes: its own again, at once.
+                    if (fresh)
+                    {
+                        app.neuralTick = GetTickCount64();
+                        if (app.neuralActive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; }
+                    }
+                    if (!app.lookNeural && app.neuralActive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; app.neuralSubmitted = 0; }
+                    if (app.lookNeural && app.neural.Ready())
+                    {
+                        const int ew = app.converter.OutputPerEyeWidth(), eh = app.converter.OutputHeight();
+                        int mw = 0, mh = 0; app.look.MapSize(ew, eh, mw, mh);
+                        if (!app.neuralActive && !app.neural.Busy() && app.neuralSubmitted != app.lookSerial && GetTickCount64() - app.neuralTick > 400 && app.converter.OutputTexture())
+                        {
+                            // (The picture read back: once a picture, and only one that has stood still.)
+                            D3D11_TEXTURE2D_DESC td{}; app.converter.OutputTexture()->GetDesc(&td);
+                            D3D11_TEXTURE2D_DESC sd{}; if (app.neuralStage) app.neuralStage->GetDesc(&sd);
+                            if (!app.neuralStage || sd.Width != td.Width || sd.Height != td.Height || sd.Format != td.Format)
+                            {
+                                SAFE_RELEASE(app.neuralStage);
+                                D3D11_TEXTURE2D_DESC st = td; st.Usage = D3D11_USAGE_STAGING; st.BindFlags = 0; st.CPUAccessFlags = D3D11_CPU_ACCESS_READ; st.MiscFlags = 0;
+                                app.renderer.Device()->CreateTexture2D(&st, nullptr, &app.neuralStage);
+                            }
+                            D3D11_MAPPED_SUBRESOURCE m{};
+                            if (app.neuralStage && td.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
+                            {
+                                app.renderer.Context()->CopyResource(app.neuralStage, app.converter.OutputTexture());
+                                if (SUCCEEDED(app.renderer.Context()->Map(app.neuralStage, 0, D3D11_MAP_READ, 0, &m)))
+                                {
+                                    if (app.neural.Submit((const uint8_t*)m.pData, (int)m.RowPitch, ew, eh, v.screenW / v.screenH, mw, mh, app.lookSerial))
+                                        Log("NeuralDepth: picture %u handed over (%dx%d eyes, map %dx%d)", app.lookSerial, ew, eh, mw, mh);
+                                    app.renderer.Context()->Unmap(app.neuralStage, 0);
+                                }
+                            }
+                            else Log("NeuralDepth: the picture is not 8-bit sRGB (format %d): left alone", (int)td.Format);
+                            app.neuralSubmitted = app.lookSerial;
+                        }
+                        std::vector<uint16_t> res; int rw = 0, rh = 0; unsigned rs = 0; double rms = 0.0;
+                        if (app.neural.Take(res, rw, rh, rs, rms))
+                        {
+                            if (rs == app.lookSerial && rw == mw && rh == mh)
+                            {
+                                SAFE_RELEASE(app.neuralTex);
+                                D3D11_TEXTURE2D_DESC nd{};
+                                nd.Width = (UINT)(rw * 2); nd.Height = (UINT)rh; nd.MipLevels = 1; nd.ArraySize = 1; nd.SampleDesc.Count = 1;
+                                nd.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; nd.Usage = D3D11_USAGE_DEFAULT; nd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                                D3D11_SUBRESOURCE_DATA init{ res.data(), (UINT)(rw * 2 * 8), 0 };
+                                if (SUCCEEDED(app.renderer.Device()->CreateTexture2D(&nd, &init, &app.neuralTex)))
+                                {
+                                    app.look.SetExternalDisparity(app.neuralTex); app.neuralActive = true;
+                                    Log("NeuralDepth: picture %u, depth in after %.0f ms", rs, rms);
+                                }
+                            }
+                            else Log("NeuralDepth: the depth for picture %u came after the picture had gone (%.0f ms)", rs, rms);
+                        }
+                    }
                     if (app.look.Render(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), v, fresh))
                     {
                         app.weaver.SetInputView(app.look.OutputSRV(), app.look.OutputPerEyeWidth(), app.look.OutputHeight(), app.look.OutputFormat());
@@ -9906,6 +9969,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                 app.perfLog = Settings::ReadPerfLog();
                 app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
                 app.lookShow = Settings::ReadLookShow();
+                app.lookNeural = Settings::ReadLookNeural();
                 { const int ls = Settings::ReadLookSize(); if (ls != app.lookSize) { app.lookSize = ls; app.look.SetBase(ls); } }
                 app.renderer.SetAutoPlane(Settings::ReadAutoPlane(), Settings::ReadAutoPlaneDX12(), Settings::ReadAutoPlaneHold());   // (the panel's Straight to Display toggle)
                 app.renderer.SetLatencyStats(app.perfLog);
@@ -10154,6 +10218,13 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     }
     Log("WinMain: converter.Initialize OK");
     if (!app.look.Initialize(app.renderer.Device(), app.renderer.Context())) Log("WinMain: look-around not available");
+    {
+        // (The trained matcher, where its runtime and model are beside the exe.)
+        wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring dir = exe; const size_t cut = dir.find_last_of(L"\\/"); if (cut != std::wstring::npos) dir.resize(cut);
+        app.lookNeural = Settings::ReadLookNeural();
+        app.neural.Start(dir);
+    }
     app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
     app.converter.SetScrollReuse(Settings::ReadScrollReuse());
     app.deferHeavyConvert = Settings::ReadDeferRecovered();
@@ -10698,6 +10769,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // Stop OpenTrack BEFORE the weaver shuts down its SRContext --
     // the bridge holds an SR::HeadPoseTracker pointing into that context.
     app.openTrack.Disable();
+    app.neural.Shutdown(); SAFE_RELEASE(app.neuralTex); SAFE_RELEASE(app.neuralStage);
     app.look.Shutdown();
     app.converter.Shutdown();
     app.capture.Shutdown();

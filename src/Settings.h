@@ -117,6 +117,8 @@ namespace srw::Settings
     bool ReadLookShow();
     // The look-around's matching size: 0 as it sees fit (about 480 texels across), 1 the picture's own size, 2 half, 4 a quarter. LookSize.
     int  ReadLookSize();
+    // 1: a picture that stays is given to the trained stereo matcher (src/NeuralDepth), where that is installed. LookNeural.
+    bool ReadLookNeural();
     void WriteLookParallax(int pct);
     // HDR (no UI yet): capture, conversion and the weave's swap chain 16-bit float
     // (scRGB) instead of 8-bit, so brighter-than-white picture is kept, with
