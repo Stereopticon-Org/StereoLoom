@@ -188,6 +188,10 @@ namespace srw::Settings
     bool ReadAutoPlaneDX12() { const DWORD v = ReadDword(kSettingsKey, L"AutoPlane", 1); return v != 0 && v != 2; }   // (2: the Direct3D 11 presenter only)
     bool ReadAutoPlaneHold() { return ReadDword(kSettingsKey, L"AutoPlane", 1) == 3; }   // (3: held once reached -- an experiment, Renderer::UpdateAutoPlane)
     bool ReadWeaveRaw() { return ReadDword(kSettingsKey, L"WeaveRaw", 0) != 0; }
+    bool ReadLookAround() { return ReadDword(kSettingsKey, L"LookAround", 0) != 0; }
+    void WriteLookAround(bool on) { WriteDword(kSettingsKey, L"LookAround", on ? 1 : 0); }
+    int  ReadLookParallax() { const int v = (int)ReadDword(kSettingsKey, L"LookParallax", 1100) - 1000; return v >= -300 && v <= 300 ? v : 100; }   // (kept as the % + 1000)
+    void WriteLookParallax(int pct) { WriteDword(kSettingsKey, L"LookParallax", (DWORD)((pct >= -300 && pct <= 300 ? pct : 100) + 1000)); }
     bool ReadGpuRealtime() { return ReadDword(kSettingsKey, L"GpuRealtime", 0) != 0; }
     void WriteGpuRealtime(bool on) { WriteDword(kSettingsKey, L"GpuRealtime", on ? 1 : 0); }
     bool ReadAutoPlane()

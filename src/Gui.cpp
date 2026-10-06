@@ -453,6 +453,7 @@ bool Gui::Init(HWND mainHwnd, ID3D11Device* device, ID3D11DeviceContext* context
     m_perfLog               = Settings::ReadPerfLog();
     m_gpuRealtime           = Settings::ReadGpuRealtime();
     m_autoPlaneOn           = Settings::ReadAutoPlane();
+    m_lookOn                = Settings::ReadLookAround();
     m_eyeOrder              = Settings::ReadEyeOrderDetect();
     // The weave-skip test never survives a restart (a black 3D screen at
     // launch would look broken).
@@ -2832,6 +2833,14 @@ bool Gui::Render(GuiState& state)
                 "Windows' compositor so the 3D follows your head more closely, and switches back when the "
                 "taskbar, the pointer or a window needs to show. Turn it off if the screen flickers at "
                 "those moments. Applies straight away.");
+            // Fifth row: look-around (Settings LookAround).
+            if (pairToggle2("Look-Around", m_lookOn, halfW))
+            {
+                m_lookOn = !m_lookOn;
+                Settings::WriteLookAround(m_lookOn);
+            }
+            tip("Experimental. Moving your head looks round things in any 3D picture or game: the two eyes' views "
+                "are redrawn from where your head is. Direct3D 11 weaver only for now. Applies straight away.");
         }
         }   // (SETTINGS)
     }

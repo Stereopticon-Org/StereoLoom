@@ -224,6 +224,7 @@ namespace srw
         bool                     m_perfLog               = false;  // frame / GPU timing in the log
         bool                     m_gpuRealtime           = false;  // Settings GpuRealtime (the GPU scheduler's realtime class: needs administrator)
         bool                     m_autoPlaneOn           = true;   // Settings AutoPlane (straight to the display when nothing shows through)
+        bool                     m_lookOn                = false;  // Settings LookAround (new views as the head moves: an experiment)
         bool                     m_eyeOrder              = false;  // Automatic works out the eye order
         int                      m_weaverChoice          = 0;      // Settings WeaverChoice (0 modern, 1-3 legacy ACT off/static/dynamic)
         int                      m_actMode               = 0;      // Settings WeaverAct (0 the display's default, 1 off, 2 static, 3 dynamic)

@@ -108,6 +108,12 @@ namespace srw::Settings
     void WriteGpuRealtime(bool on);
     // 1: with the Direct3D 11 weaver, a Half SBS capture (no Convergence, no swap) goes to the weaver as it is -- no conversion pass. An experiment: default 0. WeaveRaw.
     bool ReadWeaveRaw();
+    // Look-around (an experiment): the two eyes seen again from where the head is. LookAround 0 / 1, default 0;
+    // LookParallax: head movement to view movement, in % (100 = like for like; negative turns it round), -300..300.
+    bool ReadLookAround();
+    void WriteLookAround(bool on);
+    int  ReadLookParallax();
+    void WriteLookParallax(int pct);
     // HDR (no UI yet): capture, conversion and the weave's swap chain 16-bit float
     // (scRGB) instead of 8-bit, so brighter-than-white picture is kept, with
     // either weaver. 1 (default): when Windows has HDR switched on for the SR

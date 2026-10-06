@@ -11,6 +11,7 @@
 #include "Capture.h"
 #include "CaptureDXGI.h"
 #include "Converter.h"
+#include "LookAround.h"
 #include "RegionWeave.h"
 #include "ScreenAnalysis.h"
 #include "GpuTrack.h"
@@ -547,6 +548,7 @@ namespace
         Capture      capture;        // WGC: default; only API that can do per-window + window-exclusion
         CaptureDXGI  captureDxgi;    // Output Duplication fallback for exclusive-fullscreen sources
         Converter    converter;
+        LookAround   look;                  // new views from the two eyes as the head moves (an experiment: Settings LookAround)
         // Auto Stereo (region weaving). While autoStereo is on, the weave
         // window covers the SR display (Fullscreen mode, click-through) but
         // is clipped to the regions in regionWeaver; each region is converted
@@ -716,6 +718,10 @@ namespace
         bool                         asyncSlow = false;        // (conversions are slow at the moment: apart from the weave)
         double                       asyncEnterMs = 3.5;       // (a conversion this long is slow: Settings AsyncEnterUs)
         bool                         weaveRaw = false;         // (Settings WeaveRaw: the weaver reads a Half SBS capture itself -- an experiment)
+        bool                         lookOn = false;           // (Settings LookAround)
+        float                        lookParallax = 1.0f;      // (Settings LookParallax: head movement to view movement; negative turns it round)
+        float                        lookX = 0.0f;             // (where the head is, in eye spacings from the middle, smoothed)
+        bool                         lookBound = false;        // (the weaver's input is the look-around's picture)
         int                          asyncSlowRun = 0;         // (slow conversions in a row)
         unsigned                     asyncSeenSerial = 0;
         ULONGLONG                    asyncSlowAt = 0;          // (when one last took over 2.5 ms)
@@ -7481,7 +7487,8 @@ namespace
         // values where it used to mix light: to be judged by eye.)
         const bool rawSBS = app.weaveRaw && srcEncoded && !app.weaver.IsDX12() && !app.renderer.IsDX12() && app.renderer.IsDComp();
         // (Not in HDR: the conversion is where the picture is brought into the weave's range.)
-        const bool identitySBS = liveSource && (halfSbsFmt || katangaFmt) && !swapNow && noConv && (!srcEncoded || rawSBS) && !app.hdrActive;
+        const bool identitySBS = liveSource && (halfSbsFmt || katangaFmt) && !swapNow && noConv && (!srcEncoded || rawSBS) && !app.hdrActive &&
+                                 !app.lookOn;   // (look-around works on the converter's picture)
         app.renderer.SetRawWeave(identitySBS && srcEncoded);
 
         if (identitySBS)
@@ -7991,6 +7998,42 @@ namespace
                                             app.converter.OutputHeight(), app.converter.OutputFormat());
                 }
                 if (app.asyncMode != was) p12->SetAsync(app.asyncMode);
+            }
+            // Look-around (an experiment, Settings LookAround): the two eyes the
+            // converter made, seen again from where the viewer's head is -- every
+            // loop, since the head moves whether or not the picture changes. The
+            // left eye's own place is 0 and the right's 1; the head an eye spacing
+            // to the right puts them at 1 and 2. (Direct3D 11 weaver only so far;
+            // not the layouts that already follow the head, nor HDR.)
+            {
+                const bool lookNow = app.lookOn && !app.weaver.IsDX12() && !app.weaver.IsLensOnly() && !app.autoStereo && !app.hdrActive &&
+                                     app.format != StereoFormat::RGBD && app.format != StereoFormat::LightField &&
+                                     !(app.lfOn && app.format == StereoFormat::Quilt) && app.converter.OutputSRV() != nullptr;
+                if (lookNow)
+                {
+                    float l[3] = {}, r[3] = {}, target = 0.0f;
+                    if (app.weaver.GetPredictedEyePositions(l, r))
+                    {
+                        const float spacing = (std::max)(40.0f, std::fabs(r[0] - l[0]));
+                        target = 0.5f * (l[0] + r[0]) / spacing * app.lookParallax;
+                    }
+                    target = (std::max)(-1.5f, (std::min)(1.5f, target));
+                    app.lookX += (target - app.lookX) * 0.5f;
+                    // (All but still: the picture as it is -- and exactly so.)
+                    const float x = std::fabs(app.lookX) < 0.004f ? 0.0f : app.lookX;
+                    if (app.look.Render(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), x, 1.0f + x))
+                    {
+                        app.weaver.SetInputView(app.look.OutputSRV(), app.look.OutputPerEyeWidth(), app.look.OutputHeight(), app.look.OutputFormat());
+                        app.lookBound = true;
+                    }
+                }
+                else if (app.lookBound)
+                {
+                    // (Off again: the converter's own picture back.)
+                    app.lookBound = false;
+                    if (app.converter.OutputSRV())
+                        app.weaver.SetInputView(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), app.converter.OutputFormat());
+                }
             }
             app.renderer.BindAndClearBackBuffer();
             {
@@ -9838,6 +9881,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     }
                 }
                 app.perfLog = Settings::ReadPerfLog();
+                app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
                 app.renderer.SetAutoPlane(Settings::ReadAutoPlane(), Settings::ReadAutoPlaneDX12(), Settings::ReadAutoPlaneHold());   // (the panel's Straight to Display toggle)
                 app.renderer.SetLatencyStats(app.perfLog);
                 app.eyeOrderDetect = Settings::ReadEyeOrderDetect();
@@ -10084,6 +10128,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
         return 7;
     }
     Log("WinMain: converter.Initialize OK");
+    if (!app.look.Initialize(app.renderer.Device(), app.renderer.Context())) Log("WinMain: look-around not available");
+    app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
     app.converter.SetScrollReuse(Settings::ReadScrollReuse());
     app.deferHeavyConvert = Settings::ReadDeferRecovered();
     app.asyncConvert = Settings::ReadAsyncConvert();
@@ -10627,6 +10673,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // Stop OpenTrack BEFORE the weaver shuts down its SRContext --
     // the bridge holds an SR::HeadPoseTracker pointing into that context.
     app.openTrack.Disable();
+    app.look.Shutdown();
     app.converter.Shutdown();
     app.capture.Shutdown();
     app.weaver.Shutdown();
