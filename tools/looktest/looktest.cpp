@@ -71,6 +71,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     ID3D11ShaderResourceView* srv = nullptr; dev->CreateShaderResourceView(src, &vd, &srv);
     LookAround look;
     if (!srv || !look.Initialize(dev, ctx)) { fwprintf(stderr, L"look-around init failed\n"); return 1; }
+    if (const wchar_t* fn = _wgetenv(L"LOOKTEST_FINE")) look.SetFine(_wtoi(fn));
     ID3D11Texture2D* staging = nullptr;
     auto read = [&](std::vector<uint8_t>& out) {
         D3D11_TEXTURE2D_DESC od{}; look.OutputTexture()->GetDesc(&od);
@@ -215,6 +216,7 @@ int wmain(int argc, wchar_t** argv)
     if (!look.Initialize(dev, ctx)) { fwprintf(stderr, L"look-around init failed\n"); return 1; }
     if (const wchar_t* m = _wgetenv(L"LOOKTEST_MAXDISP")) look.SetMaxDisparity((float)_wtof(m));
     if (const wchar_t* sp = _wgetenv(L"LOOKTEST_SPREAD")) look.SetSpread(_wtoi(sp));
+    if (const wchar_t* fn = _wgetenv(L"LOOKTEST_FINE")) look.SetFine(_wtoi(fn));
 
     // The left half of the output read back (the left eye's new view).
     ID3D11Texture2D* staging = nullptr;

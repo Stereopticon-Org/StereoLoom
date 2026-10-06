@@ -499,3 +499,54 @@ float4 PSUnseen(VSOut i) : SV_Target
     const float4 m = tex0.Load(int3(pane * W + mirror, p.y, 0));
     return float4(m.a > 0.5 ? m.rgb : tex0.Load(int3(pane * W + edge, p.y, 0)).rgb, 1);
 }
+
+// ---- The disparity made finer ----------------------------------------------
+// The matching above is on a small copy of the eyes, so its answer is good to a
+// part of a small texel -- a pixel or so of the picture itself. That is depth in
+// steps: far scenery, whose disparities differ by less than that, comes out
+// flat. Here each texel's answer is tried again against the picture at its full
+// size: a quarter and a half of a texel either side, the best kept, and between
+// those by a parabola. Only a little either side, so it can sharpen an answer
+// and cannot change which surface it is on.
+// (tex0: the two real eyes, full size; g_srcSize one eye's size. tex1: the
+// disparity, g_size.)
+float3 FineAt(int half, float2 q)
+{
+    const float2 S = g_srcSize;
+    return sqrt(max(tex0.SampleLevel(sampLinear, float2(((float)half * S.x + clamp(q.x, 0.5, S.x - 0.5)) / (2.0 * S.x), q.y / S.y), 0).rgb, 0.0));
+}
+float4 PSFine(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    const int w = (int)g_size.x;
+    const float4 own = tex1.Load(int3(half * w + p.x, p.y, 0));
+    const float2 k = g_srcSize / g_size;                     // (picture pixels a texel)
+    const float2 c = (float2(p) + 0.5) * k;
+    const float sgn = half == 0 ? 1.0 : -1.0;
+    float c5[5] = { 0, 0, 0, 0, 0 };
+    const int R = (int)g_winR;
+    [loop] for (int j = -R; j <= R; ++j)
+    [loop] for (int n = -R; n <= R; ++n)
+    {
+        const float2 q = c + float2(n, j) * k / g_winR;
+        const float3 a = FineAt(half, q);
+        [unroll] for (int m = 0; m < 5; ++m)
+        {
+            const float xb = q.x - sgn * (own.r + (float)(m - 2) * 0.25) * k.x;
+            if (xb < 0.0 || xb > g_srcSize.x) { c5[m] += kOut; continue; }
+            c5[m] += min(dot(abs(a - FineAt(1 - half, float2(xb, q.y))), 1.0 / 3.0), kCapA);
+        }
+    }
+    float best = c5[0]; int bm = 0;
+    [unroll] for (int m2 = 1; m2 < 5; ++m2) if (c5[m2] < best) { best = c5[m2]; bm = m2; }
+    // (Its own stands unless another is clearly better; at the end of the five
+    // there is no telling where the best lies, so its own stands there too.)
+    if (bm == 0 || bm == 4 || (bm != 2 && best > c5[2] * 0.95)) bm = 2;
+    float cm = 0, cp = 0;
+    [unroll] for (int m3 = 0; m3 < 5; ++m3) { cm = (m3 == bm - 1) ? c5[m3] : cm; cp = (m3 == bm + 1) ? c5[m3] : cp; }
+    const float den = cm - 2.0 * c5[bm] + cp;
+    const float flat = (2.0 * g_winR + 1.0) * (2.0 * g_winR + 1.0) * 0.5 / 255.0;
+    const float sub = den > flat ? clamp(0.5 * (cm - cp) / den, -0.5, 0.5) : 0.0;
+    if (bm == 2 && den <= flat) return own;    // (nothing there to match on)
+    return float4(own.r + ((float)(bm - 2) + sub) * 0.25, own.g, own.b, 0);
+}

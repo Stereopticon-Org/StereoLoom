@@ -15,6 +15,7 @@
 #include "Look_PSFill.h"
 #include "Look_PSMedian.h"
 #include "Look_PSSpread.h"
+#include "Look_PSFine.h"
 #include "Look_PSSplat.h"
 #include "Look_PSHole.h"
 #include "Look_PSCompose.h"
@@ -38,6 +39,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSFill,        sizeof(g_Look_PSFill),        &m_psFill },
         { g_Look_PSMedian,      sizeof(g_Look_PSMedian),      &m_psMedian },
         { g_Look_PSSpread,      sizeof(g_Look_PSSpread),      &m_psSpread },
+        { g_Look_PSFine,        sizeof(g_Look_PSFine),        &m_psFine },
         { g_Look_PSSplat,       sizeof(g_Look_PSSplat),       &m_psSplat },
         { g_Look_PSHole,        sizeof(g_Look_PSHole),        &m_psHole },
         { g_Look_PSCompose,     sizeof(g_Look_PSCompose),     &m_psCompose },
@@ -74,7 +76,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_disjoint); for (auto& q : m_ts) SAFE_RELEASE(q);
     SAFE_RELEASE(m_raster); SAFE_RELEASE(m_depthOn); SAFE_RELEASE(m_sampler); SAFE_RELEASE(m_cb);
     SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
-    SAFE_RELEASE(m_psSpread);
+    SAFE_RELEASE(m_psSpread); SAFE_RELEASE(m_psFine);
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
@@ -206,6 +208,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     // 2. Disparity, coarse to fine. After each size: checked, filled, cleaned.
     const Tex* result[kLevels] = {};
     for (int k = 0; k < kLevels; ++k) result[k] = &m_dispB[k];
+    if (m_fine) result[0] = &m_dispA[0];
     if (match)
     {
     for (int k = kLevels - 1; k >= 0; --k)
@@ -232,6 +235,13 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             // (... and the single texels that a 3x3 window's noise moved, put back.)
             Pass(m_psMedian, m_dispA[k], cb, m_dispB[k].srv);
             Pass(m_psMedian, m_dispB[k], cb, m_dispA[k].srv);
+        }
+        // (... and the answer made finer against the picture at its full size.)
+        if (k == 0 && m_fine)
+        {
+            cb.srcSize[0] = (float)eyeW; cb.srcSize[1] = (float)eyeH; cb.winR = m_fineR;
+            Pass(m_psFine, m_dispA[0], cb, src, m_dispB[0].srv);
+            result[0] = &m_dispA[0];
         }
     }
     m_haveMaps = true;
