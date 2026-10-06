@@ -382,6 +382,127 @@ static void Splat(const std::vector<Ref>& refs, float t, Img& out, Map& holes, f
     }
 }
 
+// 4. Splat the GEOMETRY, fetch the colour. Every pixel of every reference view
+// is still thrown forward to where it is seen from t -- but what lands is only
+// its disparity (the nearest wins: a depth buffer), in a small picture. Then
+// each pixel of the new view, at full size, looks its colour up in the real
+// views through that disparity: nothing is blurred by a splat's footprint, and
+// with no move at all the output is the input, pixel for pixel. A reference is
+// used for a pixel only if its own disparity map agrees the surface is there
+// (else it is hidden in that view); between the candidates round a pixel the
+// one on which the visible views agree best in colour is taken -- the right
+// depth is the one at which two views show the same thing.
+//
+// dT: the new view's disparity, at the references' (small) size. scale: full
+// size over small size. imgs: the references at full size.
+static void DepthSplat(const std::vector<Ref>& refs, float t, Map& dT, Map& holes)
+{
+    const int W = refs[0].disp->w, H = refs[0].disp->h;
+    dT.w = holes.w = W; dT.h = holes.h = H; dT.v.assign((size_t)W * H, -1e30f); holes.v.assign((size_t)W * H, 0.0f);
+    for (const Ref& r : refs)
+    {
+        const float s = Shift(r, t);
+        for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x)
+        {
+            const float d = r.disp->at(x, y);
+            const float dl = r.disp->at((std::max)(x - 1, 0), y), dr = r.disp->at((std::min)(x + 1, W - 1), y);
+            // (Its pixel's two sides, each thrown forward with its own disparity where
+            // that is the same surface: a slanted wall stays closed, an edge opens.)
+            const float gl = std::fabs(d - dl) < 1.0f ? 0.5f * (d + dl) : d, gr = std::fabs(dr - d) < 1.0f ? 0.5f * (d + dr) : d;
+            float x0 = (float)x - 0.5f + s * gl, x1 = (float)x + 0.5f + s * gr;
+            if (x1 < x0) std::swap(x0, x1);
+            for (int xx = (std::max)(0, (int)std::ceil(x0 - 0.01f)); xx <= (std::min)(W - 1, (int)std::floor(x1 + 0.01f)); ++xx)
+                if (d > dT.at(xx, y)) dT.at(xx, y) = d;
+        }
+    }
+    // (Nothing landed: from the farther side along the row.)
+    for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x)
+    {
+        if (dT.at(x, y) > -1e29f) continue;
+        holes.at(x, y) = 1.0f;
+    }
+    for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x)
+    {
+        if (holes.at(x, y) < 0.5f) continue;
+        int l = x - 1; while (l >= 0 && holes.at(l, y) > 0.5f) --l;
+        int r = x + 1; while (r < W && holes.at(r, y) > 0.5f) ++r;
+        float v = 0; bool have = false;
+        if (l >= 0) { v = dT.at(l, y); have = true; }
+        if (r < W) { v = have ? (std::min)(v, dT.at(r, y)) : dT.at(r, y); have = true; }
+        dT.at(x, y) = have ? v : 0.0f;
+    }
+}
+static void Deferred(const std::vector<Ref>& refs, const std::vector<const Img*>& imgs, float scale, float t, Img& out, Map& holes)
+{
+    Map dT; DepthSplat(refs, t, dT, holes);
+    const int W = imgs[0]->w, H = imgs[0]->h, w = dT.w, h = dT.h;
+    out.w = W; out.h = H; out.p.assign((size_t)W * H * 3, 0.0f);
+    std::vector<uint8_t> unseen((size_t)W * H, 0);   // (no view sees this pixel: filled afterwards)
+    std::vector<float> dOut((size_t)W * H, 0.0f);
+    Rows(H, [&](int Y) {
+        for (int X = 0; X < W; ++X)
+        {
+            const float x = ((float)X + 0.5f) / scale - 0.5f, y = ((float)Y + 0.5f) / scale - 0.5f;
+            const int x0 = (std::max)(0, (std::min)(w - 1, (int)std::floor(x))), y0 = (std::max)(0, (std::min)(h - 1, (int)std::floor(y)));
+            const int x1 = (std::min)(w - 1, x0 + 1), y1 = (std::min)(h - 1, y0 + 1);
+            float cand[5] = { dT.at(x0, y0), dT.at(x1, y0), dT.at(x0, y1), dT.at(x1, y1), MapAt(dT, x, y) };
+            float bestCost = 1e30f; float bestCol[3] = { 0, 0, 0 }; int bestSeen = 0; float bestD = 0;
+            for (int c = 0; c < 5; ++c)
+            {
+                const float d = cand[c];
+                float col[4][3]; bool vis[4] = {}; float wgt[4] = {}; int nv = 0;
+                for (size_t r = 0; r < refs.size() && r < 4; ++r)
+                {
+                    const float s = Shift(refs[r], t);
+                    const float xs = x - s * d;                       // (small-picture place in that view)
+                    Bilinear(*imgs[r], (float)X - s * d * scale, (float)Y, col[r]);
+                    vis[r] = xs >= 0 && xs <= w - 1 && std::fabs(MapAt(*refs[r].disp, xs, y) - d) < 1.0f;
+                    wgt[r] = (std::max)(0.02f, 1.0f - std::fabs(t - refs[r].pos));
+                    nv += vis[r];
+                }
+                // (How well the views that see it agree; one alone, or none: a set price.)
+                float cost = nv == 0 ? 60.0f : 12.0f;
+                if (nv >= 2)
+                {
+                    float mean[3] = { 0, 0, 0 }; for (size_t r = 0; r < refs.size(); ++r) if (vis[r]) for (int k = 0; k < 3; ++k) mean[k] += col[r][k] / nv;
+                    cost = 0; for (size_t r = 0; r < refs.size(); ++r) if (vis[r]) for (int k = 0; k < 3; ++k) cost += std::fabs(col[r][k] - mean[k]) / 3.0f;
+                    cost /= nv;
+                }
+                if (c == 4) cost += 0.5f;   // (the in-between value only where it is clearly better)
+                if (cost < bestCost)
+                {
+                    bestCost = cost; bestSeen = nv; bestD = d;
+                    float ws = 0; float o[3] = { 0, 0, 0 };
+                    for (size_t r = 0; r < refs.size(); ++r)
+                    {
+                        // (None sees it: the view nearest t, as it is -- a guess.)
+                        const float wr = nv ? (vis[r] ? wgt[r] : 0.0f) : wgt[r] * wgt[r];
+                        for (int k = 0; k < 3; ++k) o[k] += col[r][k] * wr; ws += wr;
+                    }
+                    for (int k = 0; k < 3; ++k) bestCol[k] = o[k] / (std::max)(ws, 1e-6f);
+                }
+            }
+            for (int k = 0; k < 3; ++k) out.at(X, Y)[k] = bestCol[k];
+            unseen[(size_t)Y * W + X] = bestSeen == 0; dOut[(size_t)Y * W + X] = bestD;
+        }
+    });
+    // What no view sees is behind something: its colour from the nearest pixel
+    // that was seen, on the FARTHER side along the row -- the background carried
+    // on, where a look-up through the foreground's place brought the foreground.
+    Rows(H, [&](int Y) {
+        for (int X = 0; X < W; ++X)
+        {
+            if (!unseen[(size_t)Y * W + X]) continue;
+            int l = X - 1; while (l >= 0 && unseen[(size_t)Y * W + l]) --l;
+            int r = X + 1; while (r < W && unseen[(size_t)Y * W + r]) ++r;
+            int from = -1;
+            if (l >= 0 && r < W) from = dOut[(size_t)Y * W + l] < dOut[(size_t)Y * W + r] ? l : r;
+            else if (l >= 0) from = l; else if (r < W) from = r;
+            if (from >= 0) for (int k = 0; k < 3; ++k) out.at(X, Y)[k] = out.at(from, Y)[k];
+        }
+    });
+}
+
 // ---- Scoring ----------------------------------------------------------------
 static double Psnr(const Img& a, const Img& b, int margin)
 {
@@ -445,10 +566,14 @@ static int PairMode(Img A, Img B, const std::wstring& outdir)
     Img w1, w2, s1, s2; Map h1, h2;
     WarpOne(ra, 1.0f, w1); WarpOne(rb, 0.0f, w2);
     Splat({ ra }, 1.0f, s1, h1); Splat({ rb }, 0.0f, s2, h2);
+    Img g1, g2; Map hg1, hg2;
+    Deferred({ ra }, { &A }, 1.0f, 1.0f, g1, hg1); Deferred({ rb }, { &B }, 1.0f, 0.0f, g2, hg2);
     wprintf(L"\neach eye made from the other eye alone       PSNR dB   pixels off by > 40\n");
     wprintf(L"  warp:   right from left / left from right   %.2f / %.2f   %.2f%% / %.2f%%\n", Psnr(w1, B, margin), Psnr(w2, A, margin), BadShare(w1, B, margin), BadShare(w2, A, margin));
     wprintf(L"  splats: right from left / left from right   %.2f / %.2f   %.2f%% / %.2f%%   (holes before filling %.1f%% / %.1f%%)\n",
             Psnr(s1, B, margin), Psnr(s2, A, margin), BadShare(s1, B, margin), BadShare(s2, A, margin), Share(h1), Share(h2));
+    wprintf(L"  geometry splatted, colour fetched:           %.2f / %.2f   %.2f%% / %.2f%%   (holes before filling %.1f%% / %.1f%%)\n",
+            Psnr(g1, B, margin), Psnr(g2, A, margin), BadShare(g1, B, margin), BadShare(g2, A, margin), Share(hg1), Share(hg2));
     if (!outdir.empty())
     {
         // Rows: from half a spacing to the left of the pair, between them, half a
@@ -531,10 +656,10 @@ int wmain(int argc, wchar_t** argv)
 
     const Ref ra{ &A, &dA, &cA, 0.0f }, rb{ &B, &dB, &cB, 1.0f };
     const std::vector<Ref> both{ ra, rb };
-    struct Acc { double mid = 0, edge = 0, out = 0; int nin = 0, nnear = 0, nfar = 0; double holes = 0; int nh = 0; } acc[3];
-    const wchar_t* names[3] = { L"1 warp from the nearer view (as RGB + Depth today)", L"2 warp from both views, hidden parts tested", L"3 splats from both views, soft depth buffer" };
-    wprintf(L"\n  view  position   %-10s %-10s %-10s   (PSNR dB against the quilt's own view; holes %% for 2 and 3)\n", L"1 warp", L"2 two-view", L"3 splats");
-    std::vector<uint8_t> sheet; int sheetRows = 0; const int sheetW = vw * 4;
+    struct Acc { double mid = 0, edge = 0, out = 0; int nin = 0, nnear = 0, nfar = 0; double holes = 0; int nh = 0; } acc[4];
+    const wchar_t* names[4] = { L"1 warp from the nearer view (as RGB + Depth today)", L"2 warp from both views, hidden parts tested", L"3 splats from both views, soft depth buffer", L"4 geometry splatted, colour fetched from the views" };
+    wprintf(L"\n  view  position   %-10s %-10s %-10s %-10s   (PSNR dB against the quilt's own view; holes %% for 2 and 3)\n", L"1 warp", L"2 two-view", L"3 splats", L"4 fetched");
+    std::vector<uint8_t> sheet; int sheetRows = 0; const int sheetW = vw * 5;
     for (int v = (std::max)(0, ia - reach); v <= (std::min)(N - 1, ib + reach); ++v)
     {
         if (v == ia || v == ib) continue;
@@ -544,11 +669,12 @@ int wmain(int argc, wchar_t** argv)
         WarpOne(t < 0.5f ? ra : rb, t, o1);
         WarpTwo(ra, rb, t, o2, h2);
         Splat(both, t, o3, h3);
+        Img o4; Map h4; Deferred(both, { &A, &B }, 1.0f, t, o4, h4);
         const int margin = vw / 16;   // (the picture's edges have nothing to come from)
-        const double p[3] = { Psnr(o1, truth, margin), Psnr(o2, truth, margin), Psnr(o3, truth, margin) };
-        wprintf(L"  %4d  %+6.2f     %-10.2f %-10.2f %-10.2f   %.1f%% / %.1f%%\n", v, t, p[0], p[1], p[2], Share(h2), Share(h3));
+        const double p[4] = { Psnr(o1, truth, margin), Psnr(o2, truth, margin), Psnr(o3, truth, margin), Psnr(o4, truth, margin) };
+        wprintf(L"  %4d  %+6.2f     %-10.2f %-10.2f %-10.2f %-10.2f   %.1f%% / %.1f%%\n", v, t, p[0], p[1], p[2], p[3], Share(h2), Share(h3));
         const bool inside = t > 0 && t < 1, nearOut = !inside && (t >= -0.5f && t <= 1.5f);
-        for (int k = 0; k < 3; ++k)
+        for (int k = 0; k < 4; ++k)
         {
             if (inside) { acc[k].mid += p[k]; ++acc[k].nin; } else if (nearOut) { acc[k].edge += p[k]; ++acc[k].nnear; } else { acc[k].out += p[k]; ++acc[k].nfar; }
         }
@@ -559,11 +685,12 @@ int wmain(int argc, wchar_t** argv)
             sheet.resize((size_t)sheetW * vh * (sheetRows + 1) * 4, 0);
             Put(sheet, sheetW, truth, 0, vh * sheetRows); Put(sheet, sheetW, o1, vw, vh * sheetRows);
             Put(sheet, sheetW, o2, vw * 2, vh * sheetRows); Put(sheet, sheetW, o3, vw * 3, vh * sheetRows);
+            Put(sheet, sheetW, o4, vw * 4, vh * sheetRows);
             ++sheetRows;
         }
     }
     wprintf(L"\n%-52s %-12s %-18s %-14s\n", L"mean PSNR (dB)", L"between", L"up to half outside", L"further out");
-    for (int k = 0; k < 3; ++k)
+    for (int k = 0; k < 4; ++k)
         wprintf(L"%-52s %-12.2f %-18.2f %-14.2f\n", names[k], acc[k].nin ? acc[k].mid / acc[k].nin : 0.0, acc[k].nnear ? acc[k].edge / acc[k].nnear : 0.0, acc[k].nfar ? acc[k].out / acc[k].nfar : 0.0);
     wprintf(L"holes before filling: two-view warp %.2f%%, splats %.2f%% (mean over the targets)\n", acc[1].nh ? acc[1].holes / acc[1].nh : 0.0, acc[2].nh ? acc[2].holes / acc[2].nh : 0.0);
     if (!outdir.empty() && sheetRows)
