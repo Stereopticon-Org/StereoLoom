@@ -51,10 +51,92 @@ static bool SavePNG(const std::wstring& path, const std::vector<uint8_t>& rgba, 
     return ok;
 }
 
+// A side-by-side picture as it is (a game's frame): no third view to score
+// against, so the right eye is made from the LEFT eye alone -- a whole eye
+// spacing's move from one view -- and compared with the real right eye. Then
+// views from beside the pair are written out to look at.
+static int RunSbs(const wchar_t* file, const std::wstring& outdir)
+{
+    std::vector<uint8_t> px; UINT W = 0, H = 0;
+    if (!LoadRGBA(file, px, W, H)) { fwprintf(stderr, L"can't load %s\n", file); return 1; }
+    const int ew = (int)W / 2, eh = (int)H;
+    ID3D11Device* dev = nullptr; ID3D11DeviceContext* ctx = nullptr;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &dev, nullptr, &ctx))) return 1;
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = (UINT)(ew * 2); td.Height = (UINT)eh; td.MipLevels = 1; td.ArraySize = 1; td.SampleDesc.Count = 1;
+    td.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA sd{ px.data(), W * 4, 0 };
+    ID3D11Texture2D* src = nullptr; dev->CreateTexture2D(&td, &sd, &src);
+    D3D11_SHADER_RESOURCE_VIEW_DESC vd{}; vd.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; vd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; vd.Texture2D.MipLevels = 1;
+    ID3D11ShaderResourceView* srv = nullptr; dev->CreateShaderResourceView(src, &vd, &srv);
+    LookAround look;
+    if (!srv || !look.Initialize(dev, ctx)) { fwprintf(stderr, L"look-around init failed\n"); return 1; }
+    ID3D11Texture2D* staging = nullptr;
+    auto read = [&](std::vector<uint8_t>& out) {
+        D3D11_TEXTURE2D_DESC od{}; look.OutputTexture()->GetDesc(&od);
+        if (!staging) { od.Usage = D3D11_USAGE_STAGING; od.BindFlags = 0; od.CPUAccessFlags = D3D11_CPU_ACCESS_READ; od.MiscFlags = 0; od.Format = DXGI_FORMAT_R8G8B8A8_UNORM; dev->CreateTexture2D(&od, nullptr, &staging); }
+        ctx->CopyResource(staging, look.OutputTexture());
+        D3D11_MAPPED_SUBRESOURCE m{}; ctx->Map(staging, 0, D3D11_MAP_READ, 0, &m);
+        out.resize((size_t)ew * 2 * eh * 4);
+        for (int y = 0; y < eh; ++y) memcpy(&out[(size_t)y * ew * 2 * 4], (const uint8_t*)m.pData + (size_t)y * m.RowPitch, (size_t)ew * 2 * 4);
+        ctx->Unmap(staging, 0);
+    };
+    // Right from left alone, and left from right alone.
+    double ps[2] = {}, bad[2] = {};
+    for (int from = 0; from < 2; ++from)
+    {
+        LookAround::View v; v.only = from;
+        if (from == 0) { v.tL = 1.0f; v.tR = 1.0f; } else { v.tL = 0.0f; v.tR = 0.0f; }
+        std::vector<uint8_t> o; look.Render(srv, ew, eh, v); read(o);
+        // (The made view is in the left half; the real one is the other eye's half of the picture.)
+        const int margin = ew / 12; double s = 0; size_t n = 0, b = 0, np = 0;
+        for (int y = margin; y < eh - margin; ++y) for (int x = margin; x < ew - margin; ++x, ++np)
+        {
+            const uint8_t* a = &o[((size_t)y * ew * 2 + x) * 4];
+            const uint8_t* t = &px[((size_t)y * W + (from == 0 ? ew : 0) + x) * 4];
+            int worst = 0;
+            for (int k = 0; k < 3; ++k) { const int d = (int)a[k] - (int)t[k]; s += (double)d * d; ++n; worst = (std::max)(worst, std::abs(d)); }
+            b += worst > 40;
+        }
+        ps[from] = 10.0 * std::log10(255.0 * 255.0 / (std::max)(s / (std::max)(n, (size_t)1), 1e-9));
+        bad[from] = 100.0 * b / (std::max)(np, (size_t)1);
+    }
+    wprintf(L"side-by-side %dx%d eyes; each eye made from the other alone: right from left %.2f dB, %.2f%% of pixels off by > 40 | left from right %.2f dB, %.2f%%\n",
+            ew, eh, ps[0], bad[0], ps[1], bad[1]);
+    {
+        double sum[4] = {}; int n = 0;
+        LookAround::View v; v.tL = 0.4f; v.tR = 1.4f;
+        for (int f = 0; f < 200; ++f)
+        {
+            look.Render(srv, ew, eh, v); ctx->Flush();
+            double ms[4]; if (look.TakeTimes(ms)) { for (int k = 0; k < 4; ++k) sum[k] += ms[k]; ++n; }
+            if (f % 8 == 7) Sleep(5);
+        }
+        if (n) wprintf(L"GPU ms a frame (mean of %d): levels %.2f, matching %.2f, geometry %.2f, new views %.2f | total %.2f\n",
+                       n, sum[0] / n, sum[1] / n, sum[2] / n, sum[3] / n, (sum[0] + sum[1] + sum[2] + sum[3]) / n);
+    }
+    if (!outdir.empty())
+    {
+        // To look at, one under another (both eyes each): the head an eye spacing
+        // to the left; half a spacing to the right and up; nearer the screen.
+        LookAround::View vs[3];
+        vs[0].tL = -1.0f; vs[0].tR = 0.0f;
+        vs[1].tL = 0.5f; vs[1].tR = 1.5f; vs[1].ty = 0.5f;
+        vs[2].rho = 1.5f;
+        std::vector<uint8_t> sheet((size_t)ew * 2 * eh * 3 * 4), o;
+        for (int r = 0; r < 3; ++r) { look.Render(srv, ew, eh, vs[r]); read(o); memcpy(&sheet[(size_t)ew * 2 * eh * 4 * r], o.data(), o.size()); }
+        SavePNG(outdir + L"\\look_sbs.png", sheet, (UINT)(ew * 2), (UINT)(eh * 3));
+        wprintf(L"written: look_sbs.png (both eyes; rows: head a spacing left | half a spacing right and up | nearer the screen)\n");
+    }
+    look.Shutdown();
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     if (argc < 2) { fwprintf(stderr, L"usage: looktest <quilt_qsCxR.png> [refA refB] [reach] [scale] [outdir]\n"); return 1; }
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (argc >= 3 && !wcscmp(argv[1], L"sbs")) return RunSbs(argv[2], argc > 3 ? argv[3] : L"");
     std::wstring path = argv[1];
     int C = 8, R = 6;
     { const size_t q = path.rfind(L"qs"); if (q != std::wstring::npos) swscanf_s(path.c_str() + q, L"qs%dx%d", &C, &R); }

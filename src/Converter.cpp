@@ -1344,6 +1344,7 @@ bool Converter::Convert(ID3D11ShaderResourceView* source, int srcWidth, int srcH
     }
     SAFE_RELEASE(srcTex2D);
     SAFE_RELEASE(directTex);
+    ++m_serial;   // (a picture was made: Serial)
     m_lastVersion = m_srcVersion;   // (0: unknown -- the next call converts regardless)
     m_lastKey     = key;
     m_lastTintHash = m_tintHash;

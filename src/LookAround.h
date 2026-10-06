@@ -25,7 +25,19 @@ namespace srw
 
         // src: the two eyes side by side, each eyeW x eyeH, read as linear light
         // (an _SRGB view of 8-bit, or float). False: nothing drawn (use src).
-        bool Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, float tL, float tR);
+        // Where the new views are from. tL / tR: the left and right eye's new
+        // places across (their own are 0 and 1). ty: how far DOWN the screen the
+        // head is from the eyes' own height, in eye spacings. rho: the eyes' own
+        // distance from the screen over the new one (1: as far; 2: half as far).
+        // screenW / screenH: the picture's size on the display in eye spacings
+        // (a 27 inch display and 63 mm eyes: 9.5 x 5.3). only: a test -- -1 both
+        // eyes are used, 0 or 1 that eye alone.
+        struct View { float tL = 0.0f, tR = 1.0f, ty = 0.0f, rho = 1.0f, screenW = 9.5f, screenH = 5.3f; int only = -1; };
+        // newPicture false: src is the picture given last time -- only the head has
+        // moved: the disparity found then still stands (the levels and the
+        // matching, about half the work, are not done again).
+        bool Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const View& view, bool newPicture = true);
+        bool Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, float tL, float tR) { View v; v.tL = tL; v.tR = tR; return Render(src, eyeW, eyeH, v); }
 
         ID3D11ShaderResourceView* OutputSRV() const { return m_out[1].srv; }
         ID3D11Texture2D*          OutputTexture() const { return m_out[1].tex; }
@@ -45,7 +57,7 @@ namespace srw
         struct Tex { ID3D11Texture2D* tex = nullptr; ID3D11RenderTargetView* rtv = nullptr; ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; };
         bool Ensure(Tex& t, int w, int h, DXGI_FORMAT fmt, DXGI_FORMAT view = DXGI_FORMAT_UNKNOWN);
         void Release(Tex& t);
-        struct CB { float size[2]; float srcSize[2]; float range, tL, tR, eye; float winR, pad; float scale[2]; };
+        struct CB { float size[2]; float srcSize[2]; float range, tL, tR, eye; float winR, ty; float scale[2]; float rho, kx, ky, only; };
         void Pass(ID3D11PixelShader* ps, const Tex& target, const CB& cb, ID3D11ShaderResourceView* t0,
                   ID3D11ShaderResourceView* t1 = nullptr, ID3D11ShaderResourceView* t2 = nullptr);
 
@@ -60,7 +72,7 @@ namespace srw
         ID3D11DepthStencilState* m_depthOn = nullptr;
         ID3D11RasterizerState*   m_raster = nullptr;
 
-        static constexpr int kLevels = 3;            // 1/8, 1/16, 1/32 of the eye
+        static constexpr int kLevels = 3;            // the eye at 1/base, half that and half again (base: 8 for a 4K eye, 4 for a 2K one)
         Tex m_tmp[kLevels], m_lvl[kLevels];          // colour; colour + slope
         Tex m_dispA[kLevels], m_dispB[kLevels];      // disparity, two to go between
         Tex m_target, m_targetFilled;                // the new views' disparity
@@ -69,6 +81,7 @@ namespace srw
         Tex m_out[2];                                // the new views: composed, then filled
         int   m_eyeW = 0, m_eyeH = 0;
         float m_maxShare = 0.06f;
+        bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
 
         // (Timing: every so many frames, five timestamps.)
         ID3D11Query* m_disjoint = nullptr; ID3D11Query* m_ts[5] = {};

@@ -43,8 +43,12 @@ cbuffer Params : register(b0)
     float  g_tR;        // the right eye's
     float  g_eye;       // VSSplat: which new view is being drawn (0 left, 1 right)
     float  g_winR;      // the match window's radius
-    float  g_pad;
+    float  g_ty;        // the new place's height: eye spacings DOWN the screen from the eyes' own
     float2 g_scale;     // full size over the small maps' size, across and down
+    float  g_rho;       // the eyes' own distance from the screen over the new place's (1: as far; 2: half as far)
+    float  g_kx;        // (g_rho - 1) x the screen's width in eye spacings: see Move
+    float  g_ky;        // ... and its height
+    float  g_only;      // a test: -1 both eyes are used; 0 / 1 that eye alone
 };
 
 struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -55,6 +59,18 @@ VSOut VSFull(uint id : SV_VertexID)
     o.uv = t;
     o.pos = float4(t * float2(2, -2) + float2(-1, 1), 0, 1);
     return o;
+}
+
+// How far a point of eye r moves on the way to the view from t, in disparities
+// (across, down): it is drawn at  place - d * Move.  The display is a window:
+// what lies on the screen (d = 0) stays put whatever the head does. Sideways
+// and up-and-down the move is the head's own, in eye spacings. Nearer the
+// screen (g_rho > 1) everything behind it spreads out from the point in front
+// of the head and everything before it draws in -- g_kx / g_ky, with where the
+// point is on the screen (uv, 0..1 across the eye's picture).
+float2 Move(float r, float t, float2 uv)
+{
+    return float2((t - 0.5) * g_rho - (r - 0.5) - g_kx * (uv.x - 0.5), g_ty * g_rho - g_ky * (uv.y - 0.5));
 }
 
 // The pixel's eye (0 left half, 1 right half) and its place within the eye.
@@ -110,6 +126,10 @@ float4 PSGrad(VSOut i) : SV_Target
 // What a candidate costs: the colour difference and the slope difference over
 // the window, each capped -- one bad texel cannot decide it. (tex0: the level.)
 static const float kCapA = 30.0 / 255.0, kCapG = 20.0 / 255.0, kOut = 14.0 / 255.0;
+// (Tried, 2026-10-06: each texel of the window counted by how like the middle
+// one it is in colour, to keep a window to its own side of an edge. Measured
+// worse on every test -- quilts by 1 to 2 dB, a game frame slightly -- so every
+// texel counts alike.)
 float Cost(int2 p, int half, int d, int w, int h)
 {
     const int R = (int)g_winR;
@@ -120,8 +140,8 @@ float Cost(int2 p, int half, int d, int w, int h)
     {
         const int xa = clamp(p.x + k, 0, w - 1), ya = clamp(p.y + j, 0, h - 1);
         const int xb = xa - sgn * d;
-        if (xb < 0 || xb >= w) { s += kOut; continue; }
         const float4 a = tex0.Load(int3(half * w + xa, ya, 0));
+        if (xb < 0 || xb >= w) { s += kOut; continue; }
         const float4 b = tex0.Load(int3((1 - half) * w + xb, ya, 0));
         s += 0.35 * min(dot(abs(a.rgb - b.rgb), 1.0 / 3.0), kCapA) + 0.65 * min(abs(a.a - b.a), kCapG);
     }
@@ -236,33 +256,42 @@ float4 PSMedian(VSOut i) : SV_Target
 }
 
 // ---- 3. The geometry thrown forward -----------------------------------------
-// Six vertices a texel, both eyes' texels one after the other: a quad from the
-// texel's left edge to its right, each edge moved by its own disparity where
-// the neighbour is the same surface -- a slanted wall stays closed, a depth
-// edge opens. Depth from the disparity: the nearest wins. (tex0: the disparity
-// at 1/8; drawn once for each new view, into that view's half.)
+// Six vertices a texel, both eyes' texels one after the other: a quad whose
+// four corners are each moved by the disparity of the surface at that corner --
+// the mean of the texels round it that are the same surface as this one. So
+// neighbouring quads share their corners along a wall, however it slants, and
+// part at a depth edge. Depth from the texel's own disparity: the nearest wins.
+// (tex0: the disparity at the small size; drawn once for each new view, into
+// that view's half.)
 struct SplatOut { float4 pos : SV_POSITION; nointerpolation float d : TEXCOORD0; };
 SplatOut VSSplat(uint id : SV_VertexID)
 {
     const int w = (int)g_size.x, h = (int)g_size.y;
-    const uint quad = id / 6, corner = id % 6;
-    const int ref = (int)(quad / (uint)(w * h));
-    const int idx = (int)(quad % (uint)(w * h));
-    const int x = idx % w, y = idx / w;
+    const uint quad = id / 6u, corner = id % 6u;
+    const uint per = (uint)(w * h);
+    const int ref = (int)(quad / per);
+    const uint idx = quad % per;
+    const int x = (int)(idx % (uint)w), y = (int)(idx / (uint)w);
     const float t = g_eye < 0.5 ? g_tL : g_tR;
-    const float s = (float)ref - t;                       // (the left eye's texels go by -t d, the right's by (1 - t) d)
-    const float d  = tex0.Load(int3(ref * w + x, y, 0)).r;
-    const float dl = tex0.Load(int3(ref * w + max(x - 1, 0), y, 0)).r;
-    const float dr = tex0.Load(int3(ref * w + min(x + 1, w - 1), y, 0)).r;
-    const float gl = abs(d - dl) < 1.0 ? 0.5 * (d + dl) : d, gr = abs(dr - d) < 1.0 ? 0.5 * (d + dr) : d;
-    float x0 = (float)x + s * gl, x1 = (float)x + 1.0 + s * gr;
-    if (x1 < x0) { const float tmp = x0; x0 = x1; x1 = tmp; }
+    const float d = tex0.Load(int3(ref * w + x, y, 0)).r;
     // (Corners: 0 1 2, 2 1 3 of the quad.)
     static const uint kC[6] = { 0, 1, 2, 2, 1, 3 };
     const uint c = kC[corner];
-    const float px = (c & 1) ? x1 : x0, py = (float)y + ((c & 2) ? 1.0 : 0.0);
+    const int cx = (int)(c & 1u), cy = (int)((c >> 1) & 1u);
+    float sum = 0.0, n = 0.0;
+    [unroll] for (int j = 0; j < 2; ++j)
+    [unroll] for (int k = 0; k < 2; ++k)
+    {
+        const float q = tex0.Load(int3(ref * w + clamp(x - 1 + cx + k, 0, w - 1), clamp(y - 1 + cy + j, 0, h - 1), 0)).r;
+        if (abs(q - d) < 1.0) { sum += q; n += 1.0; }
+    }
+    const float dc = n > 0.5 ? sum / n : d;
+    const float2 at = float2((float)(x + cx), (float)(y + cy));
+    const float2 p = at - dc * Move((float)ref, t, at / float2(w, h));
     SplatOut o;
-    o.pos = float4(px / (float)w * 2.0 - 1.0, 1.0 - py / (float)h * 2.0, saturate(0.5 - d / (4.0 * max(g_range, 1.0))), 1.0);
+    o.pos = float4(p.x / (float)w * 2.0 - 1.0, 1.0 - p.y / (float)h * 2.0, saturate(0.5 - d / (4.0 * max(g_range, 1.0))), 1.0);
+    // (A test with one eye alone: the other's quads are not drawn.)
+    if (g_only > -0.5 && abs(g_only - (float)ref) > 0.5) o.pos = float4(2.0, 2.0, 2.0, 1.0);
     o.d = d;
     return o;
 }
@@ -278,12 +307,12 @@ float4 PSHole(VSOut i) : SV_Target
     const float2 v = tex0.Load(int3(half * w + p.x, p.y, 0)).rg;
     if (v.g > 0.5) return float4(v.r, 1, 0, 0);
     float d = 0.0; bool have = false;
-    [loop] for (int l = 1; l <= 64 && p.x - l >= 0; ++l)
+    [loop] for (int l = 1; l <= 96 && p.x - l >= 0; ++l)
     {
         const float2 q = tex0.Load(int3(half * w + p.x - l, p.y, 0)).rg;
         if (q.g > 0.5) { d = q.r; have = true; break; }
     }
-    [loop] for (int r = 1; r <= 64 && p.x + r < w; ++r)
+    [loop] for (int r = 1; r <= 96 && p.x + r < w; ++r)
     {
         const float2 q = tex0.Load(int3(half * w + p.x + r, p.y, 0)).rg;
         if (q.g > 0.5) { d = have ? min(d, q.r) : q.r; break; }
@@ -292,28 +321,37 @@ float4 PSHole(VSOut i) : SV_Target
 }
 
 // ---- 4. The new views -------------------------------------------------------
-// tex0: the two real eyes, full size. tex1: their disparity at 1/8 (g_srcSize
-// is its eye's size). tex2: the new views' disparity at 1/8.
+// tex0: the two real eyes, full size. tex1: their disparity at the small size
+// (g_srcSize is its eye's size). tex2: the new views' disparity, small.
 // One candidate disparity tried: each eye's colour through it, whether each eye
 // sees it, and what it costs -- how far the eyes that see it differ.
 void Try(float d, float2 lo, float2 full, float t, int w, int h, out float3 col, out float cost, out float seen)
 {
     float3 c[2]; float vis[2]; float wg[2];
+    const float2 uv = full / g_size;
     [unroll] for (int r = 0; r < 2; ++r)
     {
-        const float s = (float)r - t;
-        const float xs = lo.x - s * d;                                   // (the small maps' place in that eye)
-        const float xf = clamp(full.x - s * d * g_scale.x, 0.5, g_size.x - 0.5);
-        c[r] = tex0.SampleLevel(sampLinear, float2(((float)r * g_size.x + xf) / (2.0 * g_size.x), full.y / g_size.y), 0).rgb;
-        vis[r] = (xs >= 0.0 && xs <= (float)w - 1.0 && abs(DispAt(tex1, xs, (int)(lo.y + 0.5), r, w, h) - d) < 1.0) ? 1.0 : 0.0;
-        wg[r] = max(0.001, 1.0 - abs(t - (float)r));   // (at an eye's own place, that eye alone: the picture as it went in)
+        const float2 mv = d * Move((float)r, t, uv);
+        const float2 ps = lo + mv;                                        // (the small maps' place in that eye)
+        const float2 pf = clamp(full + mv * g_scale, 0.5, g_size - 0.5);
+        c[r] = tex0.SampleLevel(sampLinear, float2(((float)r * g_size.x + pf.x) / (2.0 * g_size.x), pf.y / g_size.y), 0).rgb;
+        const float2 pd = clamp(ps + 0.5, 0.5, float2(w, h) - 0.5);
+        const float dr = tex1.SampleLevel(sampLinear, float2(((float)(r * w) + pd.x) / (float)(2 * w), pd.y / (float)h), 0).r;
+        const bool inside = ps.x >= 0.0 && ps.x <= (float)w - 1.0 && ps.y >= 0.0 && ps.y <= (float)h - 1.0;
+        vis[r] = (inside && abs(dr - d) < 1.0) ? 1.0 : 0.0;
+        // (How much each eye counts.
+        // Between the eyes, by nearness, as two exposures mixed; beyond them the
+        // nearer one, however far out the new place is.)
+        const float away = abs(t - (float)r);
+        wg[r] = max(1.0 - away, 0.02 * exp(-2.0 * away));
+        if (g_only > -0.5 && abs(g_only - (float)r) > 0.5) { vis[r] = 0.0; wg[r] = 0.0; }
     }
     const float nv = vis[0] + vis[1];
     cost = nv < 0.5 ? 60.0 / 255.0 : 12.0 / 255.0;
     if (nv > 1.5) cost = dot(abs(sqrt(max(c[0], 0.0)) - sqrt(max(c[1], 0.0))), 1.0 / 6.0);
     // (Neither sees it: the eye nearest the new place, as it is -- a guess, filled by PSUnseen.)
     const float w0 = nv > 0.5 ? vis[0] * wg[0] : wg[0] * wg[0], w1 = nv > 0.5 ? vis[1] * wg[1] : wg[1] * wg[1];
-    col = (c[0] * w0 + c[1] * w1) / max(w0 + w1, 1e-6);
+    col = (c[0] * w0 + c[1] * w1) / max(w0 + w1, 1e-12);
     seen = nv > 0.5 ? 1.0 : 0.0;
 }
 float4 PSCompose(VSOut i) : SV_Target
@@ -324,7 +362,7 @@ float4 PSCompose(VSOut i) : SV_Target
     const float t = pane == 0 ? g_tL : g_tR;
     // (At an eye's own place the new view is that eye, pixel for pixel: nothing
     // to work out, and nothing that could differ.)
-    if (abs(t - round(t)) < 1e-4 && t > -0.5 && t < 1.5)
+    if (abs(t - round(t)) < 1e-4 && t > -0.5 && t < 1.5 && abs(g_ty) < 1e-4 && abs(g_rho - 1.0) < 1e-4 && g_only < -0.5)
         return float4(tex0.Load(int3((int)round(t) * W + (int)full.x, (int)full.y, 0)).rgb, 1);
     const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
     const float2 lo = full / g_scale - 0.5;
@@ -352,9 +390,11 @@ float4 PSCompose(VSOut i) : SV_Target
     }
     return float4(col, seen);
 }
-// What neither eye sees is behind something: the colour of the nearest pixel
-// that was seen, on the FARTHER side along the row. (tex0: PSCompose's, .a 1
-// seen. tex2: the new views' disparity. g_size: the full eye.)
+// What neither eye sees is behind something: it is given the background beside
+// it, carried on as in a mirror -- the pixel as far beyond the gap's FARTHER
+// edge as this one is inside it. (A single colour dragged across the gap, as
+// before, showed as streaks.) (tex0: PSCompose's, .a 1 seen. tex2: the new
+// views' disparity. g_size: the full eye.)
 float4 PSUnseen(VSOut i) : SV_Target
 {
     const int W = (int)g_size.x;
@@ -364,17 +404,16 @@ float4 PSUnseen(VSOut i) : SV_Target
     if (v.a > 0.5) return float4(v.rgb, 1);
     const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
     const int ly = clamp((int)((float)p.y / g_scale.y), 0, h - 1);
-    float3 cl = v.rgb, cr = v.rgb; float dl = 1e30, dr = 1e30;
-    [loop] for (int l = 1; l <= 256 && p.x - l >= 0; ++l)
-    {
-        const float4 q = tex0.Load(int3(pane * W + p.x - l, p.y, 0));
-        if (q.a > 0.5) { cl = q.rgb; dl = tex2.Load(int3(pane * w + clamp((int)((float)(p.x - l) / g_scale.x), 0, w - 1), ly, 0)).r; break; }
-    }
-    [loop] for (int r = 1; r <= 256 && p.x + r < W; ++r)
-    {
-        const float4 q = tex0.Load(int3(pane * W + p.x + r, p.y, 0));
-        if (q.a > 0.5) { cr = q.rgb; dr = tex2.Load(int3(pane * w + clamp((int)((float)(p.x + r) / g_scale.x), 0, w - 1), ly, 0)).r; break; }
-    }
-    if (dl > 1e29 && dr > 1e29) return float4(v.rgb, 1);
-    return float4(dl < dr ? cl : cr, 1);
+    int nl = 0, nr = 0; float dl = 1e30, dr = 1e30;
+    [loop] for (int l = 1; l <= 384 && p.x - l >= 0; ++l)
+        if (tex0.Load(int3(pane * W + p.x - l, p.y, 0)).a > 0.5) { nl = l; dl = tex2.Load(int3(pane * w + clamp((int)((float)(p.x - l) / g_scale.x), 0, w - 1), ly, 0)).r; break; }
+    [loop] for (int r = 1; r <= 384 && p.x + r < W; ++r)
+        if (tex0.Load(int3(pane * W + p.x + r, p.y, 0)).a > 0.5) { nr = r; dr = tex2.Load(int3(pane * w + clamp((int)((float)(p.x + r) / g_scale.x), 0, w - 1), ly, 0)).r; break; }
+    if (nl == 0 && nr == 0) return float4(v.rgb, 1);
+    const bool left = nr == 0 || (nl != 0 && dl < dr);
+    // (The mirrored pixel, if it was seen; else the edge's own.)
+    const int edge = left ? p.x - nl : p.x + nr;
+    const int mirror = clamp(left ? edge - (nl - 1) : edge + (nr - 1), 0, W - 1);
+    const float4 m = tex0.Load(int3(pane * W + mirror, p.y, 0));
+    return float4(m.a > 0.5 ? m.rgb : tex0.Load(int3(pane * W + edge, p.y, 0)).rgb, 1);
 }

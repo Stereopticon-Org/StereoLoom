@@ -115,12 +115,15 @@ void LookAround::Pass(ID3D11PixelShader* ps, const Tex& target, const CB& cb, ID
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
 }
 
-bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, float tL, float tR)
+bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const View& view, bool newPicture)
 {
     if (!m_context || !src || eyeW < 64 || eyeH < 64) return false;
-    // The sizes: the eye at 1/8, 1/16, 1/32.
+    // The sizes: the finest about 480 texels across -- 1/8 of a 4K eye, 1/4 of a
+    // 2K one (the eyes of a side-by-side game on a 4K screen: at 1/8 a head was
+    // five texels wide, and came out wrong) -- then half that, and half again.
+    const int base = eyeW >= 2600 ? 8 : eyeW >= 1300 ? 4 : 2;
     int w[kLevels], h[kLevels];
-    w[0] = eyeW / 8; h[0] = eyeH / 8;
+    w[0] = eyeW / base; h[0] = eyeH / base;
     for (int k = 1; k < kLevels; ++k) { w[k] = (std::max)(1, w[k - 1] / 2); h[k] = (std::max)(1, h[k - 1] / 2); }
     bool ok = true;
     for (int k = 0; k < kLevels && ok; ++k)
@@ -138,6 +141,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, float
         ok = SUCCEEDED(m_device->CreateTexture2D(&td, nullptr, &m_depthTex)) && SUCCEEDED(m_device->CreateDepthStencilView(m_depthTex, nullptr, &m_dsv));
     }
     if (!ok) return false;
+    if (m_eyeW != eyeW || m_eyeH != eyeH) m_haveMaps = false;
     m_eyeW = eyeW; m_eyeH = eyeH;
 
     // (Timed one frame in sixteen: five timestamps, read back when they are in.)
@@ -175,10 +179,14 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, float
     m_context->VSSetConstantBuffers(0, 1, &m_cb);
 
     CB cb{};
-    cb.tL = tL; cb.tR = tR; cb.winR = 3.0f;
+    cb.tL = view.tL; cb.tR = view.tR; cb.winR = 3.0f;
+    cb.ty = view.ty; cb.rho = view.rho; cb.kx = (view.rho - 1.0f) * view.screenW; cb.ky = (view.rho - 1.0f) * view.screenH; cb.only = (float)view.only;
     cb.scale[0] = (float)eyeW / (float)w[0]; cb.scale[1] = (float)eyeH / (float)h[0];
     auto sized = [&](int k) { cb.size[0] = (float)w[k]; cb.size[1] = (float)h[k]; };
 
+    const bool match = newPicture || !m_haveMaps;
+    if (match)
+    {
     // 1. The levels.
     sized(0); cb.srcSize[0] = (float)eyeW; cb.srcSize[1] = (float)eyeH;
     Pass(m_psDownFirst, m_tmp[0], cb, src);
@@ -189,10 +197,14 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, float
         Pass(m_psDownNext, m_tmp[k], cb, m_tmp[k - 1].srv);
         Pass(m_psGrad, m_lvl[k], cb, m_tmp[k].srv);
     }
+    }
     mark(1);
 
     // 2. Disparity, coarse to fine. After each size: checked, filled, cleaned.
     const Tex* result[kLevels] = {};
+    for (int k = 0; k < kLevels; ++k) result[k] = &m_dispB[k];
+    if (match)
+    {
     for (int k = kLevels - 1; k >= 0; --k)
     {
         sized(k);
@@ -205,6 +217,8 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, float
         Pass(m_psFill, m_dispA[k], cb, m_dispB[k].srv);
         Pass(m_psMedian, m_dispB[k], cb, m_dispA[k].srv);
         result[k] = &m_dispB[k];
+    }
+    m_haveMaps = true;
     }
     mark(2);
 

@@ -722,6 +722,8 @@ namespace
         float                        lookParallax = 1.0f;      // (Settings LookParallax: head movement to view movement; negative turns it round)
         float                        lookX = 0.0f;             // (where the head is, in eye spacings from the middle, smoothed)
         bool                         lookBound = false;        // (the weaver's input is the look-around's picture)
+        float                        lookY = 0.0f, lookRho = 1.0f;   // (... up and down; and how near: the eyes' own distance over the head's)
+        unsigned                     lookSerial = 0;           // (the converter's picture the look-around last matched)
         int                          asyncSlowRun = 0;         // (slow conversions in a row)
         unsigned                     asyncSeenSerial = 0;
         ULONGLONG                    asyncSlowAt = 0;          // (when one last took over 2.5 ms)
@@ -8011,17 +8013,32 @@ namespace
                                      !(app.lfOn && app.format == StereoFormat::Quilt) && app.converter.OutputSRV() != nullptr;
                 if (lookNow)
                 {
-                    float l[3] = {}, r[3] = {}, target = 0.0f;
+                    // Where the head is: across and up-and-down in eye spacings from the
+                    // middle of the screen, and how near (the eyes' own distance over the
+                    // head's -- 650 mm taken as the eyes' own). No limit on any of them:
+                    // far enough out the picture comes apart, and that is the viewer's
+                    // to find.
+                    float l[3] = {}, r[3] = {}, tx = 0.0f, ty = 0.0f, rho = 1.0f, spacing = 63.0f;
                     if (app.weaver.GetPredictedEyePositions(l, r))
                     {
-                        const float spacing = (std::max)(40.0f, std::fabs(r[0] - l[0]));
-                        target = 0.5f * (l[0] + r[0]) / spacing * app.lookParallax;
+                        spacing = (std::max)(40.0f, std::fabs(r[0] - l[0]));
+                        tx = 0.5f * (l[0] + r[0]) / spacing * app.lookParallax;
+                        ty = -0.5f * (l[1] + r[1]) / spacing * app.lookParallax;   // (the tracker's y is up; the picture's is down)
+                        const float z = 0.5f * (l[2] + r[2]);
+                        if (z > 100.0f) rho = 1.0f + (650.0f / z - 1.0f) * std::fabs(app.lookParallax);
+                        rho = (std::max)(0.25f, (std::min)(4.0f, rho));
                     }
-                    target = (std::max)(-1.5f, (std::min)(1.5f, target));
-                    app.lookX += (target - app.lookX) * 0.5f;
+                    app.lookX += (tx - app.lookX) * 0.5f; app.lookY += (ty - app.lookY) * 0.5f; app.lookRho += (rho - app.lookRho) * 0.5f;
+                    LookAround::View v;
                     // (All but still: the picture as it is -- and exactly so.)
-                    const float x = std::fabs(app.lookX) < 0.004f ? 0.0f : app.lookX;
-                    if (app.look.Render(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), x, 1.0f + x))
+                    const bool still = std::fabs(app.lookX) < 0.004f && std::fabs(app.lookY) < 0.004f && std::fabs(app.lookRho - 1.0f) < 0.002f;
+                    if (!still) { v.tL = app.lookX; v.tR = 1.0f + app.lookX; v.ty = app.lookY; v.rho = app.lookRho; }
+                    v.screenW = 597.0f / spacing; v.screenH = 336.0f / spacing;   // (a 27 inch display; the picture taken to fill it)
+                    // (The picture is matched again only when the converter has made a new
+                    // one: between a game's frames only the head moves.)
+                    const bool fresh = app.converter.Serial() != app.lookSerial;
+                    app.lookSerial = app.converter.Serial();
+                    if (app.look.Render(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), v, fresh))
                     {
                         app.weaver.SetInputView(app.look.OutputSRV(), app.look.OutputPerEyeWidth(), app.look.OutputHeight(), app.look.OutputFormat());
                         app.lookBound = true;

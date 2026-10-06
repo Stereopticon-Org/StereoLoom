@@ -134,6 +134,8 @@ namespace srw
         // weave is made in the ordinary 0..1 range; the renderer multiplies it
         // back after (Renderer::HdrRestore). 1: as it is.
         void SetHdrScale(float scale) { m_hdrScale = scale > 1.0f ? scale : 1.0f; }
+        // Counts the pictures made: changes when Convert drew one (not when it found the last still stood).
+        unsigned Serial() const { return m_serial; }
         // Whether Recovered Colour is best given the capture's own frame (above).
         bool RecoveredWantsDirect() const { return m_preCheckOn && m_changeSkipOn; }
 
@@ -468,6 +470,7 @@ namespace srw
         float        m_ndTrans  = 0.30f;   // ND transmission
         int          m_pulfDelay = 1;      // delay frames
         float        m_hdrScale = 1.0f;    // (SetHdrScale)
+        unsigned     m_serial = 0;         // (Serial)
         float        m_fpEyeFrac = 1080.0f / 2205.0f;  // frame-packing eye height fraction
         float        m_fpGapFrac = 45.0f / 2205.0f;    // frame-packing gap fraction
         float        m_fpEyeAlign = 0.0f;              // bottom-eye vertical alignment (source rows)
