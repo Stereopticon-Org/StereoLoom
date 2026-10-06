@@ -50,6 +50,7 @@ namespace srw
         // The largest disparity looked for, as a share of the eye's width (0.25:
         // further than anything can pop out and still be one picture -- a smaller limit showed as a wall things stopped at).
         void SetMaxDisparity(float share) { m_maxShare = share; }
+        void SetOpt(int i, float v) { if (i >= 0 && i < 4) m_opt[i] = v; }   // (switches under trial: see g_opt in Look.hlsl)
         void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
         void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
@@ -63,7 +64,7 @@ namespace srw
         struct Tex { ID3D11Texture2D* tex = nullptr; ID3D11RenderTargetView* rtv = nullptr; ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; };
         bool Ensure(Tex& t, int w, int h, DXGI_FORMAT fmt, DXGI_FORMAT view = DXGI_FORMAT_UNKNOWN);
         void Release(Tex& t);
-        struct CB { float size[2]; float srcSize[2]; float range, tL, tR, eye; float winR, ty; float scale[2]; float rho, kx, ky, only; };
+        struct CB { float size[2]; float srcSize[2]; float range, tL, tR, eye; float winR, ty; float scale[2]; float rho, kx, ky, only; float opt[4]; };
         void Pass(ID3D11PixelShader* ps, const Tex& target, const CB& cb, ID3D11ShaderResourceView* t0,
                   ID3D11ShaderResourceView* t1 = nullptr, ID3D11ShaderResourceView* t2 = nullptr);
 
@@ -90,6 +91,8 @@ namespace srw
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
         int   m_spread = 1;
         int   m_base = 0;
+        // (Measured 2026-10-06, quilts: these four together about 1 dB between the eyes, 0.4 beyond them, for 1.7 ms.)
+        float m_opt[4] = { 2.0f, 0.02f, 0.01f, 3.0f };
         float m_fineR = 1.0f;       // (3x3: 5x5 measured 0.2 dB more for a millisecond more)
         bool  m_fine = true;        // the answer tried again against the full-size picture (PSFine)
 

@@ -188,7 +188,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
 
     CB cb{};
     cb.tL = view.tL; cb.tR = view.tR; cb.winR = 3.0f;
-    cb.ty = view.ty; cb.rho = view.rho; cb.kx = (view.rho - 1.0f) * view.screenW; cb.ky = (view.rho - 1.0f) * view.screenH; cb.only = (float)view.only;
+    cb.ty = view.ty; cb.rho = view.rho; cb.kx = (view.rho - 1.0f) * view.screenW; cb.ky = (view.rho - 1.0f) * view.screenH; cb.only = (float)view.only; for (int q = 0; q < 4; ++q) cb.opt[q] = m_opt[q];
     cb.scale[0] = (float)eyeW / (float)w[0]; cb.scale[1] = (float)eyeH / (float)h[0];
     auto sized = [&](int k) { cb.size[0] = (float)w[k]; cb.size[1] = (float)h[k]; };
 

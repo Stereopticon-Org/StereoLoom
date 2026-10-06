@@ -49,6 +49,7 @@ cbuffer Params : register(b0)
     float  g_kx;        // (g_rho - 1) x the screen's width in eye spacings: see Move
     float  g_ky;        // ... and its height
     float  g_only;      // a test: -1 both eyes are used; 0 / 1 that eye alone
+    float4 g_opt;       // switches under trial: .x the reach, in texels, that PSCompose looks for other surfaces; .y what a surface the maps call hidden must beat (0: it is not tried); .z how softly surfaces mix; .w spare
 };
 
 struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -417,11 +418,43 @@ void Try(float d, float2 lo, float2 full, float t, int w, int h, out float3 col,
     }
     const float nv = vis[0] + vis[1];
     cost = nv < 0.5 ? 60.0 / 255.0 : 12.0 / 255.0;
-    if (nv > 1.5) cost = dot(abs(sqrt(max(c[0], 0.0)) - sqrt(max(c[1], 0.0))), 1.0 / 6.0);
+    const float both = dot(abs(sqrt(max(c[0], 0.0)) - sqrt(max(c[1], 0.0))), 1.0 / 6.0);
+    if (nv > 1.5) cost = both;
+    // (The maps are a few texels fat at an outline: what they call hidden there
+    // may be in plain sight of both eyes. Where the two eyes' colours agree
+    // through this disparity better than the maps' word is worth, they are
+    // believed.)
+    bool agreed = false;
+    [branch] if (nv < 1.5 && g_opt.y > 0.0 && g_only < -0.5 && both + g_opt.y < cost)
+    {
+        // (... but only at an outline: where an eye's map has this surface within
+        // a few texels of the place. Further in, hidden is hidden -- two places
+        // on whatever hides it can look alike too.)
+        bool nearAll = true;
+        const int R = (int)g_opt.w;
+        [unroll] for (int e = 0; e < 2; ++e)
+        {
+            [branch] if (vis[e] < 0.5)
+            {
+                const float2 ps = lo + d * Move((float)e, t, uv);
+                const int2 pi = int2((int)floor(ps.x + 0.5), (int)floor(ps.y + 0.5));
+                bool nr = false;
+                static const int2 kO[4] = { int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1) };
+                [unroll] for (int n = 0; n < 4; ++n)
+                {
+                    const int2 q = pi + kO[n] * R;
+                    const bool in2 = q.x >= 0 && q.x < w && q.y >= 0 && q.y < h;
+                    nr = nr || (in2 && abs(tex1.Load(int3(e * w + q.x, q.y, 0)).r - d) < 1.0);
+                }
+                nearAll = nearAll && nr;
+            }
+        }
+        if (nearAll || R <= 0) { cost = both + g_opt.y; agreed = true; }
+    }
     // (Neither sees it: the eye nearest the new place, as it is -- a guess, filled by PSUnseen.)
-    const float w0 = nv > 0.5 ? vis[0] * wg[0] : wg[0] * wg[0], w1 = nv > 0.5 ? vis[1] * wg[1] : wg[1] * wg[1];
+    const float w0 = agreed ? wg[0] : nv > 0.5 ? vis[0] * wg[0] : wg[0] * wg[0], w1 = agreed ? wg[1] : nv > 0.5 ? vis[1] * wg[1] : wg[1] * wg[1];
     col = (c[0] * w0 + c[1] * w1) / max(w0 + w1, 1e-12);
-    seen = nv > 0.5 ? 1.0 : 0.0;
+    seen = (nv > 1.5 || agreed) ? 2.0 : nv > 0.5 ? 1.0 : 0.0;   // (2: both eyes vouch for it)
 }
 float4 PSCompose(VSOut i) : SV_Target
 {
@@ -450,18 +483,61 @@ float4 PSCompose(VSOut i) : SV_Target
     // (The four round it agree: one surface, nothing to choose between -- most
     // of the picture. Else each of the four is tried, and the in-between value
     // kept only where it is clearly no worse.)
-    [branch] if (max(max(d00, d10), max(d01, d11)) - min(min(d00, d10), min(d01, d11)) > 0.25)
+    // (g_opt.x: the surfaces a few texels off are looked at too -- the maps are
+    // that fat at an outline, so the surface a pixel is really on may be one
+    // that the four round it do not have. Each pixel of the picture then
+    // chooses for itself, at its own size, which of the surfaces near it the
+    // two eyes agree on.)
+    float far4[4] = { dBi, dBi, dBi, dBi };
+    float lo4 = min(min(d00, d10), min(d01, d11)), hi4 = max(max(d00, d10), max(d01, d11));
+    const int reach = (int)g_opt.x;
+    [branch] if (reach > 0)
     {
-        cost += 0.5 / 255.0;
-        const float cand[4] = { d00, d10, d01, d11 };
-        [unroll] for (int k = 0; k < 4; ++k)
+        static const int2 kF[4] = { int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1) };
+        [unroll] for (int n = 0; n < 4; ++n)
         {
-            float3 c2; float cost2, seen2;
-            Try(cand[k], lo, full, t, w, h, c2, cost2, seen2);
-            if (cost2 < cost) { cost = cost2; col = c2; seen = seen2; }
+            const int2 q = clamp(int2(x0, y0) + (kF[n].x + kF[n].y > 0 ? 1 : 0) + kF[n] * reach, 0, int2(w - 1, h - 1));
+            far4[n] = tex2.Load(int3(pane * w + q.x, q.y, 0)).r;
+            lo4 = min(lo4, far4[n]); hi4 = max(hi4, far4[n]);
         }
     }
-    return float4(col, seen);
+    [branch] if (hi4 - lo4 > 0.25)
+    {
+        cost += 0.5 / 255.0;
+        const float cand[8] = { d00, d10, d01, d11, far4[0], far4[1], far4[2], far4[3] };
+        float3 acc = col * 1e-6; float accW = 1e-6, accSeen = 0;
+        const float c0 = cost;
+        float cmin = cost; float3 cbest = col; float sbest = seen;
+        float cs[8]; float3 cc[8]; float ss[8];
+        [loop] for (int k = 0; k < (reach > 0 ? 8 : 4); ++k)
+        {
+            cs[k] = 1e3; cc[k] = 0; ss[k] = 0;
+            // (One the bilinear value or an earlier one already stands for is not tried again.)
+            bool fresh = abs(cand[k] - dBi) > 0.2;
+            for (int m = 0; m < k; ++m) fresh = fresh && abs(cand[k] - cand[m]) > 0.2;
+            [branch] if (fresh)
+            {
+                Try(cand[k], lo, full, t, w, h, cc[k], cs[k], ss[k]);
+                // (One from further off stands only on both eyes' word.)
+                if (k >= 4) cs[k] = ss[k] > 1.5 ? cs[k] + 1.0 / 255.0 : 1e3;
+                if (cs[k] < cmin) { cmin = cs[k]; cbest = cc[k]; sbest = ss[k]; }
+            }
+        }
+        // (g_opt.z: not one of them but a mix, by how well each does -- a soft edge
+        // where two do nearly as well.)
+        [branch] if (g_opt.z > 0.0)
+        {
+            float wS = exp(-(c0 - cmin) / g_opt.z); acc = col * wS; accW = wS; accSeen = min(seen, 1.0) * wS;
+            [loop] for (int k2 = 0; k2 < (reach > 0 ? 8 : 4); ++k2)
+            {
+                const float wk = cs[k2] < 100.0 ? exp(-(cs[k2] - cmin) / g_opt.z) : 0.0;
+                acc += cc[k2] * wk; accW += wk; accSeen += min(ss[k2], 1.0) * wk;
+            }
+            return float4(acc / accW, accSeen / accW > 0.5 ? 1.0 : 0.0);
+        }
+        col = cbest; seen = sbest;
+    }
+    return float4(col, seen > 0.5 ? 1.0 : 0.0);
 }
 // What neither eye sees is behind something: it is given the background beside
 // it, carried on as in a mirror -- the pixel as far beyond the gap's FARTHER

@@ -73,6 +73,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (!srv || !look.Initialize(dev, ctx)) { fwprintf(stderr, L"look-around init failed\n"); return 1; }
     if (const wchar_t* fn = _wgetenv(L"LOOKTEST_FINE")) look.SetFine(_wtoi(fn));
     if (const wchar_t* bs = _wgetenv(L"LOOKTEST_BASE")) look.SetBase(_wtoi(bs));
+    if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
     ID3D11Texture2D* staging = nullptr;
     auto read = [&](std::vector<uint8_t>& out) {
         D3D11_TEXTURE2D_DESC od{}; look.OutputTexture()->GetDesc(&od);
@@ -219,6 +220,7 @@ int wmain(int argc, wchar_t** argv)
     if (const wchar_t* sp = _wgetenv(L"LOOKTEST_SPREAD")) look.SetSpread(_wtoi(sp));
     if (const wchar_t* fn = _wgetenv(L"LOOKTEST_FINE")) look.SetFine(_wtoi(fn));
     if (const wchar_t* bs = _wgetenv(L"LOOKTEST_BASE")) look.SetBase(_wtoi(bs));
+    if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
 
     // The left half of the output read back (the left eye's new view).
     ID3D11Texture2D* staging = nullptr;
