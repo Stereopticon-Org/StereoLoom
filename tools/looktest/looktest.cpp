@@ -158,11 +158,75 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     return 0;
 }
 
+// Against a measured truth: a Middlebury 2014 scene (im0.png, im1.png and
+// disp0.pfm, the left eye's true disparity in pixels). The disparity found for
+// the left eye is compared with it: the share of the picture out by more than
+// 2, 4 and 8 pixels, and the mean error -- figures other methods publish too.
+static int RunMb(const std::wstring& dir)
+{
+    std::vector<uint8_t> a, b; UINT W = 0, H = 0, W2 = 0, H2 = 0;
+    if (!LoadRGBA((dir + L"/im0.png").c_str(), a, W, H) || !LoadRGBA((dir + L"/im1.png").c_str(), b, W2, H2) || W != W2 || H != H2) { fwprintf(stderr, L"can't load the scene\n"); return 1; }
+    std::vector<float> gt((size_t)W * H);
+    {
+        FILE* f = nullptr; _wfopen_s(&f, (dir + L"/disp0.pfm").c_str(), L"rb");
+        if (!f) { fwprintf(stderr, L"no disp0.pfm\n"); return 1; }
+        char tag[8] = {}; int pw = 0, ph = 0; float sc = 0;
+        if (fscanf_s(f, "%7s %d %d %f", tag, 8, &pw, &ph, &sc) != 4 || pw != (int)W || ph != (int)H) { fclose(f); fwprintf(stderr, L"bad pfm\n"); return 1; }
+        fgetc(f);
+        for (int y = (int)H - 1; y >= 0; --y) fread(&gt[(size_t)y * W], sizeof(float), W, f);   // (bottom row first)
+        fclose(f);
+    }
+    const int ew = (int)W, eh = (int)H;
+    std::vector<uint8_t> sbs((size_t)ew * 2 * eh * 4);
+    for (int y = 0; y < eh; ++y)
+    {
+        memcpy(&sbs[(size_t)y * ew * 2 * 4], &a[(size_t)y * ew * 4], (size_t)ew * 4);
+        memcpy(&sbs[((size_t)y * ew * 2 + ew) * 4], &b[(size_t)y * ew * 4], (size_t)ew * 4);
+    }
+    ID3D11Device* dev = nullptr; ID3D11DeviceContext* ctx = nullptr;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &dev, nullptr, &ctx))) return 1;
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = (UINT)(ew * 2); td.Height = (UINT)eh; td.MipLevels = 1; td.ArraySize = 1; td.SampleDesc.Count = 1;
+    td.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA sd{ sbs.data(), (UINT)(ew * 2 * 4), 0 };
+    ID3D11Texture2D* src = nullptr; dev->CreateTexture2D(&td, &sd, &src);
+    D3D11_SHADER_RESOURCE_VIEW_DESC vd{}; vd.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; vd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; vd.Texture2D.MipLevels = 1;
+    ID3D11ShaderResourceView* srv = nullptr; dev->CreateShaderResourceView(src, &vd, &srv);
+    LookAround look;
+    if (!srv || !look.Initialize(dev, ctx)) { fwprintf(stderr, L"look-around init failed\n"); return 1; }
+    if (const wchar_t* bs = _wgetenv(L"LOOKTEST_BASE")) look.SetBase(_wtoi(bs));
+    LookAround::View v0; look.Render(srv, ew, eh, v0);
+    D3D11_TEXTURE2D_DESC dd{}; look.DisparityTexture()->GetDesc(&dd);
+    D3D11_TEXTURE2D_DESC sd2 = dd; sd2.Usage = D3D11_USAGE_STAGING; sd2.BindFlags = 0; sd2.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ID3D11Texture2D* st = nullptr; dev->CreateTexture2D(&sd2, nullptr, &st);
+    ctx->CopyResource(st, look.DisparityTexture());
+    D3D11_MAPPED_SUBRESOURCE m{}; ctx->Map(st, 0, D3D11_MAP_READ, 0, &m);
+    const int dw = (int)dd.Width / 2, dh = (int)dd.Height;
+    auto half = [](uint16_t hh) { const uint32_t s = (hh >> 15) & 1, e = (hh >> 10) & 31, mm = hh & 1023; float v = e == 0 ? std::ldexp((float)mm, -24) : std::ldexp((float)(mm | 1024), (int)e - 25); return s ? -v : v; };
+    const float sx = (float)ew / (float)dw, sy = (float)eh / (float)dh;
+    size_t n = 0, b2 = 0, b4 = 0, b8 = 0; double sum = 0;
+    for (int y = 0; y < dh; ++y) for (int x = 0; x < dw; ++x)
+    {
+        const float g = gt[(size_t)(std::min)(eh - 1, (int)(((float)y + 0.5f) * sy)) * W + (std::min)(ew - 1, (int)(((float)x + 0.5f) * sx))];
+        if (!(g > 0.0f) || !std::isfinite(g)) continue;
+        const uint16_t* p = (const uint16_t*)((const uint8_t*)m.pData + (size_t)y * m.RowPitch) + (size_t)x * 4;
+        const float e = std::fabs(half(p[0]) * sx - g);
+        ++n; sum += e; b2 += e > 2.0f; b4 += e > 4.0f; b8 += e > 8.0f;
+    }
+    ctx->Unmap(st, 0); st->Release();
+    const std::wstring name = dir.substr(dir.find_last_of(L"/") + 1);
+    wprintf(L"%-20s %dx%d, map %dx%d: out by > 2 px %5.1f%% | > 4 px %5.1f%% | > 8 px %5.1f%% | mean error %.2f px\n", name.c_str(), ew, eh, dw, dh,
+            100.0 * b2 / (std::max)(n, (size_t)1), 100.0 * b4 / (std::max)(n, (size_t)1), 100.0 * b8 / (std::max)(n, (size_t)1), sum / (std::max)(n, (size_t)1));
+    look.Shutdown();
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     if (argc < 2) { fwprintf(stderr, L"usage: looktest <quilt_qsCxR.png> [refA refB] [reach] [scale] [outdir]\n"); return 1; }
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (argc >= 3 && !wcscmp(argv[1], L"sbs")) return RunSbs(argv[2], argc > 3 ? argv[3] : L"");
+    if (argc >= 3 && !wcscmp(argv[1], L"mb")) return RunMb(argv[2]);
     std::wstring path = argv[1];
     int C = 8, R = 6;
     { const size_t q = path.rfind(L"qs"); if (q != std::wstring::npos) swscanf_s(path.c_str() + q, L"qs%dx%d", &C, &R); }
