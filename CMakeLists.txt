@@ -322,3 +322,10 @@ target_link_libraries(katsend PRIVATE d3d11 dxgi)
 #   cmake --build build/x64 --config Release --target copybench
 add_executable(copybench EXCLUDE_FROM_ALL tools/copybench/copybench.cpp)
 target_link_libraries(copybench PRIVATE d3d12 dxgi d3dcompiler)
+
+# splatlab: the look-around experiment, offline -- views from other places
+# made from two views of a quilt, three ways, scored against the quilt's own.
+# Not part of the app:  cmake --build build/x64 --config Release --target splatlab
+add_executable(splatlab EXCLUDE_FROM_ALL tools/splatlab/splatlab.cpp)
+target_compile_definitions(splatlab PRIVATE NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
+target_link_libraries(splatlab PRIVATE windowscodecs ole32)
