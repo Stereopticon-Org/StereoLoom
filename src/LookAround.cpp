@@ -25,6 +25,7 @@
 #include "Look_PSUnseen.h"
 #include "Look_PSPlate.h"
 #include "Look_PSFillDown.h"
+#include "Look_PSShrink.h"
 #include "Look_PSLKSum.h"
 #include "Look_PSLKSolve.h"
 
@@ -56,6 +57,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSUnseen,      sizeof(g_Look_PSUnseen),      &m_psUnseen },
         { g_Look_PSPlate,       sizeof(g_Look_PSPlate),       &m_psPlate },
         { g_Look_PSFillDown,    sizeof(g_Look_PSFillDown),    &m_psFillDown },
+        { g_Look_PSShrink,      sizeof(g_Look_PSShrink),      &m_psShrink },
         { g_Look_PSLKSum,       sizeof(g_Look_PSLKSum),       &m_psLKSum },
         { g_Look_PSLKSolve,     sizeof(g_Look_PSLKSolve),     &m_psLKSolve },
     };
@@ -84,7 +86,7 @@ void LookAround::Release(Tex& t) { SAFE_RELEASE(t.srv); SAFE_RELEASE(t.rtv); SAF
 
 void LookAround::Shutdown()
 {
-    Release(m_plate[0]); Release(m_plate[1]); Release(m_extCopy);
+    Release(m_plate[0]); Release(m_plate[1]); Release(m_extCopy); Release(m_small);
     for (int k = 0; k < kFillMax; ++k) { SAFE_RELEASE(m_fillRtv[k]); SAFE_RELEASE(m_fillMip[k]); }
     SAFE_RELEASE(m_fillAll); SAFE_RELEASE(m_fillTex); m_fillMips = 0;
     for (int k = 0; k < 4; ++k) Release(m_lkSum[k]);
@@ -96,7 +98,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_dsv); SAFE_RELEASE(m_depthTex);
     SAFE_RELEASE(m_disjoint); for (auto& q : m_ts) SAFE_RELEASE(q);
     SAFE_RELEASE(m_raster); SAFE_RELEASE(m_depthOn); SAFE_RELEASE(m_sampler); SAFE_RELEASE(m_cb);
-    SAFE_RELEASE(m_psFillDown); SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
+    SAFE_RELEASE(m_psShrink); SAFE_RELEASE(m_psFillDown); SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
     SAFE_RELEASE(m_psSpread); SAFE_RELEASE(m_psFine); SAFE_RELEASE(m_psGuide); SAFE_RELEASE(m_psFuse); SAFE_RELEASE(m_psDilate);
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
@@ -474,4 +476,21 @@ void LookAround::MapSize(int eyeW, int eyeH, int& w, int& h) const
     const int autoBase = eyeW >= 2600 ? 8 : eyeW >= 1300 ? 4 : 2;
     const int base = m_base > 0 ? (std::min)(m_base, autoBase) : autoBase;
     w = eyeW / base; h = eyeH / base;
+}
+
+ID3D11Texture2D* LookAround::Shrink(ID3D11ShaderResourceView* src, int eyeW, int eyeH, int w, int h)
+{
+    if (!m_context || !src || w < 16 || h < 16 || !Ensure(m_small, 2 * w, h, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)) return nullptr;
+    m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_context->IASetInputLayout(nullptr);
+    m_context->RSSetState(m_raster);
+    m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    m_context->PSSetSamplers(0, 1, &m_sampler);
+    m_context->PSSetConstantBuffers(0, 1, &m_cb);
+    m_context->VSSetConstantBuffers(0, 1, &m_cb);
+    CB cb{};
+    cb.size[0] = (float)w; cb.size[1] = (float)h; cb.srcSize[0] = (float)eyeW; cb.srcSize[1] = (float)eyeH;
+    Pass(m_psShrink, m_small, cb, src);
+    m_context->RSSetState(nullptr);
+    return m_small.tex;
 }

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 
 #ifdef SRLOOM_NEURAL
@@ -57,6 +58,193 @@ namespace
             }
         }
     }
+
+    // What the thread keeps of the picture last answered, for the painter.
+    struct Last
+    {
+        std::vector<uint8_t> px; int eyeW = 0, eyeH = 0;        // both eyes side by side, RGBA
+        std::vector<float> disp[2]; int w = 0, h = 0;           // each eye's disparity, in the model's pixels
+        unsigned serial = 0; bool have = false;
+    };
+
+    float Bilinear(const std::vector<float>& a, int w, int h, float x, float y)
+    {
+        x = (std::max)(0.0f, (std::min)((float)w - 1.001f, x)); y = (std::max)(0.0f, (std::min)((float)h - 1.001f, y));
+        const int x0 = (int)x, y0 = (int)y; const float fx = x - (float)x0, fy = y - (float)y0;
+        const float* p = &a[(size_t)y0 * w + x0];
+        return (p[0] * (1 - fx) + p[1] * fx) * (1 - fy) + (p[w] * (1 - fx) + p[w + 1] * fx) * fy;
+    }
+
+    // The largest (or the smallest) within r texels, along rows then columns.
+    void Spread(std::vector<float>& a, int n, int r, bool largest)
+    {
+        std::vector<float> t((size_t)n * n);
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x)
+            {
+                float v = a[(size_t)y * n + x];
+                for (int k = -r; k <= r; ++k)
+                {
+                    const int q = pass == 0 ? x + k : y + k;
+                    if (q < 0 || q >= n) continue;
+                    const float u = pass == 0 ? a[(size_t)y * n + q] : a[(size_t)q * n + x];
+                    v = largest ? (std::max)(v, u) : (std::min)(v, u);
+                }
+                t[(size_t)y * n + x] = v;
+            }
+            a.swap(t);
+        }
+    }
+
+    // Values spread into where there are none (wgt 0) from where there are: made
+    // smaller and smaller, each texel the mean of those of its four that have a
+    // value, and then brought back up -- a gap takes the coarsest level's word
+    // only where no finer one has any.
+    void PushPull(std::vector<float>& val, std::vector<float>& wgt, int n)
+    {
+        if (n <= 1) return;
+        const int m = n / 2;
+        std::vector<float> v2((size_t)m * m, 0.0f), w2((size_t)m * m, 0.0f);
+        for (int y = 0; y < m; ++y) for (int x = 0; x < m; ++x)
+        {
+            float s = 0, w = 0;
+            for (int k = 0; k < 4; ++k) { const size_t i = (size_t)(y * 2 + (k >> 1)) * n + (x * 2 + (k & 1)); s += val[i] * wgt[i]; w += wgt[i]; }
+            if (w > 0) { v2[(size_t)y * m + x] = s / w; w2[(size_t)y * m + x] = 1.0f; }
+        }
+        PushPull(v2, w2, m);
+        for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x)
+        {
+            const size_t i = (size_t)y * n + x;
+            if (wgt[i] > 0) continue;
+            val[i] = Bilinear(v2, m, m, ((float)x + 0.5f) * 0.5f - 0.5f, ((float)y + 0.5f) * 0.5f - 0.5f);
+            wgt[i] = 1.0f;
+        }
+    }
+
+    float ToLinear(float s) { return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f); }
+
+#ifdef SRLOOM_NEURAL
+    // The painted background: see NeuralDepth.h. n x n, four floats a texel.
+    void BuildLayer(const Last& last, Ort::Session& lama, int mapW, std::vector<float>& out, int& outN)
+    {
+        const int N = 512; outN = N;
+        const size_t NN = (size_t)N * N;
+        const float kd = (float)N / (float)last.w;                   // the model's pixels to the layer's
+        // Both eyes and their disparities at the layer's size.
+        std::vector<float> img[2], ds[2];
+        for (int e = 0; e < 2; ++e)
+        {
+            img[e].resize(NN * 3); ds[e].resize(NN);
+            const size_t pitch = (size_t)last.eyeW * 2 * 4;
+            for (int y = 0; y < N; ++y) for (int x = 0; x < N; ++x)
+            {
+                const int x0 = x * last.eyeW / N, x1 = (std::max)(x0 + 1, (x + 1) * last.eyeW / N), y0 = y * last.eyeH / N, y1 = (std::max)(y0 + 1, (y + 1) * last.eyeH / N);
+                unsigned s[3] = {}, n = 0;
+                for (int yy = y0; yy < y1; ++yy) { const uint8_t* row = last.px.data() + (size_t)yy * pitch + ((size_t)e * last.eyeW + x0) * 4; for (int xx = x0; xx < x1; ++xx, row += 4) { s[0] += row[0]; s[1] += row[1]; s[2] += row[2]; ++n; } }
+                for (int c = 0; c < 3; ++c) img[e][((size_t)y * N + x) * 3 + c] = (float)s[c] / (float)n / 255.0f;
+                ds[e][(size_t)y * N + x] = kd * Bilinear(last.disp[e], last.w, last.h, ((float)x + 0.5f) * (float)last.w / (float)N - 0.5f, ((float)y + 0.5f) * (float)last.h / (float)N - 0.5f);
+            }
+        }
+        const std::vector<float>& d = ds[0];
+        // A near thing's edge: a texel nearer than a neighbour by a step. Within
+        // R of such an edge, and nearer than the farthest within R, is lifted off.
+        const int R = 40;
+        std::vector<float> reach(NN, 0.0f), farthest = d, band(NN, 0.0f);
+        for (int y = 0; y < N; ++y) for (int x = 0; x < N; ++x)
+        {
+            const float v = d[(size_t)y * N + x];
+            const bool stepped = (x > 0 && v - d[(size_t)y * N + x - 1] > 2.0f) || (x < N - 1 && v - d[(size_t)y * N + x + 1] > 2.0f) ||
+                                 (y > 0 && v - d[(size_t)(y - 1) * N + x] > 2.0f) || (y < N - 1 && v - d[(size_t)(y + 1) * N + x] > 2.0f);
+            reach[(size_t)y * N + x] = stepped ? 1.0f : 0.0f;
+            // (How far in from this edge the head's moving can uncover: the step's own size, and a little.)
+            float step = 0.0f;
+            if (x > 0) step = (std::max)(step, v - d[(size_t)y * N + x - 1]); if (x < N - 1) step = (std::max)(step, v - d[(size_t)y * N + x + 1]);
+            if (y > 0) step = (std::max)(step, v - d[(size_t)(y - 1) * N + x]); if (y < N - 1) step = (std::max)(step, v - d[(size_t)(y + 1) * N + x]);
+            band[(size_t)y * N + x] = stepped ? (std::min)(40.0f, step * 1.3f + 4.0f) : 0.0f;
+        }
+        Spread(reach, N, R, true);
+        Spread(farthest, N, R, false);
+        std::vector<float> mask(NN);
+        for (size_t i = 0; i < NN; ++i) mask[i] = (reach[i] > 0.5f && d[i] - farthest[i] > 1.5f) ? 1.0f : 0.0f;
+        Spread(mask, N, 2, true);                                    // (a little wider: the edge's own mixed texels)
+        // (The band: each texel's count of how much further in it reaches, one less a texel.)
+        for (int it = 0; it < 40; ++it)
+        {
+            bool any = false;
+            for (int pass = 0; pass < 2; ++pass)
+                for (int yy = 0; yy < N; ++yy) for (int xx = 0; xx < N; ++xx)
+                {
+                    const int y = pass == 0 ? yy : N - 1 - yy, x = pass == 0 ? xx : N - 1 - xx;
+                    float& b = band[(size_t)y * N + x]; float best = b;
+                    if (x > 0) best = (std::max)(best, band[(size_t)y * N + x - 1] - 1.0f); if (x < N - 1) best = (std::max)(best, band[(size_t)y * N + x + 1] - 1.0f);
+                    if (y > 0) best = (std::max)(best, band[(size_t)(y - 1) * N + x] - 1.0f); if (y < N - 1) best = (std::max)(best, band[(size_t)(y + 1) * N + x] - 1.0f);
+                    if (best > b) { b = best; any = true; }
+                }
+            if (!any) break;
+        }
+        // The background's depth across what was lifted off: from what is known
+        // to be background beside it -- not from the near thing's own inside.
+        std::vector<float> bg = d, known(NN);
+        // (Known: all that was not lifted off. Asking as well that it be the farthest thing near by threw out
+        // sloping ground -- always nearer than the ground further off -- and what was left to spread from was the
+        // far water, across everything.)
+        for (size_t i = 0; i < NN; ++i) known[i] = mask[i] < 0.5f ? 1.0f : 0.0f;
+        {
+            std::vector<float> v = d, w = known;
+            PushPull(v, w, N);
+            for (size_t i = 0; i < NN; ++i) if (mask[i] > 0.5f) bg[i] = (std::min)(v[i], d[i]);
+        }
+        // What is behind a near thing as the left eye has it is, in part, in
+        // plain sight of the right: that is put in as it is, and only what
+        // neither eye has is left to be painted.
+        // Painted is the band alone -- the strip along each edge that moving the head can uncover. The
+        // rest of what was lifted off, which is never seen, is first given the background's colours
+        // spread in from beside it: so the painter carries on from the ground a thing stands on, and
+        // not from the thing, nor from what is on its other side.
+        std::vector<float> paint = img[0], pm(NN);
+        for (int c = 0; c < 3; ++c)
+        {
+            std::vector<float> v(NN), w = known;
+            for (size_t i = 0; i < NN; ++i) v[i] = img[0][i * 3 + c];
+            PushPull(v, w, N);
+            for (size_t i = 0; i < NN; ++i) if (mask[i] > 0.5f) paint[i * 3 + c] = v[i];
+        }
+        for (size_t i = 0; i < NN; ++i) pm[i] = (mask[i] > 0.5f && band[i] > 0.0f) ? 1.0f : 0.0f;
+        for (int y = 0; y < N; ++y) for (int x = 0; x < N; ++x)
+        {
+            const size_t i = (size_t)y * N + x;
+            if (mask[i] < 0.5f) continue;
+            const float xr = (float)x - bg[i];
+            if (xr < 0.0f || xr > (float)N - 1.0f) continue;
+            if (std::fabs(Bilinear(ds[1], N, N, xr, (float)y) - bg[i]) >= 1.5f) continue;
+            const int x0 = (std::min)(N - 2, (int)xr); const float fx = xr - (float)x0;
+            for (int c = 0; c < 3; ++c) paint[i * 3 + c] = img[1][((size_t)y * N + x0) * 3 + c] * (1 - fx) + img[1][((size_t)y * N + x0 + 1) * 3 + c] * fx;
+            pm[i] = 0.0f;
+        }
+        // The painting.
+        {
+            Ort::AllocatorWithDefaultOptions alloc;
+            const Ort::AllocatedStringPtr in0 = lama.GetInputNameAllocated(0, alloc), in1 = lama.GetInputNameAllocated(1, alloc), out0 = lama.GetOutputNameAllocated(0, alloc);
+            const char* inNames[2] = { in0.get(), in1.get() }; const char* outNames[1] = { out0.get() };
+            std::vector<float> planes(NN * 3);
+            for (size_t i = 0; i < NN; ++i) for (int c = 0; c < 3; ++c) planes[(size_t)c * NN + i] = paint[i * 3 + c];
+            const Ort::MemoryInfo mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+            const int64_t s3[4] = { 1, 3, N, N }, s1[4] = { 1, 1, N, N };
+            Ort::Value in[2] = { Ort::Value::CreateTensor<float>(mem, planes.data(), planes.size(), s3, 4), Ort::Value::CreateTensor<float>(mem, pm.data(), pm.size(), s1, 4) };
+            auto res = lama.Run(Ort::RunOptions{ nullptr }, inNames, in, 2, outNames, 1);
+            const float* o = res[0].GetTensorData<float>();
+            for (size_t i = 0; i < NN; ++i) if (pm[i] > 0.5f) for (int c = 0; c < 3; ++c) paint[i * 3 + c] = (std::max)(0.0f, (std::min)(1.0f, o[(size_t)c * NN + i] / 255.0f));
+        }
+        out.resize(NN * 4);
+        const float km = (float)mapW / (float)N;                     // the layer's pixels to the map's texels
+        for (size_t i = 0; i < NN; ++i)
+        {
+            for (int c = 0; c < 3; ++c) out[i * 4 + c] = ToLinear(paint[i * 3 + c]);
+            out[i * 4 + 3] = bg[i] * km;
+        }
+    }
+#endif
 }
 
 bool NeuralDepth::Start(const std::wstring& exeDir, const std::wstring& modelFile)
@@ -68,10 +256,13 @@ bool NeuralDepth::Start(const std::wstring& exeDir, const std::wstring& modelFil
     if (!Exists(m_model)) m_model = exeDir + L"\\neural\\Lite Any Stereo H 1024x576.onnx";
     if (!Exists(exeDir + L"\\onnxruntime.dll") || !Exists(exeDir + L"\\DirectML.dll") || !Exists(m_model))
     {
-        Log("NeuralDepth: not there (onnxruntime.dll, DirectML.dll beside the exe and neural\\stereo.onnx are all needed)");
+        Log("NeuralDepth: not there (onnxruntime.dll and DirectML.dll beside the exe, and a model in the neural folder, are all needed)");
         return false;
     }
-    m_quit = false; m_failed = false;
+    m_paintModel = exeDir + L"\\neural\\inpaint\\lama.onnx";
+    m_painter = Exists(m_paintModel);
+    m_quit = false; m_failed = false; m_fixW = 0; m_fixH = 0;
+    m_haveJob = false; m_haveResult = false; m_wantLayer = false; m_haveLayer = false;
     m_thread = std::thread([this] { Run(); });
     return true;
 #else
@@ -91,7 +282,15 @@ void NeuralDepth::Shutdown()
     m_ready = false; m_busy = false;
 }
 
-bool NeuralDepth::Submit(const uint8_t* rgba, int pitch, int eyeW, int eyeH, float aspect, int mapW, int mapH, unsigned serial)
+void NeuralDepth::NetSize(float aspect, int width, int& w, int& h) const
+{
+    const int fw = m_fixW.load(), fh = m_fixH.load();
+    if (fw > 0 && fh > 0) { w = fw; h = fh; return; }
+    w = (std::max)(256, (std::min)(1920, width / 32 * 32));
+    h = (std::max)(64, (std::min)(1088, (int)std::lround((float)w / (std::max)(aspect, 0.25f) / 32.0f) * 32));
+}
+
+bool NeuralDepth::Submit(const uint8_t* rgba, int pitch, int eyeW, int eyeH, float aspect, int width, int mapW, int mapH, unsigned serial)
 {
     if (!m_ready.load() || m_busy.load() || !rgba || eyeW < 64 || eyeH < 64 || mapW < 8 || mapH < 8) return false;
     {
@@ -99,7 +298,7 @@ bool NeuralDepth::Submit(const uint8_t* rgba, int pitch, int eyeW, int eyeH, flo
         if (m_haveJob) return false;
         m_job.px.resize((size_t)eyeW * 2 * 4 * eyeH);
         for (int y = 0; y < eyeH; ++y) memcpy(&m_job.px[(size_t)y * eyeW * 2 * 4], rgba + (size_t)y * pitch, (size_t)eyeW * 2 * 4);
-        m_job.eyeW = eyeW; m_job.eyeH = eyeH; m_job.mapW = mapW; m_job.mapH = mapH; m_job.aspect = aspect; m_job.serial = serial;
+        m_job.eyeW = eyeW; m_job.eyeH = eyeH; m_job.mapW = mapW; m_job.mapH = mapH; m_job.aspect = aspect; m_job.width = width; m_job.serial = serial;
         m_haveJob = true; m_busy = true;
     }
     m_wake.notify_all();
@@ -112,6 +311,27 @@ bool NeuralDepth::Take(std::vector<uint16_t>& halfRGBA, int& mapW, int& mapH, un
     if (!m_haveResult) return false;
     halfRGBA.swap(m_result); mapW = m_resW; mapH = m_resH; serial = m_resSerial; ms = m_resMs;
     m_haveResult = false;
+    return true;
+}
+
+bool NeuralDepth::RequestLayer(unsigned serial, int mapW)
+{
+    if (!m_painter || !m_ready.load() || mapW < 8) return false;
+    {
+        std::lock_guard<std::mutex> g(m_lock);
+        if (m_wantLayer) return false;
+        m_wantLayer = true; m_layerSerial = serial; m_layerMapW = mapW;
+    }
+    m_wake.notify_all();
+    return true;
+}
+
+bool NeuralDepth::TakeLayer(std::vector<float>& rgba, int& n, unsigned& serial, double& ms)
+{
+    std::lock_guard<std::mutex> g(m_lock);
+    if (!m_haveLayer) return false;
+    rgba.swap(m_layer); n = m_layerN; serial = m_layerDoneSerial; ms = m_layerMs;
+    m_haveLayer = false;
     return true;
 }
 
@@ -135,34 +355,65 @@ void NeuralDepth::Run()
         const Ort::AllocatedStringPtr in0 = session.GetInputNameAllocated(0, alloc), in1 = session.GetInputNameAllocated(1, alloc), out0 = session.GetOutputNameAllocated(0, alloc);
         const char* inNames[2] = { in0.get(), in1.get() };
         const char* outNames[1] = { out0.get() };
-        int fixW = 0, fixH = 0;
         {
             const std::vector<int64_t> s = session.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
-            if (s.size() == 4 && s[2] > 0 && s[3] > 0) { fixH = (int)s[2]; fixW = (int)s[3]; }
+            if (s.size() == 4 && s[2] > 0 && s[3] > 0) { m_fixH = (int)s[2]; m_fixW = (int)s[3]; }
         }
         m_ready = true;
-        Log("NeuralDepth: model loaded (%s)", fixW ? "a fixed size" : "any size");
-        if (fixW) Log("NeuralDepth: the model runs at %dx%d", fixW, fixH);
+        if (m_fixW.load()) Log("NeuralDepth: model loaded; it runs at %dx%d", m_fixW.load(), m_fixH.load());
+        else               Log("NeuralDepth: model loaded; it runs at any size");
+
+        // (The painter: on the processor -- it does not run on DirectML -- and made when first asked for.)
+        std::unique_ptr<Ort::Session> lama;
+        Last last;
 
         for (;;)
         {
-            Job job;
+            Job job; bool doJob = false, doLayer = false; unsigned layerSerial = 0; int layerMapW = 0;
             {
                 std::unique_lock<std::mutex> g(m_lock);
-                m_wake.wait(g, [this] { return m_quit || m_haveJob; });
+                m_wake.wait(g, [this] { return m_quit || m_haveJob || m_wantLayer; });
                 if (m_quit) return;
-                job = std::move(m_job); m_haveJob = false;
+                if (m_haveJob) { job = std::move(m_job); m_haveJob = false; doJob = true; }
+                else { doLayer = true; layerSerial = m_layerSerial; layerMapW = m_layerMapW; }
+            }
+            if (doLayer)
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                std::vector<float> layer; int n = 0; bool made = false;
+                if (last.have && last.serial == layerSerial)
+                {
+                    try
+                    {
+                        if (!lama)
+                        {
+                            Ort::SessionOptions cpu;
+                            cpu.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+                            cpu.SetIntraOpNumThreads((int)(std::max)(2u, std::thread::hardware_concurrency() / 2));
+                            lama = std::make_unique<Ort::Session>(env, m_paintModel.c_str(), cpu);
+                            Log("NeuralDepth: painter loaded");
+                        }
+                        BuildLayer(last, *lama, layerMapW, layer, n);
+                        made = true;
+                    }
+                    catch (const std::exception& e) { Log("NeuralDepth: the painter failed: %s", e.what()); m_painter = false; }
+                }
+                {
+                    std::lock_guard<std::mutex> g(m_lock);
+                    m_wantLayer = false;
+                    if (made) { m_layer.swap(layer); m_layerN = n; m_layerDoneSerial = layerSerial; m_haveLayer = true;
+                                m_layerMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+                }
+                continue;
             }
             const auto t0 = std::chrono::steady_clock::now();
-            // The size it is run at: 736 across (what it does best at), the
-            // height by the picture's true shape, both in 32s.
-            const int w = fixW ? fixW : 736;
-            const int h = fixH ? fixH : (std::max)(64, (std::min)(1024, (int)std::lround((float)w / (std::max)(job.aspect, 0.25f) / 32.0f) * 32));
+            int w = 0, h = 0; NetSize(job.aspect, job.width, w, h);
             // (A camera's picture has nothing behind the screen -- no point further
             // RIGHT in the right eye than in the left -- and the model was never
             // shown one that has. A game's has. So the other eye is slid by a
-            // twentieth of the width first, and that is taken off the answer.)
-            const int slide = (int)std::lround(0.05f * (float)w);
+            // twentieth of the width first -- no more than 56 pixels: the model
+            // looks no further than 192 -- and that is taken off the answer.)
+            const int slide = (std::min)(56, (int)std::lround(0.05f * (float)w));
             std::vector<float> a, b, disp[2];
             const int64_t shape[4] = { 1, 3, h, w };
             for (int eye = 0; eye < 2; ++eye)
@@ -184,20 +435,19 @@ void NeuralDepth::Run()
             const uint16_t one = ToHalf(1.0f);
             for (int eye = 0; eye < 2; ++eye)
                 for (int y = 0; y < job.mapH; ++y)
-                {
-                    const float fy = (std::max)(0.0f, (std::min)((float)h - 1.001f, ((float)y + 0.5f) * (float)h / (float)job.mapH - 0.5f));
-                    const int y0 = (int)fy; const float wy = fy - (float)y0;
                     for (int x = 0; x < job.mapW; ++x)
                     {
-                        const float fx = (std::max)(0.0f, (std::min)((float)w - 1.001f, ((float)x + 0.5f) * (float)w / (float)job.mapW - 0.5f));
-                        const int x0 = (int)fx; const float wx = fx - (float)x0;
-                        const float* p = &disp[eye][(size_t)y0 * w + x0];
-                        const float v = (p[0] * (1 - wx) + p[1] * wx) * (1 - wy) + (p[w] * (1 - wx) + p[w + 1] * wx) * wy;
+                        const float v = Bilinear(disp[eye], w, h, ((float)x + 0.5f) * (float)w / (float)job.mapW - 0.5f, ((float)y + 0.5f) * (float)h / (float)job.mapH - 0.5f);
                         uint16_t* o = &res[((size_t)y * job.mapW * 2 + (size_t)eye * job.mapW + x) * 4];
                         o[0] = ToHalf(v * k); o[1] = one;
                     }
-                }
             const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            // (Kept for the painter, should this picture stay.)
+            if (m_painter)
+            {
+                last.px.swap(job.px); last.eyeW = job.eyeW; last.eyeH = job.eyeH; last.disp[0].swap(disp[0]); last.disp[1].swap(disp[1]);
+                last.w = w; last.h = h; last.serial = job.serial; last.have = true;
+            }
             {
                 std::lock_guard<std::mutex> g(m_lock);
                 m_result.swap(res); m_resW = job.mapW; m_resH = job.mapH; m_resSerial = job.serial; m_resMs = ms; m_haveResult = true;

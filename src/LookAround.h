@@ -72,7 +72,11 @@ namespace srw
         // A trial: a disparity from another matcher in place of the one found here. tex: both eyes side by
         // side at MapSize (R16G16B16A16_FLOAT, .r in that map's texels; the left eye's point is at x - d in
         // the right, the right's at x + d in the left). nullptr: its own again.
-        void SetExternalDisparity(ID3D11Texture2D* tex) { m_extDisp = tex; m_haveMaps = false; m_plateHave = false; }   // (the plate was made with the other depth: begun again)
+        // (keepPlate: the picture has moved on since -- a matcher that answers late, picture after picture: the plate
+        // goes on. Else the plate was made with another depth for this same picture, and is begun again.)
+        void SetExternalDisparity(ID3D11Texture2D* tex, bool keepPlate = false) { m_extDisp = tex; m_haveMaps = false; if (!keepPlate) m_plateHave = false; }
+        // Both eyes of src made small (each w x h, side by side, 8-bit sRGB) for a matcher elsewhere to read back.
+        ID3D11Texture2D* Shrink(ID3D11ShaderResourceView* src, int eyeW, int eyeH, int w, int h);
         void MapSize(int eyeW, int eyeH, int& w, int& h) const;
         void SetExternalStage(int s) { m_extStage = s; m_haveMaps = false; }
         void SetFuseBias(float b) { m_fuseBias = b; m_haveMaps = false; }
@@ -101,7 +105,7 @@ namespace srw
         ID3D11VertexShader*  m_vsFull = nullptr, *m_vsSplat = nullptr;
         ID3D11PixelShader*   m_psDownFirst = nullptr, *m_psDownNext = nullptr, *m_psGrad = nullptr, *m_psMatchFull = nullptr,
                             *m_psMatchRefine = nullptr, *m_psCheck = nullptr, *m_psFill = nullptr, *m_psMedian = nullptr, *m_psSpread = nullptr, *m_psFine = nullptr, *m_psGuide = nullptr, *m_psFuse = nullptr, *m_psDilate = nullptr,
-                            *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr, *m_psPlate = nullptr, *m_psFillDown = nullptr, *m_psLKSum = nullptr, *m_psLKSolve = nullptr;
+                            *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr, *m_psPlate = nullptr, *m_psFillDown = nullptr, *m_psShrink = nullptr, *m_psLKSum = nullptr, *m_psLKSolve = nullptr;
         ID3D11Buffer*            m_cb = nullptr;
         ID3D11SamplerState*      m_sampler = nullptr;
         ID3D11DepthStencilState* m_depthOn = nullptr;
@@ -139,7 +143,7 @@ namespace srw
         ID3D11Texture2D* m_extDisp = nullptr;
         int   m_extStage = 4;       // (how it comes in: 0 before the checking, 1 before the edges are drawn in, 2 before the making finer, 3 put right in its detail, 4 the better of it and the look-around's own at each texel)
         float m_fuseBias = 0.5f;    // (4: its own is taken where it costs less than this share of the other's)
-        Tex   m_extCopy;
+        Tex   m_extCopy, m_small;
         bool  m_fuseEdge = true;
         int   m_extDilate = 1;      // (with the other matcher's depth: a thing's outline carried this many texels outward -- PSDilate)
         float m_fuseReach = 1.5f;   // (how far, in texels, its own may be from the other matcher's and still be taken; 0: any distance)

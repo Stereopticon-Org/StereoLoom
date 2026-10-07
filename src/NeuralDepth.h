@@ -1,22 +1,29 @@
 #pragma once
-// A neural stereo matcher for the look-around's still pictures (an experiment).
+// A trained stereo matcher for the look-around, and a painter of what is behind
+// things (an experiment).
 //
 // The look-around's own matcher is quick and rough: against a measured truth a
 // third to a half of a picture's disparities are out by more than two pixels,
-// and it is the outlines that show it. A trained matcher is out on a twentieth
-// to a fifth -- but takes most of a second a picture on a middling graphics
-// card, where the look-around has a few thousandths. So it is for a picture
-// that stays: once the converter's picture has stood still a moment it is handed
-// over here, worked on in a thread of its own, and when the answer comes the
-// look-around takes it in place of its own (LookAround::SetExternalDisparity).
-// The picture changes: its own matcher again, at once.
+// and it is the outlines that show it. A trained matcher is out on a tenth or
+// so. The quick ones (Lite Any Stereo V2) answer in a tenth or a fifth of a
+// second on a middling graphics card -- not a frame's time, so the work is done
+// here in a thread of its own on a small copy of the picture, and the
+// look-around takes each answer as it comes in place of its own
+// (LookAround::SetExternalDisparity).
 //
-// The model is not part of SR Loom: an ONNX file, <SRLoom.exe's folder>\neural\
-// stereo.onnx, with two inputs (left_image, right_image: 1 x 3 x H x W, RGB,
-// ImageNet-normalised) and one output (disparity: 1 x 1 x H x W, the left
-// picture's, in pixels, never negative). Run through ONNX Runtime on DirectML;
-// without onnxruntime.dll beside the exe, or without the model, none of this
-// is there and nothing else is touched.
+// And for a picture that stays, a background: the left eye with every near
+// thing lifted off at its edges and what is behind it painted in by an
+// inpainting network (LaMa; on the processor, a second or two), with that
+// background's own depth carried across -- what the look-around then shows
+// where neither eye sees (LookAround::SetLayer).
+//
+// The models are not part of SR Loom: ONNX files in <SRLoom.exe's folder>\neural
+// -- a matcher with two inputs (1 x 3 x H x W, RGB, ImageNet-normalised) and one
+// output (1 x 1 x H x W, the first picture's disparity in pixels, never
+// negative); and neural\inpaint\lama.onnx (image 1 x 3 x 512 x 512 in 0..1 and
+// mask 1 x 1 x 512 x 512; out 0..255). Run through ONNX Runtime; without
+// onnxruntime.dll beside the exe, or without a model, none of this is there and
+// nothing else is touched.
 
 #include <atomic>
 #include <condition_variable>
@@ -41,30 +48,49 @@ namespace srw
         bool Busy() const { return m_busy.load(); }        // a picture is being worked on
         bool Failed() const { return m_failed.load(); }
 
+        // The size the model wants its picture at (one eye): its own where it has
+        // one fixed; else `width` across and the height by `aspect` (one eye's
+        // true shape as shown, width over height), in 32s. Valid once Ready.
+        void NetSize(float aspect, int width, int& w, int& h) const;
+
         // A picture to work on: both eyes side by side, 8-bit RGBA rows (top
-        // first, pitch bytes a row), each eye eyeW x eyeH. aspect: one eye's
-        // true shape as shown, width over height (a half side-by-side's eye is
-        // stored squeezed; the model must see it as it looks). mapW x mapH: the
-        // size the answer is wanted at (LookAround::MapSize). serial: handed
-        // back with the answer. False: busy, or not ready.
-        bool Submit(const uint8_t* rgba, int pitch, int eyeW, int eyeH, float aspect, int mapW, int mapH, unsigned serial);
+        // first, pitch bytes a row), each eye eyeW x eyeH -- as a rule already at
+        // NetSize (LookAround::Shrink), any size will do. aspect, width: as
+        // NetSize. mapW x mapH: the size the answer is wanted at
+        // (LookAround::MapSize). serial: handed back with the answer. False:
+        // busy, or not ready.
+        bool Submit(const uint8_t* rgba, int pitch, int eyeW, int eyeH, float aspect, int width, int mapW, int mapH, unsigned serial);
 
         // The answer, once: both eyes side by side at mapW x mapH each, four
         // half floats a texel -- .r the disparity in the map's texels, .g 1 --
         // as LookAround::SetExternalDisparity takes it. ms: how long the model took.
         bool Take(std::vector<uint16_t>& halfRGBA, int& mapW, int& mapH, unsigned& serial, double& ms);
 
+        // The painted background for the picture last answered (serial must be
+        // its). Asked for once the picture has stayed; worked on when the thread
+        // is free. False: no painter, busy with one, or that picture has gone.
+        bool PainterThere() const { return m_painter; }
+        bool RequestLayer(unsigned serial, int mapW);
+        // ... and taken, once: n x n texels of four floats -- red, green, blue
+        // linear, and the background's disparity in the map's texels -- as
+        // LookAround::SetLayer takes it.
+        bool TakeLayer(std::vector<float>& rgba, int& n, unsigned& serial, double& ms);
+
     private:
         void Run();
-        struct Job { std::vector<uint8_t> px; int eyeW = 0, eyeH = 0, mapW = 0, mapH = 0; float aspect = 1.0f; unsigned serial = 0; };
+        struct Job { std::vector<uint8_t> px; int eyeW = 0, eyeH = 0, mapW = 0, mapH = 0, width = 736; float aspect = 1.0f; unsigned serial = 0; };
 
-        std::wstring m_model;
+        std::wstring m_model, m_paintModel;
+        bool m_painter = false;
         std::thread m_thread;
         std::mutex m_lock;
         std::condition_variable m_wake;
         bool m_quit = false, m_haveJob = false, m_haveResult = false;
         Job m_job;
         std::vector<uint16_t> m_result; int m_resW = 0, m_resH = 0; unsigned m_resSerial = 0; double m_resMs = 0.0;
+        bool m_wantLayer = false, m_haveLayer = false; unsigned m_layerSerial = 0; int m_layerMapW = 0;
+        std::vector<float> m_layer; int m_layerN = 0; unsigned m_layerDoneSerial = 0; double m_layerMs = 0.0;
         std::atomic<bool> m_ready{ false }, m_busy{ false }, m_failed{ false };
+        std::atomic<int> m_fixW{ 0 }, m_fixH{ 0 };
     };
 }

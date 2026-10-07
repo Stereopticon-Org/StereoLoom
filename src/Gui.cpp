@@ -455,6 +455,8 @@ bool Gui::Init(HWND mainHwnd, ID3D11Device* device, ID3D11DeviceContext* context
     m_autoPlaneOn           = Settings::ReadAutoPlane();
     m_lookOn                = Settings::ReadLookAround();
     m_lookDepth             = Settings::ReadLookDepth();
+    m_lookLive              = Settings::ReadLookLive();
+    m_lookPaint             = Settings::ReadLookPaint();
     { const std::wstring lm = Settings::ReadLookModel(); m_lookModel.assign(lm.begin(), lm.end()); }
     m_eyeOrder              = Settings::ReadEyeOrderDetect();
     // The weave-skip test never survives a restart (a black 3D screen at
@@ -2856,33 +2858,104 @@ bool Gui::Render(GuiState& state)
                     ImGui::EndCombo();
                 }
                 tip("Where Look-Around gets its depth. Built-in: SR Loom's own fast matcher, on everything. Neural: a trained "
-                    "stereo network, used once a picture has stopped changing (it takes a second or more), with far cleaner "
-                    "outlines; moving pictures still use the built-in matcher. Neural + Built-in takes whichever fits better "
+                    "stereo network with far cleaner outlines (see Live Depth for when it is used). "
+                    "Neural + Built-in takes whichever fits better "
                     "at each point. The neural options need the network's files beside SR Loom. Applies straight away.");
+                // The model and the size it is run at. A file in the neural folder is "<model> <W>x<H>.onnx":
+                // the model list has each model once, the resolution list the sizes that model is there at.
+                // (A file with no size in its name is a model that takes any size: it has the one entry.)
+                auto listModels = [&] {
+                    m_lookModels.clear();
+                    WIN32_FIND_DATAA fd{};
+                    const HANDLE fh = FindFirstFileA(ExePath("neural\\*.onnx").c_str(), &fd);
+                    if (fh != INVALID_HANDLE_VALUE) { do { m_lookModels.push_back(fd.cFileName); } while (FindNextFileA(fh, &fd)); FindClose(fh); }
+                };
+                auto splitName = [](const std::string& file, std::string& family, int& w, int& h) {
+                    family = file; w = h = 0;
+                    if (family.size() > 5 && family.compare(family.size() - 5, 5, ".onnx") == 0) family.resize(family.size() - 5);
+                    const size_t sp = family.find_last_of(' ');
+                    if (sp == std::string::npos) return;
+                    int a = 0, b = 0; char x = 0, extra = 0;
+                    if (sscanf_s(family.c_str() + sp + 1, "%d%c%d%c", &a, &x, 1, &b, &extra, 1) == 3 && x == 'x' && a > 0 && b > 0) { w = a; h = b; family.resize(sp); }
+                };
+                if (m_lookModels.empty()) listModels();
+                const std::string curFile = m_lookModel.empty() ? std::string("Lite Any Stereo H 1024x576.onnx") : m_lookModel;
+                std::string curFamily; int curW = 0, curH = 0; splitName(curFile, curFamily, curW, curH);
+                auto choose = [&](const std::string& file) { m_lookModel = file; Settings::WriteLookModel(std::wstring(file.begin(), file.end())); };
                 ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
-                std::string shown = m_lookModel.empty() ? std::string("Lite Any Stereo H 1024x576.onnx") : m_lookModel;
-                if (shown.size() > 5 && shown.compare(shown.size() - 5, 5, ".onnx") == 0) shown.resize(shown.size() - 5);
                 ImGui::SetNextItemWidth(halfW);
-                if (ImGui::BeginCombo("##lookmodel", shown.c_str()))
+                if (ImGui::BeginCombo("##lookmodel", curFamily.c_str()))
                 {
-                    if (ImGui::IsWindowAppearing())
-                    {
-                        m_lookModels.clear();
-                        WIN32_FIND_DATAA fd{};
-                        const HANDLE fh = FindFirstFileA(ExePath("neural\\*.onnx").c_str(), &fd);
-                        if (fh != INVALID_HANDLE_VALUE) { do { m_lookModels.push_back(fd.cFileName); } while (FindNextFileA(fh, &fd)); FindClose(fh); }
-                    }
+                    if (ImGui::IsWindowAppearing()) listModels();
                     if (m_lookModels.empty()) ImGui::TextDisabled("No models found");
+                    std::vector<std::string> seen;
                     for (const std::string& f : m_lookModels)
                     {
-                        std::string label = f; if (label.size() > 5) label.resize(label.size() - 5);
-                        const bool cur = f == (m_lookModel.empty() ? std::string("Lite Any Stereo H 1024x576.onnx") : m_lookModel);
-                        if (ImGui::Selectable(label.c_str(), cur)) { m_lookModel = f; Settings::WriteLookModel(std::wstring(f.begin(), f.end())); }
+                        std::string fam; int w = 0, h = 0; splitName(f, fam, w, h);
+                        if (std::find(seen.begin(), seen.end(), fam) != seen.end()) continue;
+                        seen.push_back(fam);
+                        if (ImGui::Selectable(fam.c_str(), fam == curFamily) && fam != curFamily)
+                        {
+                            // (The same size as now where the model has it; else the nearest it has.)
+                            std::string best; int bestGap = 1 << 30;
+                            for (const std::string& g : m_lookModels)
+                            {
+                                std::string fam2; int w2 = 0, h2 = 0; splitName(g, fam2, w2, h2);
+                                if (fam2 != fam) continue;
+                                const int gap = std::abs(w2 - (curW > 0 ? curW : 1024));
+                                if (gap < bestGap) { bestGap = gap; best = g; }
+                            }
+                            if (!best.empty()) choose(best);
+                        }
                     }
                     ImGui::EndCombo();
                 }
-                tip("The neural network's model: any .onnx file in the neural folder beside SR Loom. Smaller ones answer "
-                    "sooner; larger ones find finer detail. Applies straight away (a new model takes a few seconds to load).");
+                tip("The neural network's model. Lite Any Stereo S, M and H run from quickest to most accurate; "
+                    "Fast-FoundationStereo is the most accurate and takes a second or more a picture. Any model placed in the "
+                    "neural folder beside SR Loom is listed. Applies straight away (a model takes a few seconds to load).");
+                // Second row: the size it is run at; and whether every picture is given to it.
+                char resLabel[48];
+                if (curW > 0) snprintf(resLabel, sizeof(resLabel), "Resolution: %dx%d", curW, curH); else snprintf(resLabel, sizeof(resLabel), "Resolution: Any");
+                ImGui::SetNextItemWidth(halfW);
+                if (ImGui::BeginCombo("##lookres", resLabel))
+                {
+                    std::vector<std::pair<int, std::string>> sizes;
+                    for (const std::string& g : m_lookModels)
+                    {
+                        std::string fam2; int w2 = 0, h2 = 0; splitName(g, fam2, w2, h2);
+                        if (fam2 == curFamily) sizes.emplace_back(w2, g);
+                    }
+                    std::sort(sizes.begin(), sizes.end());
+                    for (const auto& s : sizes)
+                    {
+                        std::string fam2; int w2 = 0, h2 = 0; splitName(s.second, fam2, w2, h2);
+                        char item[48];
+                        if (w2 > 0) snprintf(item, sizeof(item), "%dx%d", w2, h2); else snprintf(item, sizeof(item), "Any");
+                        if (ImGui::Selectable(item, s.second == curFile)) choose(s.second);
+                    }
+                    ImGui::EndCombo();
+                }
+                tip("The size the picture is given to the neural network at. Larger finds finer outlines and thin things, "
+                    "and takes longer: each answer comes later, so moving pictures lag more. The sizes listed are the ones "
+                    "this model is installed at. Applies straight away.");
+                ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
+                if (pairToggle2("Live Depth", m_lookLive, halfW))
+                {
+                    m_lookLive = !m_lookLive;
+                    Settings::WriteLookLive(m_lookLive);
+                }
+                tip("On: the neural network is given every picture it has time for, so moving pictures and games use its "
+                    "depth too (each answer arrives a little late, which can show at fast-moving edges). Off: it is used only "
+                    "once a picture has stopped changing, and SR Loom's own matcher while it moves. Applies straight away.");
+                // Third row: the painted background.
+                if (pairToggle2("Paint Background", m_lookPaint, halfW))
+                {
+                    m_lookPaint = !m_lookPaint;
+                    Settings::WriteLookPaint(m_lookPaint);
+                }
+                tip("Once a picture has stopped changing, a second network paints in what is hidden behind things, so "
+                    "looking round them shows a likely background rather than a blur. It takes a few seconds and uses the "
+                    "processor. Needs the painter's file in the neural folder. Applies straight away.");
             }
         }
         }   // (SETTINGS)

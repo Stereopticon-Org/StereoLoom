@@ -123,6 +123,12 @@ namespace srw::Settings
     // alone. LookDepth.
     int  ReadLookDepth();
     void WriteLookDepth(int mode);
+    // 1 (as a rule): the trained matcher is given every picture it is free for and its answers used as they come;
+    // 0: only a picture that has stayed. LookLive. And LookPaint, 1: a background is painted for a picture that stays.
+    bool ReadLookLive();
+    void WriteLookLive(bool on);
+    bool ReadLookPaint();
+    void WriteLookPaint(bool on);
     // The trained matcher's model: a file name in the neural folder beside the exe (none: Lite Any Stereo H 1024x576.onnx). LookModel.
     std::wstring ReadLookModel();
     void WriteLookModel(const std::wstring& file);

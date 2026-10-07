@@ -101,7 +101,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
         const float aspect = _wgetenv(L"LOOKTEST_ASPECT") ? (float)_wtof(_wgetenv(L"LOOKTEST_ASPECT")) : 16.0f / 9.0f;
         for (int run = 0; run < 2; ++run)   // (twice: the first has the model's warming up in it)
         {
-            neural.Submit(px.data(), (int)W * 4, ew, eh, aspect, mw, mh, 1u);
+            neural.Submit(px.data(), (int)W * 4, ew, eh, aspect, 736, mw, mh, 1u);
             std::vector<uint16_t> res; int rw = 0, rh = 0; unsigned rs = 0; double ms = 0;
             while (!neural.Take(res, rw, rh, rs, ms)) { if (neural.Failed()) { fwprintf(stderr, L"the model failed\n"); return 1; } Sleep(20); }
             wprintf(L"neural matcher: both eyes in %.0f ms, map %dx%d\n", ms, rw, rh);
@@ -112,6 +112,22 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
             D3D11_SUBRESOURCE_DATA init{ res.data(), (UINT)(rw * 2 * 8), 0 };
             dev->CreateTexture2D(&nd, &init, &neuralTex);
             look.SetExternalDisparity(neuralTex);
+            // LOOKTEST_PAINT: ... and the painted background for it (the inpainting model beside the exe).
+            if (_wgetenv(L"LOOKTEST_PAINT"))
+            {
+                if (!neural.RequestLayer(1u, mw)) { fwprintf(stderr, L"no painter beside the exe\n"); return 1; }
+                std::vector<float> lay; int ln = 0; unsigned ls = 0; double lms = 0;
+                for (int k = 0; k < 3000 && !neural.TakeLayer(lay, ln, ls, lms); ++k) { if (!neural.PainterThere()) break; Sleep(20); }
+                if (ln <= 0) { fwprintf(stderr, L"the painter gave nothing\n"); return 1; }
+                wprintf(L"background painted in %.0f ms (%dx%d)\n", lms, ln, ln);
+                D3D11_TEXTURE2D_DESC ld{};
+                ld.Width = (UINT)ln; ld.Height = (UINT)ln; ld.MipLevels = 1; ld.ArraySize = 1; ld.SampleDesc.Count = 1;
+                ld.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; ld.Usage = D3D11_USAGE_DEFAULT; ld.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                D3D11_SUBRESOURCE_DATA linit{ lay.data(), (UINT)(ln * 16), 0 };
+                ID3D11Texture2D* lt = nullptr; ID3D11ShaderResourceView* lsrv = nullptr;
+                if (SUCCEEDED(dev->CreateTexture2D(&ld, &linit, &lt))) { dev->CreateShaderResourceView(lt, nullptr, &lsrv); lt->Release(); }
+                look.SetLayer(lsrv);
+            }
         }
     }
     ID3D11Texture2D* staging = nullptr;

@@ -208,6 +208,10 @@ namespace srw::Settings
     int  ReadLookSize() { return (int)ReadDword(kSettingsKey, L"LookSize", 0); }
     int  ReadLookDepth() { return (int)(std::min)((DWORD)2, ReadDword(kSettingsKey, L"LookDepth", 2)); }
     void WriteLookDepth(int mode) { WriteDword(kSettingsKey, L"LookDepth", (DWORD)mode); }
+    bool ReadLookLive() { return ReadDword(kSettingsKey, L"LookLive", 1) != 0; }
+    void WriteLookLive(bool on) { WriteDword(kSettingsKey, L"LookLive", on ? 1 : 0); }
+    bool ReadLookPaint() { return ReadDword(kSettingsKey, L"LookPaint", 1) != 0; }
+    void WriteLookPaint(bool on) { WriteDword(kSettingsKey, L"LookPaint", on ? 1 : 0); }
     std::wstring ReadLookModel() { return ReadText(kSettingsKey, L"LookModel"); }
     void WriteLookModel(const std::wstring& file) { WriteText(kSettingsKey, L"LookModel", file); }
     void WriteLookAround(bool on) { WriteDword(kSettingsKey, L"LookAround", on ? 1 : 0); }

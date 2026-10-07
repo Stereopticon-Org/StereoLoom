@@ -1070,3 +1070,21 @@ float4 PSDilate(VSOut i) : SV_Target
     }
     return float4(best, own.g, own.b, 0);
 }
+
+// ---- The picture made small, for a matcher elsewhere ---------------------------
+// Both eyes at a size a trained matcher wants (src/NeuralDepth): each pixel the
+// mean of sixteen samples over what it covers. (tex0: the eyes, g_srcSize one
+// eye's size. g_size: the small eye.)
+float4 PSShrink(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    const float2 S = g_srcSize, k = S / g_size;
+    float3 s = 0;
+    [unroll] for (int y = 0; y < 4; ++y)
+    [unroll] for (int x = 0; x < 4; ++x)
+    {
+        const float2 q = (float2(p) + (float2(x, y) + 0.5) / 4.0) * k;
+        s += tex0.SampleLevel(sampLinear, float2(((float)half * S.x + clamp(q.x, 0.5, S.x - 0.5)) / (2.0 * S.x), q.y / S.y), 0).rgb;
+    }
+    return float4(s / 16.0, 1);
+}

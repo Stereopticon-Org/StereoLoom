@@ -557,6 +557,10 @@ namespace
         unsigned     neuralSubmitted = 0;   // (the converter's picture last handed to it)
         ULONGLONG    neuralTick = 0;        // (when the converter's picture last changed)
         ID3D11Texture2D* neuralTex = nullptr; ID3D11Texture2D* neuralStage = nullptr;
+        bool         lookLive = true, lookPaint = true;   // (Settings LookLive: the trained matcher on every picture, not only one that stays; LookPaint: a painted background for a picture that stays)
+        bool         neuralCopying = false; unsigned neuralCopySerial = 0, neuralDepthSerial = 0; int neuralCopyW = 0, neuralCopyH = 0;
+        double       neuralMs = 0.0; int neuralCount = 0; ULONGLONG neuralLogTick = 0;
+        ID3D11ShaderResourceView* layerSrv = nullptr; unsigned layerAsked = 0;   // (the painted background in use; the picture one was last asked for)
         // Auto Stereo (region weaving). While autoStereo is on, the weave
         // window covers the SR display (Fullscreen mode, click-through) but
         // is clipped to the regions in regionWeaver; each region is converted
@@ -8052,48 +8056,63 @@ namespace
                     // one: between a game's frames only the head moves.)
                     const bool fresh = app.converter.Serial() != app.lookSerial;
                     app.lookSerial = app.converter.Serial();
-                    // A picture that stays is handed to the trained matcher (NeuralDepth), and
-                    // its depth taken in place of the look-around's own when it comes. The
-                    // picture changes: its own again, at once.
+                    // The trained matcher (NeuralDepth). Live (Settings LookLive): every picture it is
+                    // free for is handed over, small, and each answer is used as it comes -- for the
+                    // picture then showing, which may be a few on from the one it was made for. Not
+                    // live: only a picture that has stayed, and its own matcher again the moment the
+                    // picture changes. And for a picture that stays, a painted background.
                     if (fresh)
                     {
                         app.neuralTick = GetTickCount64();
-                        if (app.neuralActive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; }
+                        if (app.neuralActive && !app.lookLive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; }
+                        if (app.layerSrv) { app.look.SetLayer(nullptr); SAFE_RELEASE(app.layerSrv); }
+                        app.layerAsked = 0;
                     }
                     if (!app.lookNeural && app.neuralActive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; app.neuralSubmitted = 0; }
                     if (app.lookNeural && app.neural.Ready())
                     {
                         const int ew = app.converter.OutputPerEyeWidth(), eh = app.converter.OutputHeight();
                         int mw = 0, mh = 0; app.look.MapSize(ew, eh, mw, mh);
-                        if (!app.neuralActive && !app.neural.Busy() && app.neuralSubmitted != app.lookSerial && GetTickCount64() - app.neuralTick > 150 && app.converter.OutputTexture())
+                        const float aspect = v.screenW / v.screenH;
+                        const ULONGLONG nowMs = GetTickCount64();
+                        // (Handed over in two steps so the loop never waits on the GPU: made small and
+                        // copied out this time round; read, a loop or two on, when the copy is done.)
+                        if (!app.neuralCopying && !app.neural.Busy() && app.neuralSubmitted != app.lookSerial &&
+                            (app.lookLive || nowMs - app.neuralTick > 150))
                         {
-                            // (The picture read back: once a picture, and only one that has stood still.)
-                            D3D11_TEXTURE2D_DESC td{}; app.converter.OutputTexture()->GetDesc(&td);
+                            int nw = 0, nh = 0; app.neural.NetSize(aspect, 736, nw, nh);
+                            ID3D11Texture2D* shrunk = app.look.Shrink(app.converter.OutputSRV(), ew, eh, nw, nh);
+                            D3D11_TEXTURE2D_DESC td{}; if (shrunk) shrunk->GetDesc(&td);
                             D3D11_TEXTURE2D_DESC sd{}; if (app.neuralStage) app.neuralStage->GetDesc(&sd);
-                            if (!app.neuralStage || sd.Width != td.Width || sd.Height != td.Height || sd.Format != td.Format)
+                            if (shrunk && (!app.neuralStage || sd.Width != td.Width || sd.Height != td.Height || sd.Format != td.Format))
                             {
                                 SAFE_RELEASE(app.neuralStage);
                                 D3D11_TEXTURE2D_DESC st = td; st.Usage = D3D11_USAGE_STAGING; st.BindFlags = 0; st.CPUAccessFlags = D3D11_CPU_ACCESS_READ; st.MiscFlags = 0;
                                 app.renderer.Device()->CreateTexture2D(&st, nullptr, &app.neuralStage);
                             }
-                            D3D11_MAPPED_SUBRESOURCE m{};
-                            if (app.neuralStage && (td.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS || td.Format == DXGI_FORMAT_R8G8B8A8_UNORM || td.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB))   // (the converter's is typeless, seen through an sRGB view)
+                            if (shrunk && app.neuralStage)
                             {
-                                app.renderer.Context()->CopyResource(app.neuralStage, app.converter.OutputTexture());
-                                if (SUCCEEDED(app.renderer.Context()->Map(app.neuralStage, 0, D3D11_MAP_READ, 0, &m)))
-                                {
-                                    if (app.neural.Submit((const uint8_t*)m.pData, (int)m.RowPitch, ew, eh, v.screenW / v.screenH, mw, mh, app.lookSerial))
-                                        Log("NeuralDepth: picture %u handed over (%dx%d eyes, map %dx%d)", app.lookSerial, ew, eh, mw, mh);
-                                    app.renderer.Context()->Unmap(app.neuralStage, 0);
-                                }
+                                app.renderer.Context()->CopyResource(app.neuralStage, shrunk);
+                                app.neuralCopying = true; app.neuralCopySerial = app.lookSerial; app.neuralCopyW = nw; app.neuralCopyH = nh;
                             }
-                            else Log("NeuralDepth: the picture is not 8-bit RGBA (format %d): left alone", (int)td.Format);
                             app.neuralSubmitted = app.lookSerial;
+                        }
+                        if (app.neuralCopying)
+                        {
+                            D3D11_MAPPED_SUBRESOURCE m{};
+                            const HRESULT hr = app.renderer.Context()->Map(app.neuralStage, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m);
+                            if (SUCCEEDED(hr))
+                            {
+                                app.neural.Submit((const uint8_t*)m.pData, (int)m.RowPitch, app.neuralCopyW, app.neuralCopyH, aspect, 736, mw, mh, app.neuralCopySerial);
+                                app.renderer.Context()->Unmap(app.neuralStage, 0);
+                                app.neuralCopying = false;
+                            }
+                            else if (hr != DXGI_ERROR_WAS_STILL_DRAWING) app.neuralCopying = false;
                         }
                         std::vector<uint16_t> res; int rw = 0, rh = 0; unsigned rs = 0; double rms = 0.0;
                         if (app.neural.Take(res, rw, rh, rs, rms))
                         {
-                            if (rs == app.lookSerial && rw == mw && rh == mh)
+                            if ((app.lookLive || rs == app.lookSerial) && rw == mw && rh == mh)
                             {
                                 SAFE_RELEASE(app.neuralTex);
                                 D3D11_TEXTURE2D_DESC nd{};
@@ -8102,13 +8121,44 @@ namespace
                                 D3D11_SUBRESOURCE_DATA init{ res.data(), (UINT)(rw * 2 * 8), 0 };
                                 if (SUCCEEDED(app.renderer.Device()->CreateTexture2D(&nd, &init, &app.neuralTex)))
                                 {
-                                    app.look.SetExternalDisparity(app.neuralTex); app.neuralActive = true;
-                                    Log("NeuralDepth: picture %u, depth in after %.0f ms", rs, rms);
+                                    // (The same picture's depth, only better: the plate begun again. A later picture's: it goes on.)
+                                    app.look.SetExternalDisparity(app.neuralTex, app.neuralActive && rs != app.neuralDepthSerial);
+                                    app.neuralActive = true; app.neuralDepthSerial = rs;
+                                    app.neuralMs += (rms - app.neuralMs) * 0.2; ++app.neuralCount;
                                 }
                             }
-                            else Log("NeuralDepth: the depth for picture %u came after the picture had gone (%.0f ms)", rs, rms);
+                        }
+                        // (Now and then, how it is going.)
+                        if (app.neuralCount && nowMs - app.neuralLogTick > 5000)
+                        {
+                            Log("NeuralDepth: %d answers in the last five seconds, about %.0f ms each%s", app.neuralCount, app.neuralMs, app.lookLive ? " (live)" : "");
+                            app.neuralCount = 0; app.neuralLogTick = nowMs;
+                        }
+                        // The painted background, for a picture that has stayed and has its depth.
+                        if (app.lookPaint && app.neural.PainterThere() && app.neuralActive && app.neuralDepthSerial == app.lookSerial &&
+                            app.layerAsked != app.lookSerial && nowMs - app.neuralTick > 300)
+                        {
+                            if (app.neural.RequestLayer(app.lookSerial, mw)) app.layerAsked = app.lookSerial;
+                        }
+                        std::vector<float> lay; int ln = 0; unsigned ls = 0; double lms = 0.0;
+                        if (app.neural.TakeLayer(lay, ln, ls, lms) && ls == app.lookSerial && app.lookPaint)
+                        {
+                            D3D11_TEXTURE2D_DESC ld{};
+                            ld.Width = (UINT)ln; ld.Height = (UINT)ln; ld.MipLevels = 1; ld.ArraySize = 1; ld.SampleDesc.Count = 1;
+                            ld.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; ld.Usage = D3D11_USAGE_DEFAULT; ld.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                            D3D11_SUBRESOURCE_DATA init{ lay.data(), (UINT)(ln * 16), 0 };
+                            ID3D11Texture2D* lt = nullptr;
+                            if (SUCCEEDED(app.renderer.Device()->CreateTexture2D(&ld, &init, &lt)))
+                            {
+                                SAFE_RELEASE(app.layerSrv);
+                                app.renderer.Device()->CreateShaderResourceView(lt, nullptr, &app.layerSrv);
+                                lt->Release();
+                                app.look.SetLayer(app.layerSrv);
+                                Log("NeuralDepth: picture %u, background painted in %.0f ms", ls, lms);
+                            }
                         }
                     }
+                    if (!app.lookPaint && app.layerSrv) { app.look.SetLayer(nullptr); SAFE_RELEASE(app.layerSrv); }
                     if (app.look.Render(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), v, fresh))
                     {
                         app.weaver.SetInputView(app.look.OutputSRV(), app.look.OutputPerEyeWidth(), app.look.OutputHeight(), app.look.OutputFormat());
@@ -9976,6 +10026,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     if (ld != app.lookDepth) { app.lookDepth = ld; app.look.SetExternalStage(ld == 2 ? 2 : 4); }
                     app.lookNeural = ld != 0;
                     // (Another model chosen: the matcher begun again with it, and the picture handed over afresh.)
+                    app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint();
                     const std::wstring lm = Settings::ReadLookModel();
                     if (lm != app.lookModel && !app.neural.Busy())
                     {
@@ -10786,7 +10837,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // Stop OpenTrack BEFORE the weaver shuts down its SRContext --
     // the bridge holds an SR::HeadPoseTracker pointing into that context.
     app.openTrack.Disable();
-    app.neural.Shutdown(); SAFE_RELEASE(app.neuralTex); SAFE_RELEASE(app.neuralStage);
+    app.neural.Shutdown(); SAFE_RELEASE(app.neuralTex); SAFE_RELEASE(app.neuralStage); SAFE_RELEASE(app.layerSrv);
     app.look.Shutdown();
     app.converter.Shutdown();
     app.capture.Shutdown();
