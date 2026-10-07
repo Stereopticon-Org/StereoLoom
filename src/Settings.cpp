@@ -212,6 +212,7 @@ namespace srw::Settings
     void WriteLookLive(bool on) { WriteDword(kSettingsKey, L"LookLive", on ? 1 : 0); }
     bool ReadLookPaint() { return ReadDword(kSettingsKey, L"LookPaint", 1) != 0; }
     void WriteLookPaint(bool on) { WriteDword(kSettingsKey, L"LookPaint", on ? 1 : 0); }
+    bool ReadLookPlate() { return ReadDword(kSettingsKey, L"LookPlate", 0) != 0; }
     std::wstring ReadLookModel() { return ReadText(kSettingsKey, L"LookModel"); }
     void WriteLookModel(const std::wstring& file) { WriteText(kSettingsKey, L"LookModel", file); }
     void WriteLookAround(bool on) { WriteDword(kSettingsKey, L"LookAround", on ? 1 : 0); }

@@ -26,6 +26,8 @@
 #include "Look_PSPlate.h"
 #include "Look_PSFillDown.h"
 #include "Look_PSShrink.h"
+#include "Look_PSRight.h"
+#include "Look_PSRightFill.h"
 #include "Look_PSLKSum.h"
 #include "Look_PSLKSolve.h"
 
@@ -58,6 +60,8 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSPlate,       sizeof(g_Look_PSPlate),       &m_psPlate },
         { g_Look_PSFillDown,    sizeof(g_Look_PSFillDown),    &m_psFillDown },
         { g_Look_PSShrink,      sizeof(g_Look_PSShrink),      &m_psShrink },
+        { g_Look_PSRight,       sizeof(g_Look_PSRight),       &m_psRight },
+        { g_Look_PSRightFill,   sizeof(g_Look_PSRightFill),   &m_psRightFill },
         { g_Look_PSLKSum,       sizeof(g_Look_PSLKSum),       &m_psLKSum },
         { g_Look_PSLKSolve,     sizeof(g_Look_PSLKSolve),     &m_psLKSolve },
     };
@@ -98,7 +102,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_dsv); SAFE_RELEASE(m_depthTex);
     SAFE_RELEASE(m_disjoint); for (auto& q : m_ts) SAFE_RELEASE(q);
     SAFE_RELEASE(m_raster); SAFE_RELEASE(m_depthOn); SAFE_RELEASE(m_sampler); SAFE_RELEASE(m_cb);
-    SAFE_RELEASE(m_psShrink); SAFE_RELEASE(m_psFillDown); SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
+    SAFE_RELEASE(m_psRight); SAFE_RELEASE(m_psRightFill); SAFE_RELEASE(m_psShrink); SAFE_RELEASE(m_psFillDown); SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
     SAFE_RELEASE(m_psSpread); SAFE_RELEASE(m_psFine); SAFE_RELEASE(m_psGuide); SAFE_RELEASE(m_psFuse); SAFE_RELEASE(m_psDilate);
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
@@ -224,6 +228,9 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     cb.tL = view.tL; cb.tR = view.tR; cb.winR = 3.0f;
     cb.pad[0] = (float)padX; cb.pad[1] = (float)padY;
     cb.ty = view.ty; cb.rho = view.rho; cb.kx = (view.rho - 1.0f) * view.screenW; cb.ky = (view.rho - 1.0f) * view.screenH; cb.only = (float)view.only; for (int q = 0; q < 4; ++q) cb.opt[q] = m_opt[q];
+    // (With a trained matcher's depth alone the outlines are where they should be: the search of surfaces a
+    // little way off, made for the windows' fat ones, finds next to nothing more -- 0.05 dB -- and is a third of a frame's cost.)
+    if (m_extDisp && m_extStage == 2) cb.opt[0] = 0.0f;
     cb.scale[0] = (float)eyeW / (float)w[0]; cb.scale[1] = (float)eyeH / (float)h[0];
     auto sized = [&](int k) { cb.size[0] = (float)w[k]; cb.size[1] = (float)h[k]; };
 
@@ -255,6 +262,9 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         cb.range = std::ceil(m_maxShare * (float)w[k]) + 1.0f;
         // (7x7 at the two smaller sizes; 5x5 at 1/8, where the window is most of the cost.)
         cb.winR = k == 0 ? 2.0f : 3.0f;
+        // (The other matcher's depth alone: the finest size's own matching is not wanted, and not done.)
+        const bool own = !(k == 0 && m_extDisp && m_extStage == 2);
+        if (own) {
         if (k == levels - 1) Pass(m_psMatchFull, m_dispA[k], cb, m_lvl[k].srv);
         else                  Pass(m_psMatchRefine, m_dispA[k], cb, m_lvl[k].srv, result[k + 1]->srv);
         // (A disparity from elsewhere -- another matcher's, under trial: it takes the place of the one
@@ -278,7 +288,15 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             Pass(m_psMedian, m_dispA[k], cb, m_dispB[k].srv);
             Pass(m_psMedian, m_dispB[k], cb, m_dispA[k].srv);
         }
+        }
+        result[k] = &m_dispB[k];
         if (k == 0 && m_extDisp && m_extStage == 2) m_context->CopyResource(m_dispB[0].tex, m_extDisp);   // (after everything but the making finer)
+        // (... the left eye's only: the right eye's made from it.)
+        if (k == 0 && m_extDisp && m_extStage == 2 && m_extLeftOnly)
+        {
+            Pass(m_psRight, m_dispA[0], cb, nullptr, m_dispB[0].srv);
+            Pass(m_psRightFill, m_dispB[0], cb, nullptr, m_dispA[0].srv);
+        }
         // (4: the better of it and the look-around's own at each texel: PSFuse.)
         if (k == 0 && m_extDisp && m_extStage == 4 && Ensure(m_extCopy, 2 * w[0], h[0], DXGI_FORMAT_R16G16B16A16_FLOAT))
         {
@@ -315,7 +333,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     m_haveMaps = true;
     // How the picture moved since the one before: from the smallest level to the finest, twice at each.
     m_estHave = false;
-    if (m_findMotion && m_prevHave && m_plateHave)
+    if (m_findMotion && m_plateOn && m_prevHave && m_plateHave)
     {
         const float zero4[4] = {};
         m_context->ClearRenderTargetView(m_est[m_estCur].rtv, zero4);
@@ -353,6 +371,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     for (int k = 0; k < levels; ++k) m_context->CopyResource(m_prevTmp[k].tex, m_tmp[k].tex);
     m_prevHave = true;
     // The plate: the one before moved as the picture moved, and this picture put into it.
+    if (m_plateOn)
     {
         cb.size[0] = (float)eyeW; cb.size[1] = (float)eyeH; cb.srcSize[0] = (float)w[0]; cb.srcSize[1] = (float)h[0];
         for (int q = 0; q < 4; ++q) cb.motion[q] = m_motion[q];

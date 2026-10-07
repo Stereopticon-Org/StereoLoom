@@ -558,6 +558,7 @@ namespace
         ULONGLONG    neuralTick = 0;        // (when the converter's picture last changed)
         ID3D11Texture2D* neuralTex = nullptr; ID3D11Texture2D* neuralStage = nullptr;
         bool         lookLive = true, lookPaint = true;   // (Settings LookLive: the trained matcher on every picture, not only one that stays; LookPaint: a painted background for a picture that stays)
+        bool         lookPlate = false;     // (Settings LookPlate: the plate of earlier pictures kept, and the motion found for it)
         bool         neuralCopying = false; unsigned neuralCopySerial = 0, neuralDepthSerial = 0; int neuralCopyW = 0, neuralCopyH = 0;
         double       neuralMs = 0.0; int neuralCount = 0; ULONGLONG neuralLogTick = 0;
         ID3D11ShaderResourceView* layerSrv = nullptr; unsigned layerAsked = 0;   // (the painted background in use; the picture one was last asked for)
@@ -8093,6 +8094,7 @@ namespace
                             if (shrunk && app.neuralStage)
                             {
                                 app.renderer.Context()->CopyResource(app.neuralStage, shrunk);
+                                app.renderer.Context()->Flush();   // (begun now, not when the frame is: read a loop sooner)
                                 app.neuralCopying = true; app.neuralCopySerial = app.lookSerial; app.neuralCopyW = nw; app.neuralCopyH = nh;
                             }
                             app.neuralSubmitted = app.lookSerial;
@@ -8131,7 +8133,8 @@ namespace
                         // (Now and then, how it is going.)
                         if (app.neuralCount && nowMs - app.neuralLogTick > 5000)
                         {
-                            Log("NeuralDepth: %d answers in the last five seconds, about %.0f ms each%s", app.neuralCount, app.neuralMs, app.lookLive ? " (live)" : "");
+                            double tp = 0, tr = 0, ta = 0; app.neural.Times(tp, tr, ta);
+                            Log("NeuralDepth: %d answers in the last five seconds, about %.0f ms each (inputs %.0f, model %.0f)%s", app.neuralCount, app.neuralMs, tp, tr, app.lookLive ? " (live)" : "");
                             app.neuralCount = 0; app.neuralLogTick = nowMs;
                         }
                         // The painted background, for a picture that has stayed and has its depth.
@@ -10023,10 +10026,11 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                 app.lookShow = Settings::ReadLookShow();
                 {
                     const int ld = Settings::ReadLookDepth();
-                    if (ld != app.lookDepth) { app.lookDepth = ld; app.look.SetExternalStage(ld == 2 ? 2 : 4); }
+                    if (ld != app.lookDepth) { app.lookDepth = ld; app.look.SetExternalStage(ld == 2 ? 2 : 4); app.look.SetExternalLeftOnly(ld == 2); app.neural.SetLeftOnly(ld == 2); }
                     app.lookNeural = ld != 0;
                     // (Another model chosen: the matcher begun again with it, and the picture handed over afresh.)
                     app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint();
+                    { const bool pl = Settings::ReadLookPlate(); if (pl != app.lookPlate) { app.lookPlate = pl; app.look.SetPlate(pl); } }
                     const std::wstring lm = Settings::ReadLookModel();
                     if (lm != app.lookModel && !app.neural.Busy())
                     {
@@ -10291,6 +10295,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
         app.exeDir = dir; app.lookModel = Settings::ReadLookModel();
         app.lookDepth = Settings::ReadLookDepth(); app.lookNeural = app.lookDepth != 0;
         app.look.SetExternalStage(app.lookDepth == 2 ? 2 : 4);
+        app.look.SetExternalLeftOnly(app.lookDepth == 2); app.neural.SetLeftOnly(app.lookDepth == 2);   // (the trained matcher alone: the left eye asked for, the right made from it)
+        app.lookPlate = Settings::ReadLookPlate(); app.look.SetPlate(app.lookPlate);
         app.neural.Start(dir, app.lookModel);
     }
     app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;

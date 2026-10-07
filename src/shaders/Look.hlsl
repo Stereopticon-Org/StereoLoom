@@ -1088,3 +1088,47 @@ float4 PSShrink(VSOut i) : SV_Target
     }
     return float4(s / 16.0, 1);
 }
+
+// ---- The right eye's disparity from the left's ----------------------------------
+// A trained matcher is asked for the left eye only -- half the work. The right
+// eye's map is the same surfaces seen from a little to the side: a right-eye
+// texel has the disparity of the left-eye texel that lands on it (x - d), and
+// where more than one lands, the nearest's. Looked for from the nearest
+// disparity down, so the first that fits is it. Where none lands -- behind
+// something as the left eye has it -- PSRightFill gives the farther side's.
+// (tex1: both eyes' disparity, the left half filled. g_range.)
+float4 PSRight(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    const int w = (int)g_size.x;
+    if (half == 0) return tex1.Load(int3(p.x, p.y, 0));
+    const int R = min((int)g_range, 96);
+    float best = -1e4;
+    [loop] for (int k = R; k >= -R; --k)
+    {
+        const int xl = p.x + k;
+        if (xl < 0 || xl >= w) continue;
+        const float d = tex1.Load(int3(xl, p.y, 0)).r;
+        if (abs(d - (float)k) < 0.75) { best = d; break; }
+    }
+    return float4(best, 1, 0, 0);
+}
+float4 PSRightFill(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    const int w = (int)g_size.x;
+    const float4 own = tex1.Load(int3(half * w + p.x, p.y, 0));
+    if (half == 0 || own.r > -1000.0) return own;
+    float d = 0.0; bool have = false;
+    [loop] for (int l = 1; l <= 96 && p.x - l >= 0; ++l)
+    {
+        const float q = tex1.Load(int3(w + p.x - l, p.y, 0)).r;
+        if (q > -1000.0) { d = q; have = true; break; }
+    }
+    [loop] for (int r = 1; r <= 96 && p.x + r < w; ++r)
+    {
+        const float q = tex1.Load(int3(w + p.x + r, p.y, 0)).r;
+        if (q > -1000.0) { d = have ? min(d, q) : q; have = true; break; }
+    }
+    return float4(d, 1, 0, 0);
+}

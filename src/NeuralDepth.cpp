@@ -143,7 +143,32 @@ namespace
                 unsigned s[3] = {}, n = 0;
                 for (int yy = y0; yy < y1; ++yy) { const uint8_t* row = last.px.data() + (size_t)yy * pitch + ((size_t)e * last.eyeW + x0) * 4; for (int xx = x0; xx < x1; ++xx, row += 4) { s[0] += row[0]; s[1] += row[1]; s[2] += row[2]; ++n; } }
                 for (int c = 0; c < 3; ++c) img[e][((size_t)y * N + x) * 3 + c] = (float)s[c] / (float)n / 255.0f;
-                ds[e][(size_t)y * N + x] = kd * Bilinear(last.disp[e], last.w, last.h, ((float)x + 0.5f) * (float)last.w / (float)N - 0.5f, ((float)y + 0.5f) * (float)last.h / (float)N - 0.5f);
+                ds[e][(size_t)y * N + x] = last.disp[e].empty() ? 0.0f : kd * Bilinear(last.disp[e], last.w, last.h, ((float)x + 0.5f) * (float)last.w / (float)N - 0.5f, ((float)y + 0.5f) * (float)last.h / (float)N - 0.5f);
+            }
+        }
+        // (The right eye's disparity, where the matcher was asked for the left's only: each left texel thrown to
+        // where the right eye has it, the nearest kept, and what nothing lands on given the farther side's.)
+        if (last.disp[1].empty())
+        {
+            std::vector<float>& r = ds[1];
+            std::fill(r.begin(), r.end(), -1e9f);
+            for (int y = 0; y < N; ++y) for (int x = 0; x < N; ++x)
+            {
+                const float v = ds[0][(size_t)y * N + x]; const int xr = (int)std::lround((float)x - v);
+                if (xr >= 0 && xr < N && v > r[(size_t)y * N + xr]) r[(size_t)y * N + xr] = v;
+            }
+            for (int y = 0; y < N; ++y)
+            {
+                float* row = &r[(size_t)y * N]; float prev = -1e9f;
+                std::vector<float> fromLeft(N);
+                for (int x = 0; x < N; ++x) { if (row[x] > -1e8f) prev = row[x]; fromLeft[x] = prev; }
+                float next = -1e9f;
+                for (int x = N - 1; x >= 0; --x)
+                {
+                    if (row[x] > -1e8f) { next = row[x]; continue; }
+                    const float a = fromLeft[x], b = next;
+                    row[x] = (a > -1e8f && b > -1e8f) ? (std::min)(a, b) : a > -1e8f ? a : b > -1e8f ? b : 0.0f;
+                }
             }
         }
         const std::vector<float>& d = ds[0];
@@ -227,14 +252,29 @@ namespace
             Ort::AllocatorWithDefaultOptions alloc;
             const Ort::AllocatedStringPtr in0 = lama.GetInputNameAllocated(0, alloc), in1 = lama.GetInputNameAllocated(1, alloc), out0 = lama.GetOutputNameAllocated(0, alloc);
             const char* inNames[2] = { in0.get(), in1.get() }; const char* outNames[1] = { out0.get() };
-            std::vector<float> planes(NN * 3);
-            for (size_t i = 0; i < NN; ++i) for (int c = 0; c < 3; ++c) planes[(size_t)c * NN + i] = paint[i * 3 + c];
+            // (Two painters' ways: LaMa takes the picture in 0..1 and a mask of 1 where it is to paint, and
+            // answers in 0..255; MI-GAN takes and gives bytes, its mask 255 where the picture is KNOWN.)
+            const bool bytes = lama.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
             const Ort::MemoryInfo mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
             const int64_t s3[4] = { 1, 3, N, N }, s1[4] = { 1, 1, N, N };
+            if (bytes)
+            {
+                std::vector<uint8_t> pb(NN * 3), mb(NN);
+                for (size_t i = 0; i < NN; ++i) { for (int c = 0; c < 3; ++c) pb[(size_t)c * NN + i] = (uint8_t)std::lround((std::max)(0.0f, (std::min)(1.0f, paint[i * 3 + c])) * 255.0f); mb[i] = pm[i] > 0.5f ? 0 : 255; }
+                Ort::Value in[2] = { Ort::Value::CreateTensor<uint8_t>(mem, pb.data(), pb.size(), s3, 4), Ort::Value::CreateTensor<uint8_t>(mem, mb.data(), mb.size(), s1, 4) };
+                auto res = lama.Run(Ort::RunOptions{ nullptr }, inNames, in, 2, outNames, 1);
+                const uint8_t* o = res[0].GetTensorData<uint8_t>();
+                for (size_t i = 0; i < NN; ++i) if (pm[i] > 0.5f) for (int c = 0; c < 3; ++c) paint[i * 3 + c] = (float)o[(size_t)c * NN + i] / 255.0f;
+            }
+            else
+            {
+            std::vector<float> planes(NN * 3);
+            for (size_t i = 0; i < NN; ++i) for (int c = 0; c < 3; ++c) planes[(size_t)c * NN + i] = paint[i * 3 + c];
             Ort::Value in[2] = { Ort::Value::CreateTensor<float>(mem, planes.data(), planes.size(), s3, 4), Ort::Value::CreateTensor<float>(mem, pm.data(), pm.size(), s1, 4) };
             auto res = lama.Run(Ort::RunOptions{ nullptr }, inNames, in, 2, outNames, 1);
             const float* o = res[0].GetTensorData<float>();
             for (size_t i = 0; i < NN; ++i) if (pm[i] > 0.5f) for (int c = 0; c < 3; ++c) paint[i * 3 + c] = (std::max)(0.0f, (std::min)(1.0f, o[(size_t)c * NN + i] / 255.0f));
+            }
         }
         out.resize(NN * 4);
         const float km = (float)mapW / (float)N;                     // the layer's pixels to the map's texels
@@ -251,15 +291,22 @@ bool NeuralDepth::Start(const std::wstring& exeDir, const std::wstring& modelFil
 {
 #ifdef SRLOOM_NEURAL
     if (m_thread.joinable()) return true;
-    m_model = exeDir + L"\\neural\\" + (modelFile.empty() ? std::wstring(L"Lite Any Stereo H 1024x576.onnx") : modelFile);
+    m_model = exeDir + L"\\neural\\" + (modelFile.empty() ? std::wstring(L"Lite Any Stereo M 512x288.onnx") : modelFile);
     // (A model chosen once and since taken away: the usual one.)
-    if (!Exists(m_model)) m_model = exeDir + L"\\neural\\Lite Any Stereo H 1024x576.onnx";
+    if (!Exists(m_model)) m_model = exeDir + L"\\neural\\Lite Any Stereo M 512x288.onnx";
     if (!Exists(exeDir + L"\\onnxruntime.dll") || !Exists(exeDir + L"\\DirectML.dll") || !Exists(m_model))
     {
         Log("NeuralDepth: not there (onnxruntime.dll and DirectML.dll beside the exe, and a model in the neural folder, are all needed)");
         return false;
     }
-    m_paintModel = exeDir + L"\\neural\\inpaint\\lama.onnx";
+    // (The painter: MI-GAN where it is there -- it runs on the graphics card, in a thirtieth of a second -- else
+    // LaMa, on the processor, in a second or two. SRLOOM_PAINTER=lama: LaMa though both are there.)
+    m_paintModel = exeDir + L"\\neural\\inpaint\\migan.onnx"; m_paintGpu = true;
+    {
+        wchar_t pick[16] = {};
+        const bool wantLama = GetEnvironmentVariableW(L"SRLOOM_PAINTER", pick, 16) > 0 && !_wcsicmp(pick, L"lama");
+        if (wantLama || !Exists(m_paintModel)) { m_paintModel = exeDir + L"\\neural\\inpaint\\lama.onnx"; m_paintGpu = false; }
+    }
     m_painter = Exists(m_paintModel);
     m_quit = false; m_failed = false; m_fixW = 0; m_fixH = 0;
     m_haveJob = false; m_haveResult = false; m_wantLayer = false; m_haveLayer = false;
@@ -388,10 +435,11 @@ void NeuralDepth::Run()
                         if (!lama)
                         {
                             Ort::SessionOptions cpu;
+                            if (m_paintGpu) { cpu.DisableMemPattern(); cpu.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL); Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(cpu, 0)); }
                             cpu.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
                             cpu.SetIntraOpNumThreads((int)(std::max)(2u, std::thread::hardware_concurrency() / 2));
                             lama = std::make_unique<Ort::Session>(env, m_paintModel.c_str(), cpu);
-                            Log("NeuralDepth: painter loaded");
+                            Log("NeuralDepth: painter loaded (%s)", m_paintGpu ? "MI-GAN, on the graphics card" : "LaMa, on the processor");
                         }
                         BuildLayer(last, *lama, layerMapW, layer, n);
                         made = true;
@@ -416,14 +464,22 @@ void NeuralDepth::Run()
             const int slide = (std::min)(56, (int)std::lround(0.05f * (float)w));
             std::vector<float> a, b, disp[2];
             const int64_t shape[4] = { 1, 3, h, w };
-            for (int eye = 0; eye < 2; ++eye)
+            // (Left only: the mirrored run for the right eye is not made -- the look-around makes that map from
+            // the left's, and the work here is halved.)
+            const int eyes = m_leftOnly.load() ? 1 : 2;
+            double tPrep = 0.0, tRun = 0.0;
+            for (int eye = 0; eye < eyes; ++eye)
             {
                 // (The right eye's: mirrored, the right eye is a left eye and the left its right.)
+                const auto p0 = std::chrono::steady_clock::now();
                 Prepare(job.px, job.eyeW, job.eyeH, eye, w, h, eye == 1, 0, a);
                 Prepare(job.px, job.eyeW, job.eyeH, 1 - eye, w, h, eye == 1, slide, b);
+                const auto p1 = std::chrono::steady_clock::now();
                 Ort::Value in[2] = { Ort::Value::CreateTensor<float>(mem, a.data(), a.size(), shape, 4),
                                      Ort::Value::CreateTensor<float>(mem, b.data(), b.size(), shape, 4) };
                 auto out = session.Run(Ort::RunOptions{ nullptr }, inNames, in, 2, outNames, 1);
+                const auto p2 = std::chrono::steady_clock::now();
+                tPrep += std::chrono::duration<double, std::milli>(p1 - p0).count(); tRun += std::chrono::duration<double, std::milli>(p2 - p1).count();
                 const float* d = out[0].GetTensorData<float>();
                 disp[eye].resize((size_t)w * h);
                 for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x)
@@ -433,7 +489,7 @@ void NeuralDepth::Run()
             std::vector<uint16_t> res((size_t)job.mapW * 2 * job.mapH * 4, 0);
             const float k = (float)job.mapW / (float)w;
             const uint16_t one = ToHalf(1.0f);
-            for (int eye = 0; eye < 2; ++eye)
+            for (int eye = 0; eye < eyes; ++eye)
                 for (int y = 0; y < job.mapH; ++y)
                     for (int x = 0; x < job.mapW; ++x)
                     {
@@ -451,6 +507,7 @@ void NeuralDepth::Run()
             {
                 std::lock_guard<std::mutex> g(m_lock);
                 m_result.swap(res); m_resW = job.mapW; m_resH = job.mapH; m_resSerial = job.serial; m_resMs = ms; m_haveResult = true;
+                m_tPrep += (tPrep - m_tPrep) * 0.2; m_tRun += (tRun - m_tRun) * 0.2; m_tAll += (ms - m_tAll) * 0.2;
             }
             m_busy = false;
         }

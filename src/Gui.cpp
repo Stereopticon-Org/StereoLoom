@@ -2879,7 +2879,7 @@ bool Gui::Render(GuiState& state)
                     if (sscanf_s(family.c_str() + sp + 1, "%d%c%d%c", &a, &x, 1, &b, &extra, 1) == 3 && x == 'x' && a > 0 && b > 0) { w = a; h = b; family.resize(sp); }
                 };
                 if (m_lookModels.empty()) listModels();
-                const std::string curFile = m_lookModel.empty() ? std::string("Lite Any Stereo H 1024x576.onnx") : m_lookModel;
+                const std::string curFile = m_lookModel.empty() ? std::string("Lite Any Stereo M 512x288.onnx") : m_lookModel;
                 std::string curFamily; int curW = 0, curH = 0; splitName(curFile, curFamily, curW, curH);
                 auto choose = [&](const std::string& file) { m_lookModel = file; Settings::WriteLookModel(std::wstring(file.begin(), file.end())); };
                 ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
@@ -2902,7 +2902,7 @@ bool Gui::Render(GuiState& state)
                             {
                                 std::string fam2; int w2 = 0, h2 = 0; splitName(g, fam2, w2, h2);
                                 if (fam2 != fam) continue;
-                                const int gap = std::abs(w2 - (curW > 0 ? curW : 1024));
+                                const int gap = std::abs(w2 - (curW > 0 ? curW : 512));
                                 if (gap < bestGap) { bestGap = gap; best = g; }
                             }
                             if (!best.empty()) choose(best);

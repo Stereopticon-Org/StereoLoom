@@ -129,7 +129,10 @@ namespace srw::Settings
     void WriteLookLive(bool on);
     bool ReadLookPaint();
     void WriteLookPaint(bool on);
-    // The trained matcher's model: a file name in the neural folder beside the exe (none: Lite Any Stereo H 1024x576.onnx). LookModel.
+    // 1: the look-around keeps a plate of what was in sight in earlier pictures and finds how each picture moved (about
+    // 3 ms a new picture); 0, as a rule: not. LookPlate.
+    bool ReadLookPlate();
+    // The trained matcher's model: a file name in the neural folder beside the exe (none: Lite Any Stereo M 512x288.onnx). LookModel.
     std::wstring ReadLookModel();
     void WriteLookModel(const std::wstring& file);
     void WriteLookParallax(int pct);

@@ -42,7 +42,7 @@ namespace srw
 
         // Begins loading the model (in the thread: it takes seconds). False: no
         // runtime or no model file -- not there at all.
-        bool Start(const std::wstring& exeDir, const std::wstring& modelFile = L"");   // (modelFile: a file in the neural folder beside the exe; none: Lite Any Stereo H 1024x576.onnx)
+        bool Start(const std::wstring& exeDir, const std::wstring& modelFile = L"");   // (modelFile: a file in the neural folder beside the exe; none: Lite Any Stereo M 512x288.onnx)
         void Shutdown();
         bool Ready() const { return m_ready.load(); }      // the model is loaded
         bool Busy() const { return m_busy.load(); }        // a picture is being worked on
@@ -69,6 +69,10 @@ namespace srw
         // The painted background for the picture last answered (serial must be
         // its). Asked for once the picture has stayed; worked on when the thread
         // is free. False: no painter, busy with one, or that picture has gone.
+        // The left eye only (the caller makes the right from it): half the work.
+        void SetLeftOnly(bool on) { m_leftOnly = on; }
+        // Where the time goes, smoothed, in ms: making the inputs, the model itself, the whole of an answer.
+        void Times(double& prep, double& run, double& all) { std::lock_guard<std::mutex> g(m_lock); prep = m_tPrep; run = m_tRun; all = m_tAll; }
         bool PainterThere() const { return m_painter; }
         bool RequestLayer(unsigned serial, int mapW);
         // ... and taken, once: n x n texels of four floats -- red, green, blue
@@ -81,7 +85,7 @@ namespace srw
         struct Job { std::vector<uint8_t> px; int eyeW = 0, eyeH = 0, mapW = 0, mapH = 0, width = 736; float aspect = 1.0f; unsigned serial = 0; };
 
         std::wstring m_model, m_paintModel;
-        bool m_painter = false;
+        bool m_painter = false, m_paintGpu = false;
         std::thread m_thread;
         std::mutex m_lock;
         std::condition_variable m_wake;
@@ -92,5 +96,7 @@ namespace srw
         std::vector<float> m_layer; int m_layerN = 0; unsigned m_layerDoneSerial = 0; double m_layerMs = 0.0;
         std::atomic<bool> m_ready{ false }, m_busy{ false }, m_failed{ false };
         std::atomic<int> m_fixW{ 0 }, m_fixH{ 0 };
+        std::atomic<bool> m_leftOnly{ false };
+        double m_tPrep = 0.0, m_tRun = 0.0, m_tAll = 0.0;   // (smoothed, ms: making the inputs, the model, all of it)
     };
 }

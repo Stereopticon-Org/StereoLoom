@@ -80,6 +80,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
     if (const wchar_t* ds = _wgetenv(L"LOOKTEST_DSP")) look.SetExternalDisparity(LoadDsp(dev, look, ds, ew, eh));
     if (const wchar_t* ly = _wgetenv(L"LOOKTEST_LAYER")) look.SetLayer(LoadLayer(dev, look, ly, ew, eh));
+    if (_wgetenv(L"LOOKTEST_NOPLATE")) look.SetPlate(false);   // (no plate kept: what it costs)
     if (_wgetenv(L"LOOKTEST_MARKFILL")) look.SetMarkFill(true);   // (what filled each unseen pixel, by colour: yellow the painted background, magenta the plate, blue the far side, green the mirrored row)
     if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
     if (const wchar_t* ff = _wgetenv(L"LOOKTEST_FARFILL")) look.SetFarFill(_wtoi(ff) != 0);
@@ -95,6 +96,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
         wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
         std::wstring dir = exe; const size_t cut = dir.find_last_of(L"/\134"); if (cut != std::wstring::npos) dir.resize(cut);
         if (!neural.Start(dir, _wgetenv(L"LOOKTEST_MODEL") ? _wgetenv(L"LOOKTEST_MODEL") : L"")) { fwprintf(stderr, L"no neural matcher beside the exe\n"); return 1; }
+        if (_wgetenv(L"LOOKTEST_LEFTONLY")) { neural.SetLeftOnly(true); look.SetExternalLeftOnly(true); }
         for (int k = 0; k < 1200 && !neural.Ready() && !neural.Failed(); ++k) Sleep(100);
         if (!neural.Ready()) { fwprintf(stderr, L"the model did not load\n"); return 1; }
         int mw = 0, mh = 0; look.MapSize(ew, eh, mw, mh);
