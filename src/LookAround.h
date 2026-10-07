@@ -83,7 +83,9 @@ namespace srw
         void SetFuseEdge(bool on) { m_fuseEdge = on; m_haveMaps = false; }
         void SetFuseReach(float t) { m_fuseReach = t; m_haveMaps = false; }
         void SetExternalDilate(int texels) { m_extDilate = texels; m_haveMaps = false; }
-        void SetExternalLeftOnly(bool on) { m_extLeftOnly = on; m_haveMaps = false; }   // (at a step in the other matcher's map, its answer stands)
+        void SetExternalLeftOnly(bool on) { m_extLeftOnly = on; m_haveMaps = false; }
+        void SetExternalSnap(int passes) { m_extSnap = passes; m_haveMaps = false; }
+        void SetExternalSoft(float z) { m_extSoft = z; }   // (at a step in the other matcher's map, its answer stands)
         void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
         void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
@@ -106,7 +108,7 @@ namespace srw
         ID3D11VertexShader*  m_vsFull = nullptr, *m_vsSplat = nullptr;
         ID3D11PixelShader*   m_psDownFirst = nullptr, *m_psDownNext = nullptr, *m_psGrad = nullptr, *m_psMatchFull = nullptr,
                             *m_psMatchRefine = nullptr, *m_psCheck = nullptr, *m_psFill = nullptr, *m_psMedian = nullptr, *m_psSpread = nullptr, *m_psFine = nullptr, *m_psGuide = nullptr, *m_psFuse = nullptr, *m_psDilate = nullptr,
-                            *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr, *m_psPlate = nullptr, *m_psFillDown = nullptr, *m_psShrink = nullptr, *m_psRight = nullptr, *m_psRightFill = nullptr, *m_psLKSum = nullptr, *m_psLKSolve = nullptr;
+                            *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr, *m_psPlate = nullptr, *m_psFillDown = nullptr, *m_psShrink = nullptr, *m_psRight = nullptr, *m_psRightFill = nullptr, *m_psSnap = nullptr, *m_psLKSum = nullptr, *m_psLKSolve = nullptr;
         ID3D11Buffer*            m_cb = nullptr;
         ID3D11SamplerState*      m_sampler = nullptr;
         ID3D11DepthStencilState* m_depthOn = nullptr;
@@ -146,6 +148,8 @@ namespace srw
         float m_fuseBias = 0.5f;    // (4: its own is taken where it costs less than this share of the other's)
         Tex   m_extCopy, m_small;
         bool  m_fuseEdge = true;
+        float m_extSoft = 0.0f;     // (with the other matcher's depth: how softly surfaces mix at a step -- g_opt.z; 0: one or the other)
+        int   m_extSnap = 2;        // (with the other matcher's depth: how many times its ramps are made steps again -- PSSnap; 0: not)
         bool  m_extLeftOnly = false;   // (the other matcher gives the left eye only: the right is made from it -- PSRight)
         int   m_extDilate = 1;      // (with the other matcher's depth: a thing's outline carried this many texels outward -- PSDilate)
         float m_fuseReach = 1.5f;   // (how far, in texels, its own may be from the other matcher's and still be taken; 0: any distance)

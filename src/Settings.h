@@ -132,6 +132,9 @@ namespace srw::Settings
     // 1: the look-around keeps a plate of what was in sight in earlier pictures and finds how each picture moved (about
     // 3 ms a new picture); 0, as a rule: not. LookPlate.
     bool ReadLookPlate();
+    // 1 (as a rule): with a trained matcher's depth, a step in depth is kept a step (no texels between a thing and
+    // what is behind it) and the two sides are not mixed; 0: as it was, softer and with the in-between. LookEdges.
+    bool ReadLookEdges();
     // The trained matcher's model: a file name in the neural folder beside the exe (none: Lite Any Stereo M 512x288.onnx). LookModel.
     std::wstring ReadLookModel();
     void WriteLookModel(const std::wstring& file);

@@ -515,6 +515,9 @@ float4 PSCompose(VSOut i) : SV_Target
     [branch] if (hi4 - lo4 > 0.25)
     {
         cost += 0.5 / 255.0;
+        // (Across a real step the value between the four is on neither surface -- a point hanging in the
+        // space between a thing and what is behind it. It is not one of the choices there.)
+        if (max(max(d00, d10), max(d01, d11)) - min(min(d00, d10), min(d01, d11)) > 1.5) cost = 1e3;
         const float cand[8] = { d00, d10, d01, d11, far4[0], far4[1], far4[2], far4[3] };
         float3 acc = col * 1e-6; float accW = 1e-6, accSeen = 0;
         const float c0 = cost;
@@ -1131,4 +1134,30 @@ float4 PSRightFill(VSOut i) : SV_Target
         if (q > -1000.0) { d = have ? min(d, q) : q; have = true; break; }
     }
     return float4(d, 1, 0, 0);
+}
+
+// ---- A step in depth kept a step -------------------------------------------------
+// A trained matcher's map is small, and made larger its steps become ramps: a
+// row or two of texels neither on the near thing nor on what is behind it, but
+// in the space between. Thrown forward those show as lines hanging between the
+// two. So where there is a real step within two texels, a texel that is on
+// neither side of it is put on the nearer one of the two.
+// (tex1: the disparity. Twice over, for a ramp wider than the window.)
+float4 PSSnap(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    const int w = (int)g_size.x, h = (int)g_size.y;
+    const float4 own = tex1.Load(int3(half * w + p.x, p.y, 0));
+    float lo = own.r, hi = own.r;
+    [unroll] for (int j = -2; j <= 2; ++j)
+    [unroll] for (int k = -2; k <= 2; ++k)
+    {
+        const float v = tex1.Load(int3(InEye(p + int2(k, j), half, w, h), 0)).r;
+        lo = min(lo, v); hi = max(hi, v);
+    }
+    const float span = hi - lo;
+    if (span < 2.0) return own;
+    const float t = (own.r - lo) / span;
+    if (t < 0.25 || t > 0.75) return own;                  // (on one side already, near enough)
+    return float4(t < 0.5 ? lo : hi, own.g, own.b, 0);
 }

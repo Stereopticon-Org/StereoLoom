@@ -28,6 +28,7 @@
 #include "Look_PSShrink.h"
 #include "Look_PSRight.h"
 #include "Look_PSRightFill.h"
+#include "Look_PSSnap.h"
 #include "Look_PSLKSum.h"
 #include "Look_PSLKSolve.h"
 
@@ -62,6 +63,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSShrink,      sizeof(g_Look_PSShrink),      &m_psShrink },
         { g_Look_PSRight,       sizeof(g_Look_PSRight),       &m_psRight },
         { g_Look_PSRightFill,   sizeof(g_Look_PSRightFill),   &m_psRightFill },
+        { g_Look_PSSnap,        sizeof(g_Look_PSSnap),        &m_psSnap },
         { g_Look_PSLKSum,       sizeof(g_Look_PSLKSum),       &m_psLKSum },
         { g_Look_PSLKSolve,     sizeof(g_Look_PSLKSolve),     &m_psLKSolve },
     };
@@ -102,7 +104,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_dsv); SAFE_RELEASE(m_depthTex);
     SAFE_RELEASE(m_disjoint); for (auto& q : m_ts) SAFE_RELEASE(q);
     SAFE_RELEASE(m_raster); SAFE_RELEASE(m_depthOn); SAFE_RELEASE(m_sampler); SAFE_RELEASE(m_cb);
-    SAFE_RELEASE(m_psRight); SAFE_RELEASE(m_psRightFill); SAFE_RELEASE(m_psShrink); SAFE_RELEASE(m_psFillDown); SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
+    SAFE_RELEASE(m_psRight); SAFE_RELEASE(m_psRightFill); SAFE_RELEASE(m_psSnap); SAFE_RELEASE(m_psShrink); SAFE_RELEASE(m_psFillDown); SAFE_RELEASE(m_psPlate); SAFE_RELEASE(m_psUnseen); SAFE_RELEASE(m_psCompose); SAFE_RELEASE(m_psHole); SAFE_RELEASE(m_psSplat);
     SAFE_RELEASE(m_psSpread); SAFE_RELEASE(m_psFine); SAFE_RELEASE(m_psGuide); SAFE_RELEASE(m_psFuse); SAFE_RELEASE(m_psDilate);
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
@@ -230,7 +232,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     cb.ty = view.ty; cb.rho = view.rho; cb.kx = (view.rho - 1.0f) * view.screenW; cb.ky = (view.rho - 1.0f) * view.screenH; cb.only = (float)view.only; for (int q = 0; q < 4; ++q) cb.opt[q] = m_opt[q];
     // (With a trained matcher's depth alone the outlines are where they should be: the search of surfaces a
     // little way off, made for the windows' fat ones, finds next to nothing more -- 0.05 dB -- and is a third of a frame's cost.)
-    if (m_extDisp && m_extStage == 2) cb.opt[0] = 0.0f;
+    if (m_extDisp && m_extStage == 2) { cb.opt[0] = 0.0f; cb.opt[2] = m_extSoft; }   // (... and its outlines are not mixed across: a mix of the two sides of a step is a thing in neither place)
     cb.scale[0] = (float)eyeW / (float)w[0]; cb.scale[1] = (float)eyeH / (float)h[0];
     auto sized = [&](int k) { cb.size[0] = (float)w[k]; cb.size[1] = (float)h[k]; };
 
@@ -291,6 +293,13 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         }
         result[k] = &m_dispB[k];
         if (k == 0 && m_extDisp && m_extStage == 2) m_context->CopyResource(m_dispB[0].tex, m_extDisp);   // (after everything but the making finer)
+        // (Its ramps made steps again: PSSnap, in pairs so the answer is left in B.)
+        if (k == 0 && m_extDisp && m_extStage == 2)
+            for (int it = 0; it < (m_extSnap + 1) / 2; ++it)
+            {
+                Pass(m_psSnap, m_dispA[0], cb, nullptr, m_dispB[0].srv);
+                Pass(m_psSnap, m_dispB[0], cb, nullptr, m_dispA[0].srv);
+            }
         // (... the left eye's only: the right eye's made from it.)
         if (k == 0 && m_extDisp && m_extStage == 2 && m_extLeftOnly)
         {

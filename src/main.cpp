@@ -559,6 +559,7 @@ namespace
         ID3D11Texture2D* neuralTex = nullptr; ID3D11Texture2D* neuralStage = nullptr;
         bool         lookLive = true, lookPaint = true;   // (Settings LookLive: the trained matcher on every picture, not only one that stays; LookPaint: a painted background for a picture that stays)
         bool         lookPlate = false;     // (Settings LookPlate: the plate of earlier pictures kept, and the motion found for it)
+        bool         lookEdges = true;      // (Settings LookEdges: steps in depth kept steps)
         bool         neuralCopying = false; unsigned neuralCopySerial = 0, neuralDepthSerial = 0; int neuralCopyW = 0, neuralCopyH = 0;
         double       neuralMs = 0.0; int neuralCount = 0; ULONGLONG neuralLogTick = 0;
         ID3D11ShaderResourceView* layerSrv = nullptr; unsigned layerAsked = 0;   // (the painted background in use; the picture one was last asked for)
@@ -10031,6 +10032,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     // (Another model chosen: the matcher begun again with it, and the picture handed over afresh.)
                     app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint();
                     { const bool pl = Settings::ReadLookPlate(); if (pl != app.lookPlate) { app.lookPlate = pl; app.look.SetPlate(pl); } }
+                    { const bool ed = Settings::ReadLookEdges(); if (ed != app.lookEdges) { app.lookEdges = ed; app.look.SetExternalSnap(ed ? 2 : 0); app.look.SetExternalSoft(ed ? 0.0f : 0.01f); } }
                     const std::wstring lm = Settings::ReadLookModel();
                     if (lm != app.lookModel && !app.neural.Busy())
                     {
