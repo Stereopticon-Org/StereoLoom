@@ -74,19 +74,32 @@ namespace srw
         // Where the time goes, smoothed, in ms: making the inputs, the model itself, the whole of an answer.
         void Times(double& prep, double& run, double& all) { std::lock_guard<std::mutex> g(m_lock); prep = m_tPrep; run = m_tRun; all = m_tAll; }
         bool PainterThere() const { return m_painter; }
+        // Every picture the matcher answers painted, when the painter is free for it (a moving picture's too).
+        void SetAutoPaint(bool on) { m_autoPaint = on; }
         bool RequestLayer(unsigned serial, int mapW);
         // ... and taken, once: n x n texels of four floats -- red, green, blue
         // linear, and the background's disparity in the map's texels -- as
         // LookAround::SetLayer takes it.
         bool TakeLayer(std::vector<float>& rgba, int& n, unsigned& serial, double& ms);
 
+        // The matcher's last answered picture, as the painter is given it.
+        struct Shot
+        {
+            std::vector<uint8_t> px; int eyeW = 0, eyeH = 0;        // both eyes side by side, RGBA
+            std::vector<float> disp[2]; int w = 0, h = 0;           // each eye's disparity, in the model's pixels (the right may be empty)
+            unsigned serial = 0; bool have = false;
+        };
+
     private:
+        void PaintRun();
         void Run();
         struct Job { std::vector<uint8_t> px; int eyeW = 0, eyeH = 0, mapW = 0, mapH = 0, width = 736; float aspect = 1.0f; unsigned serial = 0; };
 
         std::wstring m_model, m_paintModel;
         bool m_painter = false, m_paintGpu = false;
         std::thread m_thread;
+        std::thread m_paintThread; std::mutex m_paintLock; std::condition_variable m_paintWake;   // (the painter's: m_shot, the layer and what is asked of it are under m_paintLock)
+        Shot m_shot; bool m_shotNew = false; int m_shotMapW = 0; std::atomic<bool> m_autoPaint{ false };
         std::mutex m_lock;
         std::condition_variable m_wake;
         bool m_quit = false, m_haveJob = false, m_haveResult = false;

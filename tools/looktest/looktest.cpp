@@ -125,6 +125,14 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
                 for (int k = 0; k < 3000 && !neural.TakeLayer(lay, ln, ls, lms); ++k) { if (!neural.PainterThere()) break; Sleep(20); }
                 if (ln <= 0) { fwprintf(stderr, L"the painter gave nothing\n"); return 1; }
                 wprintf(L"background painted in %.0f ms (%dx%d)\n", lms, ln, ln);
+                // (... and twice more, for what it takes once it is loaded.)
+                for (int again = 0; again < 2; ++again)
+                {
+                    if (!neural.RequestLayer(1u, mw)) break;
+                    std::vector<float> l2; int n2 = 0; unsigned s2 = 0; double m2 = 0;
+                    for (int k = 0; k < 3000 && !neural.TakeLayer(l2, n2, s2, m2); ++k) Sleep(5);
+                    wprintf(L"   again: %.0f ms\n", m2);
+                }
                 D3D11_TEXTURE2D_DESC ld{};
                 ld.Width = (UINT)ln; ld.Height = (UINT)ln; ld.MipLevels = 1; ld.ArraySize = 1; ld.SampleDesc.Count = 1;
                 ld.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; ld.Usage = D3D11_USAGE_DEFAULT; ld.BindFlags = D3D11_BIND_SHADER_RESOURCE;

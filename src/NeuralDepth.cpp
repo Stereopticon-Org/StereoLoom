@@ -60,12 +60,7 @@ namespace
     }
 
     // What the thread keeps of the picture last answered, for the painter.
-    struct Last
-    {
-        std::vector<uint8_t> px; int eyeW = 0, eyeH = 0;        // both eyes side by side, RGBA
-        std::vector<float> disp[2]; int w = 0, h = 0;           // each eye's disparity, in the model's pixels
-        unsigned serial = 0; bool have = false;
-    };
+    typedef srw::NeuralDepth::Shot Last;
 
     float Bilinear(const std::vector<float>& a, int w, int h, float x, float y)
     {
@@ -78,23 +73,22 @@ namespace
     // The largest (or the smallest) within r texels, along rows then columns.
     void Spread(std::vector<float>& a, int n, int r, bool largest)
     {
-        std::vector<float> t((size_t)n * n);
+        // (Each row, then each column: the largest of a window slid along it, kept as a queue of the
+        // texels that could still be it -- a few steps a texel however wide the window.)
+        std::vector<float> line(n), res(n); std::vector<int> q(n);
         for (int pass = 0; pass < 2; ++pass)
-        {
-            for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x)
+            for (int i = 0; i < n; ++i)
             {
-                float v = a[(size_t)y * n + x];
-                for (int k = -r; k <= r; ++k)
+                for (int k = 0; k < n; ++k) { const float v = pass == 0 ? a[(size_t)i * n + k] : a[(size_t)k * n + i]; line[k] = largest ? v : -v; }
+                int head = 0, tail = 0, next = 0;
+                for (int k = 0; k < n; ++k)
                 {
-                    const int q = pass == 0 ? x + k : y + k;
-                    if (q < 0 || q >= n) continue;
-                    const float u = pass == 0 ? a[(size_t)y * n + q] : a[(size_t)q * n + x];
-                    v = largest ? (std::max)(v, u) : (std::min)(v, u);
+                    for (; next < n && next <= k + r; ++next) { while (tail > head && line[q[tail - 1]] <= line[next]) --tail; q[tail++] = next; }
+                    while (q[head] < k - r) ++head;
+                    res[k] = line[q[head]];
                 }
-                t[(size_t)y * n + x] = v;
+                for (int k = 0; k < n; ++k) { const float v = largest ? res[k] : -res[k]; if (pass == 0) a[(size_t)i * n + k] = v; else a[(size_t)k * n + i] = v; }
             }
-            a.swap(t);
-        }
     }
 
     // Values spread into where there are none (wgt 0) from where there are: made
@@ -311,6 +305,7 @@ bool NeuralDepth::Start(const std::wstring& exeDir, const std::wstring& modelFil
     m_quit = false; m_failed = false; m_fixW = 0; m_fixH = 0;
     m_haveJob = false; m_haveResult = false; m_wantLayer = false; m_haveLayer = false;
     m_thread = std::thread([this] { Run(); });
+    if (m_painter) m_paintThread = std::thread([this] { PaintRun(); });
     return true;
 #else
     (void)exeDir; (void)modelFile;
@@ -325,6 +320,9 @@ void NeuralDepth::Shutdown()
         m_quit = true;
     }
     m_wake.notify_all();
+    { std::lock_guard<std::mutex> g(m_paintLock); }
+    m_paintWake.notify_all();
+    if (m_paintThread.joinable()) m_paintThread.join();
     if (m_thread.joinable()) m_thread.join();
     m_ready = false; m_busy = false;
 }
@@ -365,17 +363,17 @@ bool NeuralDepth::RequestLayer(unsigned serial, int mapW)
 {
     if (!m_painter || !m_ready.load() || mapW < 8) return false;
     {
-        std::lock_guard<std::mutex> g(m_lock);
+        std::lock_guard<std::mutex> g(m_paintLock);
         if (m_wantLayer) return false;
         m_wantLayer = true; m_layerSerial = serial; m_layerMapW = mapW;
     }
-    m_wake.notify_all();
+    m_paintWake.notify_all();
     return true;
 }
 
 bool NeuralDepth::TakeLayer(std::vector<float>& rgba, int& n, unsigned& serial, double& ms)
 {
-    std::lock_guard<std::mutex> g(m_lock);
+    std::lock_guard<std::mutex> g(m_paintLock);
     if (!m_haveLayer) return false;
     rgba.swap(m_layer); n = m_layerN; serial = m_layerDoneSerial; ms = m_layerMs;
     m_haveLayer = false;
@@ -410,49 +408,15 @@ void NeuralDepth::Run()
         if (m_fixW.load()) Log("NeuralDepth: model loaded; it runs at %dx%d", m_fixW.load(), m_fixH.load());
         else               Log("NeuralDepth: model loaded; it runs at any size");
 
-        // (The painter: on the processor -- it does not run on DirectML -- and made when first asked for.)
-        std::unique_ptr<Ort::Session> lama;
-        Last last;
 
         for (;;)
         {
-            Job job; bool doJob = false, doLayer = false; unsigned layerSerial = 0; int layerMapW = 0;
+            Job job;
             {
                 std::unique_lock<std::mutex> g(m_lock);
-                m_wake.wait(g, [this] { return m_quit || m_haveJob || m_wantLayer; });
+                m_wake.wait(g, [this] { return m_quit || m_haveJob; });
                 if (m_quit) return;
-                if (m_haveJob) { job = std::move(m_job); m_haveJob = false; doJob = true; }
-                else { doLayer = true; layerSerial = m_layerSerial; layerMapW = m_layerMapW; }
-            }
-            if (doLayer)
-            {
-                const auto t0 = std::chrono::steady_clock::now();
-                std::vector<float> layer; int n = 0; bool made = false;
-                if (last.have && last.serial == layerSerial)
-                {
-                    try
-                    {
-                        if (!lama)
-                        {
-                            Ort::SessionOptions cpu;
-                            if (m_paintGpu) { cpu.DisableMemPattern(); cpu.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL); Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(cpu, 0)); }
-                            cpu.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-                            cpu.SetIntraOpNumThreads((int)(std::max)(2u, std::thread::hardware_concurrency() / 2));
-                            lama = std::make_unique<Ort::Session>(env, m_paintModel.c_str(), cpu);
-                            Log("NeuralDepth: painter loaded (%s)", m_paintGpu ? "MI-GAN, on the graphics card" : "LaMa, on the processor");
-                        }
-                        BuildLayer(last, *lama, layerMapW, layer, n);
-                        made = true;
-                    }
-                    catch (const std::exception& e) { Log("NeuralDepth: the painter failed: %s", e.what()); m_painter = false; }
-                }
-                {
-                    std::lock_guard<std::mutex> g(m_lock);
-                    m_wantLayer = false;
-                    if (made) { m_layer.swap(layer); m_layerN = n; m_layerDoneSerial = layerSerial; m_haveLayer = true;
-                                m_layerMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
-                }
-                continue;
+                job = std::move(m_job); m_haveJob = false;
             }
             const auto t0 = std::chrono::steady_clock::now();
             int w = 0, h = 0; NetSize(job.aspect, job.width, w, h);
@@ -498,12 +462,14 @@ void NeuralDepth::Run()
                         o[0] = ToHalf(v * k); o[1] = one;
                     }
             const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-            // (Kept for the painter, should this picture stay.)
+            // (Handed to the painter's thread: the picture and its depth.)
             if (m_painter)
             {
-                last.px.swap(job.px); last.eyeW = job.eyeW; last.eyeH = job.eyeH; last.disp[0].swap(disp[0]); last.disp[1].swap(disp[1]);
-                last.w = w; last.h = h; last.serial = job.serial; last.have = true;
+                std::lock_guard<std::mutex> g(m_paintLock);
+                m_shot.px.swap(job.px); m_shot.eyeW = job.eyeW; m_shot.eyeH = job.eyeH; m_shot.disp[0].swap(disp[0]); m_shot.disp[1].swap(disp[1]);
+                m_shot.w = w; m_shot.h = h; m_shot.serial = job.serial; m_shot.have = true; m_shotNew = true; m_shotMapW = job.mapW;
             }
+            if (m_painter) m_paintWake.notify_all();
             {
                 std::lock_guard<std::mutex> g(m_lock);
                 m_result.swap(res); m_resW = job.mapW; m_resH = job.mapH; m_resSerial = job.serial; m_resMs = ms; m_haveResult = true;
@@ -521,5 +487,59 @@ void NeuralDepth::Run()
         Log("NeuralDepth: failed");
     }
     m_failed = true; m_ready = false; m_busy = false;
+#endif
+}
+
+// The painter's thread: a session of its own, and each picture the matcher has answered painted when it
+// is free for it (m_autoPaint), or the one asked for (RequestLayer).
+void NeuralDepth::PaintRun()
+{
+#ifdef SRLOOM_NEURAL
+    try
+    {
+        // (Not before the matcher's thread has the runtime up.)
+        for (;;)
+        {
+            if (m_ready.load()) break;
+            { std::lock_guard<std::mutex> g(m_lock); if (m_quit) return; }
+            if (m_failed.load()) return;
+            Sleep(20);
+        }
+        Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "srloom-paint");
+        Ort::SessionOptions so;
+        if (m_paintGpu) { so.DisableMemPattern(); so.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL); Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(so, 0)); }
+        so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        so.SetIntraOpNumThreads((int)(std::max)(2u, std::thread::hardware_concurrency() / 2));
+        std::unique_ptr<Ort::Session> painter;
+        for (;;)
+        {
+            Shot shot; int mapW = 0;
+            {
+                std::unique_lock<std::mutex> g(m_paintLock);
+                m_paintWake.wait_for(g, std::chrono::milliseconds(100), [this] {
+                    return m_shot.have && ((m_autoPaint.load() && m_shotNew) || (m_wantLayer && m_layerSerial == m_shot.serial)); });
+                { std::lock_guard<std::mutex> q(m_lock); if (m_quit) return; }
+                const bool asked = m_wantLayer && m_shot.have && m_layerSerial == m_shot.serial;
+                if (!(m_shot.have && ((m_autoPaint.load() && m_shotNew) || asked))) { if (m_wantLayer && m_shot.have && m_layerSerial != m_shot.serial) m_wantLayer = false; continue; }
+                shot = m_shot; m_shotNew = false; mapW = asked ? m_layerMapW : m_shotMapW; m_wantLayer = false;
+            }
+            const auto t0 = std::chrono::steady_clock::now();
+            if (!painter)
+            {
+                painter = std::make_unique<Ort::Session>(env, m_paintModel.c_str(), so);
+                Log("NeuralDepth: painter loaded (%s)", m_paintGpu ? "MI-GAN, on the graphics card" : "LaMa, on the processor");
+            }
+            std::vector<float> layer; int n = 0;
+            BuildLayer(shot, *painter, mapW, layer, n);
+            {
+                std::lock_guard<std::mutex> g(m_paintLock);
+                m_layer.swap(layer); m_layerN = n; m_layerDoneSerial = shot.serial; m_haveLayer = true;
+                m_layerMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            }
+        }
+    }
+    catch (const std::exception& e) { Log("NeuralDepth: the painter failed: %s", e.what()); }
+    catch (...) { Log("NeuralDepth: the painter failed"); }
+    m_painter = false;
 #endif
 }

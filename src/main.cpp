@@ -562,6 +562,7 @@ namespace
         bool         lookEdges = true;      // (Settings LookEdges: steps in depth kept steps)
         bool         neuralCopying = false; unsigned neuralCopySerial = 0, neuralDepthSerial = 0; int neuralCopyW = 0, neuralCopyH = 0;
         double       neuralMs = 0.0; int neuralCount = 0; ULONGLONG neuralLogTick = 0;
+        double       paintMs = 0.0; int paintCount = 0;   // (the painter's answers since the last log line, and about how long each took)
         ID3D11ShaderResourceView* layerSrv = nullptr; unsigned layerAsked = 0;   // (the painted background in use; the picture one was last asked for)
         // Auto Stereo (region weaving). While autoStereo is on, the weave
         // window covers the SR display (Fullscreen mode, click-through) but
@@ -8067,7 +8068,8 @@ namespace
                     {
                         app.neuralTick = GetTickCount64();
                         if (app.neuralActive && !app.lookLive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; }
-                        if (app.layerSrv) { app.look.SetLayer(nullptr); SAFE_RELEASE(app.layerSrv); }
+                        // (Live, the painter follows along: the layer stands until the next one comes.)
+                        if (app.layerSrv && !(app.lookLive && app.lookPaint)) { app.look.SetLayer(nullptr); SAFE_RELEASE(app.layerSrv); }
                         app.layerAsked = 0;
                     }
                     if (!app.lookNeural && app.neuralActive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; app.neuralSubmitted = 0; }
@@ -8135,7 +8137,8 @@ namespace
                         if (app.neuralCount && nowMs - app.neuralLogTick > 5000)
                         {
                             double tp = 0, tr = 0, ta = 0; app.neural.Times(tp, tr, ta);
-                            Log("NeuralDepth: %d answers in the last five seconds, about %.0f ms each (inputs %.0f, model %.0f)%s", app.neuralCount, app.neuralMs, tp, tr, app.lookLive ? " (live)" : "");
+                            Log("NeuralDepth: %d answers in the last five seconds, about %.0f ms each (inputs %.0f, model %.0f)%s; %d backgrounds painted, about %.0f ms each", app.neuralCount, app.neuralMs, tp, tr, app.lookLive ? " (live)" : "", app.paintCount, app.paintMs);
+                            app.paintCount = 0;
                             app.neuralCount = 0; app.neuralLogTick = nowMs;
                         }
                         // The painted background, for a picture that has stayed and has its depth.
@@ -8145,7 +8148,7 @@ namespace
                             if (app.neural.RequestLayer(app.lookSerial, mw)) app.layerAsked = app.lookSerial;
                         }
                         std::vector<float> lay; int ln = 0; unsigned ls = 0; double lms = 0.0;
-                        if (app.neural.TakeLayer(lay, ln, ls, lms) && ls == app.lookSerial && app.lookPaint)
+                        if (app.neural.TakeLayer(lay, ln, ls, lms) && (app.lookLive || ls == app.lookSerial) && app.lookPaint)
                         {
                             D3D11_TEXTURE2D_DESC ld{};
                             ld.Width = (UINT)ln; ld.Height = (UINT)ln; ld.MipLevels = 1; ld.ArraySize = 1; ld.SampleDesc.Count = 1;
@@ -8158,7 +8161,8 @@ namespace
                                 app.renderer.Device()->CreateShaderResourceView(lt, nullptr, &app.layerSrv);
                                 lt->Release();
                                 app.look.SetLayer(app.layerSrv);
-                                Log("NeuralDepth: picture %u, background painted in %.0f ms", ls, lms);
+                                if (!app.lookLive) Log("NeuralDepth: picture %u, background painted in %.0f ms", ls, lms);
+                                app.paintMs += (lms - app.paintMs) * 0.2; ++app.paintCount;
                             }
                         }
                     }
@@ -10032,6 +10036,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     app.lookNeural = ld != 0;
                     // (Another model chosen: the matcher begun again with it, and the picture handed over afresh.)
                     app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint();
+                    app.neural.SetAutoPaint(app.lookLive && app.lookPaint);
                     { const bool pl = Settings::ReadLookPlate(); if (pl != app.lookPlate) { app.lookPlate = pl; app.look.SetPlate(pl); } }
                     { const bool ed = Settings::ReadLookEdges(); if (ed != app.lookEdges) { app.lookEdges = ed; app.look.SetExternalSnap(ed ? 2 : 0); } }
                     const std::wstring lm = Settings::ReadLookModel();
@@ -10300,6 +10305,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
         app.look.SetExternalStage(app.lookDepth == 2 ? 2 : 4);
         app.look.SetExternalLeftOnly(app.lookDepth == 2); app.neural.SetLeftOnly(app.lookDepth == 2);   // (the trained matcher alone: the left eye asked for, the right made from it)
         app.lookPlate = Settings::ReadLookPlate(); app.look.SetPlate(app.lookPlate);
+        app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint(); app.neural.SetAutoPaint(app.lookLive && app.lookPaint);
         app.neural.Start(dir, app.lookModel);
     }
     app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
