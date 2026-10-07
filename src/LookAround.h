@@ -148,7 +148,7 @@ namespace srw
         float m_fuseBias = 0.5f;    // (4: its own is taken where it costs less than this share of the other's)
         Tex   m_extCopy, m_small;
         bool  m_fuseEdge = true;
-        float m_extSoft = 0.0f;     // (with the other matcher's depth: how softly surfaces mix at a step -- g_opt.z; 0: one or the other)
+        float m_extSoft = 0.01f;    // (with the other matcher's depth, g_opt.z: under 0 an outline is drawn as a contour through the texels, one side or the other; 0 the cheapest of the four; over 0 the surfaces mixed that softly)
         int   m_extSnap = 2;        // (with the other matcher's depth: how many times its ramps are made steps again -- PSSnap; 0: not)
         bool  m_extLeftOnly = false;   // (the other matcher gives the left eye only: the right is made from it -- PSRight)
         int   m_extDilate = 1;      // (with the other matcher's depth: a thing's outline carried this many texels outward -- PSDilate)

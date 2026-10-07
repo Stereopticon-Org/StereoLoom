@@ -512,6 +512,29 @@ float4 PSCompose(VSOut i) : SV_Target
             lo4 = min(lo4, far4[n]); hi4 = max(hi4, far4[n]);
         }
     }
+    // (g_opt.z under 0, with a trained matcher's depth: at a step the four are two surfaces, a near and a
+    // far. Which of the two this pixel is on is read off the four as a contour is -- the share of the
+    // near ones about it, by how close each is -- so an outline runs smoothly through the texels, not
+    // round their corners; and it is drawn a little to the near side of the middle, so a pixel in doubt
+    // goes to the background. The eyes' agreement overrules it only where it is plain.)
+    {
+        const float c4lo = min(min(d00, d10), min(d01, d11)), c4hi = max(max(d00, d10), max(d01, d11));
+        [branch] if (g_opt.z < -0.5 && c4hi - c4lo > 1.5)
+        {
+            const float mid = 0.5 * (c4lo + c4hi);
+            const float w4[4] = { (1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y };
+            const float d4[4] = { d00, d10, d01, d11 };
+            float a = 0.0, dn = 0.0, df = 0.0;
+            [unroll] for (int k = 0; k < 4; ++k) { if (d4[k] > mid) { a += w4[k]; dn += w4[k] * d4[k]; } else df += w4[k] * d4[k]; }
+            dn = a > 1e-4 ? dn / a : c4hi; df = a < 1.0 - 1e-4 ? df / (1.0 - a) : c4lo;
+            float3 cN, cF; float kN, kF, sN, sF;
+            Try(dn, lo, full, t, w, h, cN, kN, sN);
+            Try(df, lo, full, t, w, h, cF, kF, sF);
+            const float m = 8.0 / 255.0;
+            const bool nearSide = a > 0.6 ? (kN <= kF + m) : (kN + m < kF);
+            return float4(nearSide ? cN : cF, (nearSide ? sN : sF) > 0.5 ? 1.0 : 0.0);
+        }
+    }
     [branch] if (hi4 - lo4 > 0.25)
     {
         cost += 0.5 / 255.0;
@@ -1159,5 +1182,5 @@ float4 PSSnap(VSOut i) : SV_Target
     if (span < 2.0) return own;
     const float t = (own.r - lo) / span;
     if (t < 0.25 || t > 0.75) return own;                  // (on one side already, near enough)
-    return float4(t < 0.5 ? lo : hi, own.g, own.b, 0);
+    return float4(lo, own.g, own.b, 0);                    // (to the far side: a texel in doubt is background)
 }

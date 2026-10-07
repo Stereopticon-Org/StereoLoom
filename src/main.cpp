@@ -8162,7 +8162,8 @@ namespace
                             }
                         }
                     }
-                    if (!app.lookPaint && app.layerSrv) { app.look.SetLayer(nullptr); SAFE_RELEASE(app.layerSrv); }
+                    // (Painting off: the layer dropped, and the picture counted as not asked for -- so that on again paints it.)
+                    if (!app.lookPaint) { if (app.layerSrv) { app.look.SetLayer(nullptr); SAFE_RELEASE(app.layerSrv); } app.layerAsked = 0; }
                     if (app.look.Render(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), v, fresh))
                     {
                         app.weaver.SetInputView(app.look.OutputSRV(), app.look.OutputPerEyeWidth(), app.look.OutputHeight(), app.look.OutputFormat());
@@ -10032,7 +10033,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     // (Another model chosen: the matcher begun again with it, and the picture handed over afresh.)
                     app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint();
                     { const bool pl = Settings::ReadLookPlate(); if (pl != app.lookPlate) { app.lookPlate = pl; app.look.SetPlate(pl); } }
-                    { const bool ed = Settings::ReadLookEdges(); if (ed != app.lookEdges) { app.lookEdges = ed; app.look.SetExternalSnap(ed ? 2 : 0); app.look.SetExternalSoft(ed ? 0.0f : 0.01f); } }
+                    { const bool ed = Settings::ReadLookEdges(); if (ed != app.lookEdges) { app.lookEdges = ed; app.look.SetExternalSnap(ed ? 2 : 0); } }
                     const std::wstring lm = Settings::ReadLookModel();
                     if (lm != app.lookModel && !app.neural.Busy())
                     {

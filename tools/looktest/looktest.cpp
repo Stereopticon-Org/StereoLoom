@@ -82,6 +82,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (const wchar_t* ly = _wgetenv(L"LOOKTEST_LAYER")) look.SetLayer(LoadLayer(dev, look, ly, ew, eh));
     if (const wchar_t* sn = _wgetenv(L"LOOKTEST_SNAP")) look.SetExternalSnap(_wtoi(sn));
     if (const wchar_t* sf = _wgetenv(L"LOOKTEST_SOFT")) look.SetExternalSoft((float)_wtof(sf));
+    if (const wchar_t* xd = _wgetenv(L"LOOKTEST_DILATE")) look.SetExternalDilate(_wtoi(xd));
     if (_wgetenv(L"LOOKTEST_NOPLATE")) look.SetPlate(false);   // (no plate kept: what it costs)
     if (_wgetenv(L"LOOKTEST_MARKFILL")) look.SetMarkFill(true);   // (what filled each unseen pixel, by colour: yellow the painted background, magenta the plate, blue the far side, green the mirrored row)
     if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
