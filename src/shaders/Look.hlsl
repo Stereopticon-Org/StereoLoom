@@ -512,27 +512,46 @@ float4 PSCompose(VSOut i) : SV_Target
             lo4 = min(lo4, far4[n]); hi4 = max(hi4, far4[n]);
         }
     }
-    // (g_opt.z under 0, with a trained matcher's depth: at a step the four are two surfaces, a near and a
-    // far. Which of the two this pixel is on is read off the four as a contour is -- the share of the
-    // near ones about it, by how close each is -- so an outline runs smoothly through the texels, not
-    // round their corners; and it is drawn a little to the near side of the middle, so a pixel in doubt
-    // goes to the background. The eyes' agreement overrules it only where it is plain.)
+    // (g_opt.z under 0, with a trained matcher's depth: the edge strip. The map is a texel fat at an
+    // outline -- so within two texels of a step, a pixel the map calls NEAR may be the thing or may be
+    // what is behind it, and a pixel on the outline itself is some of each. Which, and how much, is read
+    // off the picture: the pixel's colour set between the thing's colour a little way in and the
+    // background's a little way out is its share of the thing (a matte). The thing's share is kept, and
+    // the background's share is replaced by the background where it now is -- so an outline is soft and
+    // lies where the picture has it, not where the map's texels do.)
+    [branch] if (g_opt.z < -0.5 && reach > 0)
     {
-        const float c4lo = min(min(d00, d10), min(d01, d11)), c4hi = max(max(d00, d10), max(d01, d11));
-        [branch] if (g_opt.z < -0.5 && c4hi - c4lo > 1.5)
+        const float nearD = hi4, farD = lo4;
+        [branch] if (nearD - farD > 1.5 && dBi > 0.5 * (nearD + farD))
         {
-            const float mid = 0.5 * (c4lo + c4hi);
-            const float w4[4] = { (1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y };
-            const float d4[4] = { d00, d10, d01, d11 };
-            float a = 0.0, dn = 0.0, df = 0.0;
-            [unroll] for (int k = 0; k < 4; ++k) { if (d4[k] > mid) { a += w4[k]; dn += w4[k] * d4[k]; } else df += w4[k] * d4[k]; }
-            dn = a > 1e-4 ? dn / a : c4hi; df = a < 1.0 - 1e-4 ? df / (1.0 - a) : c4lo;
-            float3 cN, cF; float kN, kF, sN, sF;
-            Try(dn, lo, full, t, w, h, cN, kN, sN);
-            Try(df, lo, full, t, w, h, cF, kF, sF);
-            const float m = 8.0 / 255.0;
-            const bool nearSide = a > 0.6 ? (kN <= kF + m) : (kN + m < kF);
-            return float4(nearSide ? cN : cF, (nearSide ? sN : sF) > 0.5 ? 1.0 : 0.0);
+            // (Towards the thing: up the map's slope, from the four a little way off.)
+            float2 n = float2(far4[1] - far4[0], far4[3] - far4[2]);
+            const float nl = length(n);
+            [branch] if (nl > 0.5)
+            {
+                n /= nl;
+                const int r = abs(t) <= abs(t - 1.0) ? 0 : 1;                  // (the eye nearer the new place)
+                const float2 pS = full + dBi * Move((float)r, t, full / g_size) * g_scale;
+                const float2 pFg = pS + n * 2.0 * g_scale, pBg = pS - n * 3.0 * g_scale;
+                const float3 C = tex0.SampleLevel(sampLinear, float2(((float)r * g_size.x + clamp(pS.x, 0.5, g_size.x - 0.5)) / (2.0 * g_size.x), pS.y / g_size.y), 0).rgb;
+                const float3 F = tex0.SampleLevel(sampLinear, float2(((float)r * g_size.x + clamp(pFg.x, 0.5, g_size.x - 0.5)) / (2.0 * g_size.x), pFg.y / g_size.y), 0).rgb;
+                const float3 B = tex0.SampleLevel(sampLinear, float2(((float)r * g_size.x + clamp(pBg.x, 0.5, g_size.x - 0.5)) / (2.0 * g_size.x), pBg.y / g_size.y), 0).rgb;
+                const float3 fb = sqrt(max(F, 0.0)) - sqrt(max(B, 0.0));
+                const float den = dot(fb, fb);
+                // (The two alike in colour: nothing to read. The map's word stands.)
+                const float alpha = den > 0.004 ? saturate(dot(sqrt(max(C, 0.0)) - sqrt(max(B, 0.0)), fb) / den) : 1.0;
+                [branch] if (alpha < 0.97)
+                {
+                    float3 cFar; float kFar, sFar;
+                    Try(farD, lo, full, t, w, h, cFar, kFar, sFar);
+                    // (A plain mix by the share. Taking the old background out of the pixel and putting the new in --
+                    // col + (1 - alpha)(cFar - B) -- is the truer sum, and where the share is misjudged it gave
+                    // specks of false colour.)
+                    const float a2 = smoothstep(0.2, 0.8, alpha);
+                    const float3 mixed = lerp(cFar, col, a2);
+                    return float4(mixed, (alpha > 0.5 ? seen : sFar) > 0.5 ? 1.0 : 0.0);
+                }
+            }
         }
     }
     [branch] if (hi4 - lo4 > 0.25)
@@ -546,7 +565,7 @@ float4 PSCompose(VSOut i) : SV_Target
         const float c0 = cost;
         float cmin = cost; float3 cbest = col; float sbest = seen;
         float cs[8]; float3 cc[8]; float ss[8];
-        [loop] for (int k = 0; k < (reach > 0 ? 8 : 4); ++k)
+        [loop] for (int k = 0; k < (reach > 0 && g_opt.z > -0.5 ? 8 : 4); ++k)
         {
             cs[k] = 1e3; cc[k] = 0; ss[k] = 0;
             // (One the bilinear value or an earlier one already stands for is not tried again.)
@@ -562,12 +581,13 @@ float4 PSCompose(VSOut i) : SV_Target
         }
         // (g_opt.z: not one of them but a mix, by how well each does -- a soft edge
         // where two do nearly as well.)
-        [branch] if (g_opt.z > 0.0)
+        const float soft = g_opt.z < -0.5 ? 0.01 : g_opt.z;   // (with the edge strip: the rest as softly as before)
+        [branch] if (soft > 0.0)
         {
-            float wS = exp(-(c0 - cmin) / g_opt.z); acc = col * wS; accW = wS; accSeen = min(seen, 1.0) * wS;
-            [loop] for (int k2 = 0; k2 < (reach > 0 ? 8 : 4); ++k2)
+            float wS = exp(-(c0 - cmin) / soft); acc = col * wS; accW = wS; accSeen = min(seen, 1.0) * wS;
+            [loop] for (int k2 = 0; k2 < (reach > 0 && g_opt.z > -0.5 ? 8 : 4); ++k2)
             {
-                const float wk = cs[k2] < 100.0 ? exp(-(cs[k2] - cmin) / g_opt.z) : 0.0;
+                const float wk = cs[k2] < 100.0 ? exp(-(cs[k2] - cmin) / soft) : 0.0;
                 acc += cc[k2] * wk; accW += wk; accSeen += min(ss[k2], 1.0) * wk;
             }
             return float4(acc / accW, accSeen / accW > 0.5 ? 1.0 : 0.0);

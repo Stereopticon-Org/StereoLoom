@@ -288,7 +288,12 @@ bool NeuralDepth::Start(const std::wstring& exeDir, const std::wstring& modelFil
     m_model = exeDir + L"\\neural\\" + (modelFile.empty() ? std::wstring(L"Lite Any Stereo M 512x288.onnx") : modelFile);
     // (A model chosen once and since taken away: the usual one.)
     if (!Exists(m_model)) m_model = exeDir + L"\\neural\\Lite Any Stereo M 512x288.onnx";
-    if (!Exists(exeDir + L"\\onnxruntime.dll") || !Exists(exeDir + L"\\DirectML.dll") || !Exists(m_model))
+    // (TensorRT, on an NVIDIA card: where neural\trt holds ONNX Runtime's GPU build with its TensorRT and
+    // CUDA libraries, that runtime is the one loaded -- about half as long again as quick as DirectML with
+    // the half-precision models. One runtime to a process: decided the first time. SRLOOM_NOTRT=1: not.)
+    m_trtDir = exeDir + L"\\neural\\trt";
+    { wchar_t no[8] = {}; m_trt = Exists(m_trtDir + L"\\onnxruntime.dll") && Exists(m_trtDir + L"\\onnxruntime_providers_tensorrt.dll") && GetEnvironmentVariableW(L"SRLOOM_NOTRT", no, 8) == 0; }
+    if (!(m_trt || (Exists(exeDir + L"\\onnxruntime.dll") && Exists(exeDir + L"\\DirectML.dll"))) || !Exists(m_model))
     {
         Log("NeuralDepth: not there (onnxruntime.dll and DirectML.dll beside the exe, and a model in the neural folder, are all needed)");
         return false;
@@ -385,13 +390,47 @@ void NeuralDepth::Run()
 #ifdef SRLOOM_NEURAL
     try
     {
+        if (m_trt)
+        {
+            // (Its own folder first for everything it loads; and it, by its full path, before anything asks for
+            // onnxruntime.dll by name -- the name then means this one.)
+            SetDllDirectoryW(m_trtDir.c_str());
+            if (!LoadLibraryExW((m_trtDir + L"\\onnxruntime.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH))
+            {
+                Log("NeuralDepth: the TensorRT runtime would not load (error %lu): DirectML instead", GetLastError());
+                SetDllDirectoryW(nullptr); m_trt = false;
+            }
+        }
         Ort::InitApi();
         Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "srloom");
         Ort::SessionOptions so;
         so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         so.DisableMemPattern();                               // (DirectML asks for both)
         so.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
-        Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(so, 0));
+        if (m_trt)
+        {
+            // (The engine TensorRT makes of a model is kept beside it: a minute or two the first time, a second after.)
+            const std::wstring cacheW = m_trtDir + L"\\cache";
+            CreateDirectoryW(cacheW.c_str(), nullptr);
+            char cache[1024] = {}; WideCharToMultiByte(CP_UTF8, 0, cacheW.c_str(), -1, cache, sizeof(cache) - 1, nullptr, nullptr);
+            const OrtApi& api = Ort::GetApi();
+            OrtTensorRTProviderOptionsV2* trt = nullptr;
+            Ort::ThrowOnError(api.CreateTensorRTProviderOptions(&trt));
+            const char* keys[5] = { "trt_engine_cache_enable", "trt_engine_cache_path", "trt_fp16_enable", "trt_timing_cache_enable", "trt_timing_cache_path" };
+            const char* vals[5] = { "1", cache, "1", "1", cache };
+            OrtStatus* st = api.UpdateTensorRTProviderOptions(trt, keys, vals, 5);
+            if (!st) st = api.SessionOptionsAppendExecutionProvider_TensorRT_V2(so, trt);
+            api.ReleaseTensorRTProviderOptions(trt);
+            Ort::ThrowOnError(st);
+            OrtCUDAProviderOptionsV2* cu = nullptr;
+            Ort::ThrowOnError(api.CreateCUDAProviderOptions(&cu));
+            st = api.SessionOptionsAppendExecutionProvider_CUDA_V2(so, cu);
+            api.ReleaseCUDAProviderOptions(cu);
+            Ort::ThrowOnError(st);
+            Log("NeuralDepth: TensorRT (the first time with a model it builds an engine: a minute or two)");
+        }
+        else
+            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(so, 0));
         Ort::Session session(env, m_model.c_str(), so);
         const Ort::MemoryInfo mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         // (The inputs and the output by the model's own names; and its size, where it has one fixed.)
@@ -507,7 +546,17 @@ void NeuralDepth::PaintRun()
         }
         Ort::Env env(ORT_LOGGING_LEVEL_ERROR, "srloom-paint");
         Ort::SessionOptions so;
-        if (m_paintGpu) { so.DisableMemPattern(); so.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL); Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(so, 0)); }
+        if (m_paintGpu && m_trt)
+        {
+            // (With the TensorRT runtime there is no DirectML: the painter on CUDA.)
+            const OrtApi& api = Ort::GetApi();
+            OrtCUDAProviderOptionsV2* cu = nullptr;
+            Ort::ThrowOnError(api.CreateCUDAProviderOptions(&cu));
+            OrtStatus* st = api.SessionOptionsAppendExecutionProvider_CUDA_V2(so, cu);
+            api.ReleaseCUDAProviderOptions(cu);
+            Ort::ThrowOnError(st);
+        }
+        else if (m_paintGpu) { so.DisableMemPattern(); so.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL); Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(so, 0)); }
         so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         so.SetIntraOpNumThreads((int)(std::max)(2u, std::thread::hardware_concurrency() / 2));
         std::unique_ptr<Ort::Session> painter;

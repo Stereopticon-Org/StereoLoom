@@ -47,6 +47,7 @@ namespace srw
         bool Ready() const { return m_ready.load(); }      // the model is loaded
         bool Busy() const { return m_busy.load(); }        // a picture is being worked on
         bool Failed() const { return m_failed.load(); }
+        bool OnTensorRT() const { return m_trt; }
 
         // The size the model wants its picture at (one eye): its own where it has
         // one fixed; else `width` across and the height by `aspect` (one eye's
@@ -95,7 +96,8 @@ namespace srw
         void Run();
         struct Job { std::vector<uint8_t> px; int eyeW = 0, eyeH = 0, mapW = 0, mapH = 0, width = 736; float aspect = 1.0f; unsigned serial = 0; };
 
-        std::wstring m_model, m_paintModel;
+        std::wstring m_model, m_paintModel, m_trtDir;
+        bool m_trt = false;                 // (the TensorRT runtime in neural\trt is the one in use)
         bool m_painter = false, m_paintGpu = false;
         std::thread m_thread;
         std::thread m_paintThread; std::mutex m_paintLock; std::condition_variable m_paintWake;   // (the painter's: m_shot, the layer and what is asked of it are under m_paintLock)

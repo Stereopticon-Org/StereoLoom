@@ -232,7 +232,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     cb.ty = view.ty; cb.rho = view.rho; cb.kx = (view.rho - 1.0f) * view.screenW; cb.ky = (view.rho - 1.0f) * view.screenH; cb.only = (float)view.only; for (int q = 0; q < 4; ++q) cb.opt[q] = m_opt[q];
     // (With a trained matcher's depth alone the outlines are where they should be: the search of surfaces a
     // little way off, made for the windows' fat ones, finds next to nothing more -- 0.05 dB -- and is a third of a frame's cost.)
-    if (m_extDisp && m_extStage == 2) { cb.opt[0] = 0.0f; cb.opt[2] = m_extSoft; }   // (... and its outlines are not mixed across: a mix of the two sides of a step is a thing in neither place)
+    if (m_extDisp && m_extStage == 2) { cb.opt[0] = m_extSoft < -0.5f ? 2.0f : 0.0f; cb.opt[2] = m_extSoft; }   // (... its outlines by the edge strip where that is on -- the four a little way off are then read, for the far side and the slope -- else not mixed across)
     cb.scale[0] = (float)eyeW / (float)w[0]; cb.scale[1] = (float)eyeH / (float)h[0];
     auto sized = [&](int k) { cb.size[0] = (float)w[k]; cb.size[1] = (float)h[k]; };
 
