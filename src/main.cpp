@@ -563,6 +563,7 @@ namespace
         bool         neuralCopying = false; unsigned neuralCopySerial = 0, neuralDepthSerial = 0; int neuralCopyW = 0, neuralCopyH = 0;
         double       neuralMs = 0.0; int neuralCount = 0; ULONGLONG neuralLogTick = 0;
         double       paintMs = 0.0; int paintCount = 0;   // (the painter's answers since the last log line, and about how long each took)
+        ULONGLONG    lookDiagTick = 0; ID3D11Texture2D* lookDiagStage = nullptr;   // (the look-around's five-second line to the log)
         ID3D11ShaderResourceView* layerSrv = nullptr; unsigned layerAsked = 0;   // (the painted background in use; the picture one was last asked for)
         // Auto Stereo (region weaving). While autoStereo is on, the weave
         // window covers the SR display (Fullscreen mode, click-through) but
@@ -8168,10 +8169,41 @@ namespace
                     }
                     // (Painting off: the layer dropped, and the picture counted as not asked for -- so that on again paints it.)
                     if (!app.lookPaint) { if (app.layerSrv) { app.look.SetLayer(nullptr); SAFE_RELEASE(app.layerSrv); } app.layerAsked = 0; }
-                    if (app.look.Render(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), v, fresh))
+                    const bool lookDrawn = app.look.Render(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), v, fresh);
+                    if (lookDrawn)
                     {
                         app.weaver.SetInputView(app.look.OutputSRV(), app.look.OutputPerEyeWidth(), app.look.OutputHeight(), app.look.OutputFormat());
                         app.lookBound = true;
+                    }
+                    // (Every five seconds, to the log: whether it drew, and how bright the middle of what went in
+                    // and of what came out is -- a black screen then says at once which side of here it is on.)
+                    if (GetTickCount64() - app.lookDiagTick > 5000)
+                    {
+                        app.lookDiagTick = GetTickCount64();
+                        auto middle = [&](ID3D11Texture2D* tex, int eyeW, int eyeH) -> double {
+                            if (!tex) return -1.0;
+                            D3D11_TEXTURE2D_DESC td{}; tex->GetDesc(&td);
+                            D3D11_TEXTURE2D_DESC sd{}; if (app.lookDiagStage) app.lookDiagStage->GetDesc(&sd);
+                            if (!app.lookDiagStage || sd.Format != td.Format)
+                            {
+                                SAFE_RELEASE(app.lookDiagStage);
+                                D3D11_TEXTURE2D_DESC st = td; st.Width = 64; st.Height = 64; st.MipLevels = 1; st.Usage = D3D11_USAGE_STAGING; st.BindFlags = 0; st.CPUAccessFlags = D3D11_CPU_ACCESS_READ; st.MiscFlags = 0;
+                                app.renderer.Device()->CreateTexture2D(&st, nullptr, &app.lookDiagStage);
+                            }
+                            if (!app.lookDiagStage || (td.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS && td.Format != DXGI_FORMAT_R8G8B8A8_UNORM && td.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)) return -2.0;
+                            const UINT x0 = (UINT)(std::max)(0, eyeW / 2 - 32), y0 = (UINT)(std::max)(0, eyeH / 2 - 32);
+                            D3D11_BOX box{ x0, y0, 0, x0 + 64, y0 + 64, 1 };
+                            app.renderer.Context()->CopySubresourceRegion(app.lookDiagStage, 0, 0, 0, 0, tex, 0, &box);
+                            D3D11_MAPPED_SUBRESOURCE m{}; double sum = 0.0;
+                            if (FAILED(app.renderer.Context()->Map(app.lookDiagStage, 0, D3D11_MAP_READ, 0, &m))) return -3.0;
+                            for (int y = 0; y < 64; ++y) { const uint8_t* p = (const uint8_t*)m.pData + (size_t)y * m.RowPitch; for (int x = 0; x < 64; ++x, p += 4) sum += (p[0] + p[1] + p[2]) / 3.0; }
+                            app.renderer.Context()->Unmap(app.lookDiagStage, 0);
+                            return sum / 4096.0;
+                        };
+                        const double in = middle(app.converter.OutputTexture(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight());
+                        const double out = lookDrawn ? middle(app.look.OutputTexture(), app.look.OutputPerEyeWidth(), app.look.OutputHeight()) : -1.0;
+                        Log("LookAround: drew %d; brightness at the middle of the left eye: in %.1f, out %.1f (0 black, 255 white; under 0: could not be read); head %.2f across, %.2f down, nearness %.2f; depth from %s, painted background %s",
+                            lookDrawn ? 1 : 0, in, out, app.lookX, app.lookY, app.lookRho, app.neuralActive ? "the network" : "its own matcher", app.layerSrv ? "in use" : "none");
                     }
                 }
                 else if (app.lookBound)
@@ -10852,7 +10884,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // Stop OpenTrack BEFORE the weaver shuts down its SRContext --
     // the bridge holds an SR::HeadPoseTracker pointing into that context.
     app.openTrack.Disable();
-    app.neural.Shutdown(); SAFE_RELEASE(app.neuralTex); SAFE_RELEASE(app.neuralStage); SAFE_RELEASE(app.layerSrv);
+    app.neural.Shutdown(); SAFE_RELEASE(app.neuralTex); SAFE_RELEASE(app.neuralStage); SAFE_RELEASE(app.layerSrv); SAFE_RELEASE(app.lookDiagStage);
     app.look.Shutdown();
     app.converter.Shutdown();
     app.capture.Shutdown();
