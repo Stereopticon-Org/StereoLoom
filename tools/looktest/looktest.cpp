@@ -375,11 +375,124 @@ static int RunMb(const std::wstring& dir)
     return 0;
 }
 
+// The live path as SR Loom's loop runs it, without SR Loom: the picture made small and read back without
+// waiting, handed to the trained matcher, each answer and each painted background taken as it comes, a
+// new view drawn every loop -- for some seconds, with the head swaying. Prints how many answers and
+// backgrounds came, how long each took, and how bright the output is (a black or broken output shows as
+// a brightness far from the picture's own).
+static int RunLive(const wchar_t* file)
+{
+    std::vector<uint8_t> px; UINT W = 0, H = 0;
+    if (!LoadRGBA(file, px, W, H)) { fwprintf(stderr, L"can't load %s\n", file); return 1; }
+    const int ew = (int)W / 2, eh = (int)H;
+    ID3D11Device* dev = nullptr; ID3D11DeviceContext* ctx = nullptr;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &dev, nullptr, &ctx))) return 1;
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = (UINT)(ew * 2); td.Height = (UINT)eh; td.MipLevels = 1; td.ArraySize = 1; td.SampleDesc.Count = 1;
+    td.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA sd{ px.data(), W * 4, 0 };
+    ID3D11Texture2D* src = nullptr; dev->CreateTexture2D(&td, &sd, &src);
+    D3D11_SHADER_RESOURCE_VIEW_DESC vd{}; vd.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; vd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; vd.Texture2D.MipLevels = 1;
+    ID3D11ShaderResourceView* srv = nullptr; dev->CreateShaderResourceView(src, &vd, &srv);
+    LookAround look;
+    if (!srv || !look.Initialize(dev, ctx)) { fwprintf(stderr, L"look-around init failed\n"); return 1; }
+    look.SetPlate(false); look.SetExternalStage(2); look.SetExternalLeftOnly(true);
+    NeuralDepth neural;
+    wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring dir = exe; const size_t cut = dir.find_last_of(L"/\\"); if (cut != std::wstring::npos) dir.resize(cut);
+    if (!neural.Start(dir, _wgetenv(L"LOOKTEST_MODEL") ? _wgetenv(L"LOOKTEST_MODEL") : L"")) { fwprintf(stderr, L"no neural matcher beside the exe\n"); return 1; }
+    neural.SetLeftOnly(true); neural.SetAutoPaint(_wgetenv(L"LOOKTEST_NOPAINT") == nullptr);
+    for (int k = 0; k < 6000 && !neural.Ready() && !neural.Failed(); ++k) Sleep(100);
+    if (!neural.Ready()) { fwprintf(stderr, L"the model did not load\n"); return 1; }
+    wprintf(L"runtime: %s\n", neural.OnTensorRT() ? L"TensorRT" : L"DirectML");
+    int mw = 0, mh = 0; look.MapSize(ew, eh, mw, mh);
+    const float aspect = 16.0f / 9.0f;
+    ID3D11Texture2D* stage = nullptr, *outStage = nullptr, *depthTex = nullptr; ID3D11ShaderResourceView* layerSrv = nullptr;
+    bool copying = false, active = false; int nw = 0, nh = 0; unsigned serial = 1;
+    int answers = 0, layers = 0; double ansMs = 0, layMs = 0;
+    const ULONGLONG t0 = GetTickCount64(); ULONGLONG lastPrint = t0; int loops = 0;
+    const int seconds = _wgetenv(L"LOOKTEST_SECONDS") ? _wtoi(_wgetenv(L"LOOKTEST_SECONDS")) : 8;
+    const bool trace = _wgetenv(L"LOOKTEST_TRACE") != nullptr;   // (each step's time printed)
+    while (GetTickCount64() - t0 < (ULONGLONG)seconds * 1000)
+    {
+        ++loops; ++serial;                                   // (every loop a "new picture": a video)
+        if (!copying && !neural.Busy())
+        {
+            neural.NetSize(aspect, 736, nw, nh);
+            ID3D11Texture2D* shrunk = look.Shrink(srv, ew, eh, nw, nh);
+            if (shrunk && !stage) { D3D11_TEXTURE2D_DESC st{}; shrunk->GetDesc(&st); st.Usage = D3D11_USAGE_STAGING; st.BindFlags = 0; st.CPUAccessFlags = D3D11_CPU_ACCESS_READ; st.MiscFlags = 0; dev->CreateTexture2D(&st, nullptr, &stage); }
+            if (shrunk && stage) { ctx->CopyResource(stage, shrunk); ctx->Flush(); copying = true; if (trace) wprintf(L"  %5llu ms: copy begun\n", GetTickCount64() - t0); }
+        }
+        if (copying)
+        {
+            D3D11_MAPPED_SUBRESOURCE m{};
+            const HRESULT hr = ctx->Map(stage, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m);
+            if (SUCCEEDED(hr)) { const bool took = neural.Submit((const uint8_t*)m.pData, (int)m.RowPitch, nw, nh, aspect, 736, mw, mh, serial); ctx->Unmap(stage, 0); copying = false; if (trace) wprintf(L"  %5llu ms: read and handed over (%d)\n", GetTickCount64() - t0, took ? 1 : 0); }
+            else if (hr != DXGI_ERROR_WAS_STILL_DRAWING) copying = false;
+        }
+        std::vector<uint16_t> res; int rw = 0, rh = 0; unsigned rs = 0; double rms = 0;
+        if (neural.Take(res, rw, rh, rs, rms) && rw == mw && rh == mh)
+        {
+            if (depthTex) depthTex->Release(); depthTex = nullptr;
+            D3D11_TEXTURE2D_DESC nd{};
+            nd.Width = (UINT)(rw * 2); nd.Height = (UINT)rh; nd.MipLevels = 1; nd.ArraySize = 1; nd.SampleDesc.Count = 1;
+            nd.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; nd.Usage = D3D11_USAGE_DEFAULT; nd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            D3D11_SUBRESOURCE_DATA init{ res.data(), (UINT)(rw * 2 * 8), 0 };
+            if (SUCCEEDED(dev->CreateTexture2D(&nd, &init, &depthTex))) { look.SetExternalDisparity(depthTex, active); active = true; ++answers; ansMs += rms; if (trace) wprintf(L"  %5llu ms: answer (%.0f ms in the thread)\n", GetTickCount64() - t0, rms); }
+        }
+        std::vector<float> lay; int ln = 0; unsigned ls = 0; double lms = 0;
+        if (neural.TakeLayer(lay, ln, ls, lms))
+        {
+            D3D11_TEXTURE2D_DESC ld{};
+            ld.Width = (UINT)ln; ld.Height = (UINT)ln; ld.MipLevels = 1; ld.ArraySize = 1; ld.SampleDesc.Count = 1;
+            ld.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; ld.Usage = D3D11_USAGE_DEFAULT; ld.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            D3D11_SUBRESOURCE_DATA init{ lay.data(), (UINT)(ln * 16), 0 };
+            ID3D11Texture2D* lt = nullptr;
+            if (SUCCEEDED(dev->CreateTexture2D(&ld, &init, &lt)))
+            {
+                if (layerSrv) layerSrv->Release(); layerSrv = nullptr;
+                dev->CreateShaderResourceView(lt, nullptr, &layerSrv); lt->Release();
+                look.SetLayer(layerSrv); ++layers; layMs += lms;
+            }
+        }
+        LookAround::View v; const float sway = 0.4f * std::sin((float)(GetTickCount64() - t0) * 0.002f);
+        v.tL = sway; v.tR = 1.0f + sway;
+        look.Render(srv, ew, eh, v, true);
+        ctx->Flush();
+        const ULONGLONG now = GetTickCount64();
+        if (now - lastPrint >= 2000)
+        {
+            // (The output's mean brightness, read back -- waiting for it, this once in a while.)
+            D3D11_TEXTURE2D_DESC od{}; look.OutputTexture()->GetDesc(&od);
+            if (!outStage) { od.Usage = D3D11_USAGE_STAGING; od.BindFlags = 0; od.CPUAccessFlags = D3D11_CPU_ACCESS_READ; od.MiscFlags = 0; od.Format = DXGI_FORMAT_R8G8B8A8_UNORM; dev->CreateTexture2D(&od, nullptr, &outStage); }
+            ctx->CopyResource(outStage, look.OutputTexture());
+            D3D11_MAPPED_SUBRESOURCE m{}; double sum = 0; size_t n = 0, black = 0;
+            if (SUCCEEDED(ctx->Map(outStage, 0, D3D11_MAP_READ, 0, &m)))
+            {
+                for (int y = 0; y < eh; y += 8) for (int x = 0; x < ew * 2; x += 8)
+                {
+                    const uint8_t* p = (const uint8_t*)m.pData + (size_t)y * m.RowPitch + (size_t)x * 4;
+                    const int l = p[0] + p[1] + p[2]; sum += l / 3.0; ++n; black += l == 0;
+                }
+                ctx->Unmap(outStage, 0);
+            }
+            double in = 0; size_t ni = 0;
+            for (size_t k = 0; k < (size_t)W * H; k += 64) { in += (px[k * 4] + px[k * 4 + 1] + px[k * 4 + 2]) / 3.0; ++ni; }
+            wprintf(L"%4.1f s: %d loops, %d depth answers (%.0f ms each), %d backgrounds (%.0f ms each); output brightness %.1f (picture %.1f), wholly black pixels %.1f%%\n",
+                    (now - t0) / 1000.0, loops, answers, answers ? ansMs / answers : 0.0, layers, layers ? layMs / layers : 0.0, n ? sum / n : 0.0, ni ? in / ni : 0.0, n ? 100.0 * black / n : 0.0);
+            lastPrint = now; loops = 0; answers = 0; layers = 0; ansMs = 0; layMs = 0;
+        }
+    }
+    neural.Shutdown(); look.Shutdown();
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     if (argc < 2) { fwprintf(stderr, L"usage: looktest <quilt_qsCxR.png> [refA refB] [reach] [scale] [outdir]\n"); return 1; }
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (argc >= 3 && !wcscmp(argv[1], L"sbs")) return RunSbs(argv[2], argc > 3 ? argv[3] : L"");
+    if (argc >= 3 && !wcscmp(argv[1], L"live")) return RunLive(argv[2]);
     if (argc >= 3 && !wcscmp(argv[1], L"mb")) return RunMb(argv[2]);
     std::wstring path = argv[1];
     int C = 8, R = 6;

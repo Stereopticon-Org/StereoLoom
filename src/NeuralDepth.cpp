@@ -290,9 +290,16 @@ bool NeuralDepth::Start(const std::wstring& exeDir, const std::wstring& modelFil
     if (!Exists(m_model)) m_model = exeDir + L"\\neural\\Lite Any Stereo M 512x288.onnx";
     // (TensorRT, on an NVIDIA card: where neural\trt holds ONNX Runtime's GPU build with its TensorRT and
     // CUDA libraries, that runtime is the one loaded -- about half as long again as quick as DirectML with
-    // the half-precision models. One runtime to a process: decided the first time. SRLOOM_NOTRT=1: not.)
+    // the half-precision models, with the card to itself. One runtime to a process: decided the first time.
+    // ONLY where asked for (SetAllowTensorRT, or SRLOOM_TRT=1): beside a Direct3D program drawing on the same
+    // card -- which is what SR Loom is -- its answers came SLOWER than DirectML's, 85 to 190 ms against 25,
+    // the two taking turns at the card; and the first weave with it in the process showed a black screen.)
     m_trtDir = exeDir + L"\\neural\\trt";
-    { wchar_t no[8] = {}; m_trt = Exists(m_trtDir + L"\\onnxruntime.dll") && Exists(m_trtDir + L"\\onnxruntime_providers_tensorrt.dll") && GetEnvironmentVariableW(L"SRLOOM_NOTRT", no, 8) == 0; }
+    {
+        wchar_t yes[8] = {};
+        const bool env = GetEnvironmentVariableW(L"SRLOOM_TRT", yes, 8) > 0 && yes[0] == L'1';
+        m_trt = (m_allowTrt || env) && Exists(m_trtDir + L"\\onnxruntime.dll") && Exists(m_trtDir + L"\\onnxruntime_providers_tensorrt.dll");
+    }
     if (!(m_trt || (Exists(exeDir + L"\\onnxruntime.dll") && Exists(exeDir + L"\\DirectML.dll"))) || !Exists(m_model))
     {
         Log("NeuralDepth: not there (onnxruntime.dll and DirectML.dll beside the exe, and a model in the neural folder, are all needed)");
@@ -444,6 +451,7 @@ void NeuralDepth::Run()
             if (s.size() == 4 && s[2] > 0 && s[3] > 0) { m_fixH = (int)s[2]; m_fixW = (int)s[3]; }
         }
         m_ready = true;
+        if (m_trt) SetDllDirectoryW(nullptr);   // (its libraries are loaded: the search order as it was)
         if (m_fixW.load()) Log("NeuralDepth: model loaded; it runs at %dx%d", m_fixW.load(), m_fixH.load());
         else               Log("NeuralDepth: model loaded; it runs at any size");
 
