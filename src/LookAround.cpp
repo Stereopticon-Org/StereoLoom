@@ -33,6 +33,9 @@
 #include "Look_PSLKSolve.h"
 #include "Look_VSGauss.h"
 #include "Look_GSGauss.h"
+#include "Look_VSGaussCell.h"
+#include "Look_CSCells.h"
+#include "Look_PSGaussMix.h"
 #include "Look_PSGauss.h"
 #include "Look_PSGaussResolve.h"
 
@@ -46,6 +49,8 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSSplat, sizeof(g_Look_VSSplat), nullptr, &m_vsSplat);
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSGauss, sizeof(g_Look_VSGauss), nullptr, &m_vsGauss);
     if (SUCCEEDED(hr)) hr = device->CreateGeometryShader(g_Look_GSGauss, sizeof(g_Look_GSGauss), nullptr, &m_gsGauss);
+    if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSGaussCell, sizeof(g_Look_VSGaussCell), nullptr, &m_vsCell);
+    if (SUCCEEDED(hr)) hr = device->CreateComputeShader(g_Look_CSCells, sizeof(g_Look_CSCells), nullptr, &m_csCells);
     {
         // (The Gaussians' weights and weighted colours added up.)
         D3D11_BLEND_DESC bl{};
@@ -81,6 +86,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSLKSum,       sizeof(g_Look_PSLKSum),       &m_psLKSum },
         { g_Look_PSLKSolve,     sizeof(g_Look_PSLKSolve),     &m_psLKSolve },
         { g_Look_PSGauss,       sizeof(g_Look_PSGauss),       &m_psGauss },
+        { g_Look_PSGaussMix,    sizeof(g_Look_PSGaussMix),    &m_psGaussMix },
         { g_Look_PSGaussResolve, sizeof(g_Look_PSGaussResolve), &m_psGaussResolve },
     };
     for (const auto& p : ps)
@@ -125,7 +131,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
-    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_gsGauss); Release(m_acc); Release(m_accFar); Release(m_cover);
+    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
     m_device = nullptr; m_context = nullptr; m_eyeW = m_eyeH = 0;
 }
 
@@ -458,7 +464,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
 
     // 4. The new views, at full size; then what neither eye saw.
     cb.size[0] = (float)eyeW; cb.size[1] = (float)eyeH; cb.srcSize[0] = (float)w[0]; cb.srcSize[1] = (float)h[0];
-    if (m_gauss > 0 && Ensure(m_acc, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_accFar, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+    if ((m_gauss == 1 || m_gauss == 2) && Ensure(m_acc, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_accFar, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
         Ensure(m_cover, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16_FLOAT))
     {
         // Gaussian splats: every spot of both eyes drawn into each new view's half, added up; then divided out.
@@ -501,6 +507,84 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     }
     else
     Pass(m_psCompose, m_out[0], cb, src, result[0]->srv, m_targetFilled.srv);
+    if (m_gauss == 3 && Ensure(m_acc, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_accFar, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+        Ensure(m_cover, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16_FLOAT) && Ensure(m_mix, 2 * eyeW, eyeH, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB))
+    {
+        // Gaussian splats at the outlines only, over the standard picture. The cells of the small map that have
+        // an outline are listed (CSCells); sixteen spots are then drawn for each listed.
+        const float zero[4] = {};
+        cb.lk[0] = (std::max)(1.0f, cb.scale[0] * 0.25f); cb.lk[1] = m_gaussSigma; cb.lk[2] = m_gaussSeen; cb.lk[3] = 2.0f;
+        const UINT cap = (UINT)(w[0] * h[0] * 2);
+        if (m_cellCap != cap)
+        {
+            SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0;
+            D3D11_BUFFER_DESC bd{};
+            bd.ByteWidth = cap * 4; bd.Usage = D3D11_USAGE_DEFAULT; bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+            bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED; bd.StructureByteStride = 4;
+            D3D11_UNORDERED_ACCESS_VIEW_DESC ud{}; ud.Format = DXGI_FORMAT_UNKNOWN; ud.ViewDimension = D3D11_UAV_DIMENSION_BUFFER; ud.Buffer.NumElements = cap; ud.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_APPEND;
+            D3D11_BUFFER_DESC ad{};
+            ad.ByteWidth = 16; ad.Usage = D3D11_USAGE_DEFAULT; ad.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS;
+            const UINT args[4] = { 16, 0, 0, 0 };
+            D3D11_SUBRESOURCE_DATA ai{ args, 0, 0 };
+            if (SUCCEEDED(m_device->CreateBuffer(&bd, nullptr, &m_cellBuf)) && SUCCEEDED(m_device->CreateUnorderedAccessView(m_cellBuf, &ud, &m_cellUav)) &&
+                SUCCEEDED(m_device->CreateShaderResourceView(m_cellBuf, nullptr, &m_cellSrv)) && SUCCEEDED(m_device->CreateBuffer(&ad, &ai, &m_cellArgs)))
+                m_cellCap = cap;
+        }
+        if (m_cellCap)
+        {
+        {
+            m_context->UpdateSubresource(m_cb, 0, nullptr, &cb, 0, 0);
+            const UINT none = 0;
+            m_context->CSSetShader(m_csCells, nullptr, 0);
+            m_context->CSSetConstantBuffers(0, 1, &m_cb);
+            m_context->CSSetShaderResources(1, 1, &result[0]->srv);
+            m_context->CSSetUnorderedAccessViews(0, 1, &m_cellUav, &none);
+            m_context->Dispatch((UINT)((2 * w[0] + 7) / 8), (UINT)((h[0] + 7) / 8), 1);
+            ID3D11UnorderedAccessView* noUav = nullptr; ID3D11ShaderResourceView* noSrv = nullptr;
+            m_context->CSSetUnorderedAccessViews(0, 1, &noUav, nullptr);
+            m_context->CSSetShaderResources(1, 1, &noSrv);
+            m_context->CSSetShader(nullptr, nullptr, 0);
+            m_context->CopyStructureCount(m_cellArgs, 4, m_cellUav);
+        }
+        m_context->ClearRenderTargetView(m_acc.rtv, zero);
+        m_context->ClearRenderTargetView(m_accFar.rtv, zero);
+        m_context->ClearRenderTargetView(m_cover.rtv, zero);
+        ID3D11RenderTargetView* three[3] = { m_acc.rtv, m_accFar.rtv, m_cover.rtv };
+        m_context->OMSetRenderTargets(3, three, nullptr);
+        m_context->OMSetBlendState(m_blendAdd, nullptr, 0xFFFFFFFF);
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+        m_context->VSSetShader(m_vsCell, nullptr, 0);
+        m_context->GSSetShader(m_gsGauss, nullptr, 0);
+        m_context->GSSetConstantBuffers(0, 1, &m_cb);
+        m_context->VSSetShaderResources(5, 1, &m_cellSrv);
+        m_context->PSSetShader(m_psGauss, nullptr, 0);
+        ID3D11ShaderResourceView* vin[2] = { src, result[0]->srv };
+        m_context->VSSetShaderResources(0, 2, vin);
+        ID3D11ShaderResourceView* pin[3] = { nullptr, nullptr, m_targetFilled.srv };
+        m_context->PSSetShaderResources(0, 3, pin);
+        for (int eye = 0; eye < 2; ++eye)
+        {
+            cb.eye = (float)eye;
+            m_context->UpdateSubresource(m_cb, 0, nullptr, &cb, 0, 0);
+            D3D11_VIEWPORT vp{}; vp.TopLeftX = (FLOAT)(eye * eyeW); vp.Width = (FLOAT)eyeW; vp.Height = (FLOAT)eyeH; vp.MaxDepth = 1.0f;
+            m_context->RSSetViewports(1, &vp);
+            m_context->DrawInstancedIndirect(m_cellArgs, 0);
+        }
+        m_context->GSSetShader(nullptr, nullptr, 0);
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ID3D11ShaderResourceView* nul3[3] = {};
+        m_context->VSSetShaderResources(0, 2, nul3);
+        m_context->VSSetShaderResources(5, 1, nul3);
+        m_context->PSSetShaderResources(0, 3, nul3);
+        m_context->OMSetRenderTargets(0, nullptr, nullptr);
+        m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+        m_context->PSSetShaderResources(3, 1, &m_out[0].srv);
+        Pass(m_psGaussMix, m_mix, cb, m_acc.srv, m_accFar.srv, m_cover.srv);
+        ID3D11ShaderResourceView* nul = nullptr;
+        m_context->PSSetShaderResources(3, 1, &nul);
+        m_context->CopyResource(m_out[0].tex, m_mix.tex);
+        }
+    }
     // The far side of things, level by level, for what neither eye saw.
     cb.pad[2] = 0.0f;
     if (m_fillOn)

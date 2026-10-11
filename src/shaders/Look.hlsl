@@ -1233,15 +1233,10 @@ struct GaussPt
     float keep : TEXCOORD3;
 };
 struct GaussOut { float4 pos : SV_POSITION; float2 off : TEXCOORD0; nointerpolation float4 col : TEXCOORD1; nointerpolation float2 da : TEXCOORD2; };
-GaussPt VSGauss(uint id : SV_VertexID)
+GaussPt GaussSpot(int ref, float2 c)
 {
     const float step = max(g_lk.x, 1.0);
-    const int gw = (int)ceil(g_size.x / step), gh = (int)ceil(g_size.y / step);
     const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
-    const uint per = (uint)(gw * gh);
-    const int ref = (int)(id / per);
-    const uint idx = id % per;
-    const float2 c = (float2((float)(idx % (uint)gw), (float)(idx / (uint)gw)) + 0.5) * step;   // (the spot's middle, pixels of the eye)
     const float t = g_eye < 0.5 ? g_tL : g_tR;
     // Its disparity: between the four texels round it where they are one surface; else the texel it is in.
     const float2 lo = c / g_scale - 0.5;
@@ -1310,6 +1305,27 @@ GaussPt VSGauss(uint id : SV_VertexID)
     }
     return o;
 }
+GaussPt VSGauss(uint id : SV_VertexID)
+{
+    const float step = max(g_lk.x, 1.0);
+    const int gw = (int)ceil(g_size.x / step), gh = (int)ceil(g_size.y / step);
+    const uint per = (uint)(gw * gh);
+    const uint idx = id % per;
+    return GaussSpot((int)(id / per), (float2((float)(idx % (uint)gw), (float)(idx / (uint)gw)) + 0.5) * step);
+}
+// The outlines only (see below): sixteen spots to each cell of the small map that CSCells listed.
+StructuredBuffer<uint> g_cells : register(t5);
+GaussPt VSGaussCell(uint k : SV_VertexID, uint inst : SV_InstanceID)
+{
+    const int w = (int)g_srcSize.x;
+    const uint cellId = g_cells[inst];
+    const int X = (int)(cellId % (uint)(2 * w)), y0 = (int)(cellId / (uint)(2 * w));
+    const int ref = X >= w ? 1 : 0;
+    const float2 c = (float2((float)(X - ref * w), (float)y0) + 0.5 + (float2((float)(k & 3u), (float)(k >> 2)) + 0.5) * 0.25) * g_scale;
+    GaussPt o = GaussSpot(ref, min(c, g_size - 0.5));
+    if (c.x >= g_size.x || c.y >= g_size.y) o.keep = 0.0;
+    return o;
+}
 void GaussQuad(GaussPt i, float d, float share, inout TriangleStream<GaussOut> s)
 {
     const float step = max(g_lk.x, 1.0);
@@ -1370,4 +1386,48 @@ float4 PSGaussResolve(VSOut i) : SV_Target
     if (b.a < 1e-7) share = 1.0;
     if (n.a < 1e-9) share = 0.0;
     return float4(lerp(cb, cn, share), wc.y > g_lk.z ? 1.0 : 0.0);
+}
+
+// ---- Gaussian splats at the outlines only -----------------------------------
+// Most of a picture is smooth surface, where a spot a pixel and a pixel looked
+// up come to the same thing -- and the looking up is a tenth of the work. So:
+// the new view is made the standard way, and spots are thrown only from where
+// the map has an outline (the four texels round a place are not one surface),
+// sixteen to such a cell (CSCells lists the cells, VSGaussCell makes the spots); they are then laid over the standard picture by how
+// much of each pixel they cover.
+// (A point a cell of the small map, both eyes' one after the other. tex0: the
+// two eyes. tex1: their disparity, small.)
+// (The cells that have an outline, listed: tex1 the disparity, small. One number a cell: its row times the
+// map's whole width, and its column -- the right eye's after the left's.)
+AppendStructuredBuffer<uint> g_cellsOut : register(u0);
+[numthreads(8, 8, 1)]
+void CSCells(uint3 id : SV_DispatchThreadID)
+{
+    const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
+    const int X = (int)id.x, y0 = (int)id.y;
+    const int ref = X >= w ? 1 : 0;
+    const int x0 = X - ref * w;
+    if (X < 2 * w && y0 < h - 1 && x0 < w - 1)
+    {
+        const float d00 = tex1.Load(int3(X, y0, 0)).r, d10 = tex1.Load(int3(X + 1, y0, 0)).r;
+        const float d01 = tex1.Load(int3(X, y0 + 1, 0)).r, d11 = tex1.Load(int3(X + 1, y0 + 1, 0)).r;
+        if (max(max(d00, d10), max(d01, d11)) - min(min(d00, d10), min(d01, d11)) >= 1.0) g_cellsOut.Append((uint)(y0 * 2 * w + X));
+    }
+}
+// (tex0: the near layer; tex1: the far; tex2: the near's whole weight and the cover; tex3: the new view made
+// the standard way. The spots over it, by how much of the pixel they cover; a near spot's share laid over the
+// far spots where there are any, else over the standard picture.)
+float4 PSGaussMix(VSOut i) : SV_Target
+{
+    const int3 p = int3((int)i.pos.x, (int)i.pos.y, 0);
+    const float4 n = tex0.Load(p), b = tex1.Load(p), st = tex3.Load(p);
+    const float2 wc = tex2.Load(p).rg;
+    const float3 under = b.a > 1e-7 ? b.rgb / b.a : st.rgb;
+    const float share = wc.x > 1e-7 ? saturate(n.a / wc.x) : 0.0;
+    const float3 g = n.a > 1e-9 ? lerp(under, n.rgb / n.a, share) : under;
+    // (By the NEAR layer's cover alone: spots of what is behind the standard picture's own surface are only
+    // what a near spot's share is laid over, never drawn for themselves.)
+    float k = saturate((wc.x - 0.15) / 0.5);
+    if (n.a < 1e-9) k = 0.0;
+    return float4(lerp(st.rgb, g, k), max(st.a, k > 0.5 ? 1.0 : 0.0));
 }

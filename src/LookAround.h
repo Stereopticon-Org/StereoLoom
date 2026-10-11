@@ -115,6 +115,12 @@ namespace srw
         ID3D11BlendState*    m_blendAdd = nullptr;
         Tex   m_accFar;             // (... the layer behind the nearest)
         ID3D11GeometryShader* m_gsGauss = nullptr;
+        ID3D11ComputeShader* m_csCells = nullptr;
+        ID3D11Buffer*        m_cellBuf = nullptr, *m_cellArgs = nullptr;   // (the cells that have an outline, listed; and how many, as a draw's arguments)
+        ID3D11UnorderedAccessView* m_cellUav = nullptr; ID3D11ShaderResourceView* m_cellSrv = nullptr; UINT m_cellCap = 0;
+        ID3D11VertexShader*  m_vsCell = nullptr;
+        ID3D11PixelShader*   m_psGaussMix = nullptr;
+        Tex   m_mix;                // (the outlines' spots laid over the standard picture)
         Tex   m_cover;              // (... and how much of each pixel they cover)
         Tex   m_acc;                // (Gaussian splats: weighted colour and weight, added up)
         int   m_gauss = 0; float m_gaussSigma = 0.5f, m_gaussSeen = 0.25f; int m_gaussEdge = 2;

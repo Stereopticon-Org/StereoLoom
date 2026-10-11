@@ -165,7 +165,7 @@ set_source_files_properties("${CONVERTER_HLSL}" PROPERTIES VS_TOOL_OVERRIDE "Non
 # converter's: each entry point a header of bytecode, g_Look_<entry>.
 set(LOOK_HLSL "${CMAKE_SOURCE_DIR}/src/shaders/Look.hlsl")
 set(LOOK_ENTRIES
-    VSFull:vs_5_0 VSSplat:vs_5_0 VSGauss:vs_5_0 GSGauss:gs_5_0 PSGauss:ps_5_0 PSGaussResolve:ps_5_0 PSDownFirst:ps_5_0 PSDownNext:ps_5_0 PSGrad:ps_5_0 PSMatchFull:ps_5_0 PSMatchRefine:ps_5_0
+    VSFull:vs_5_0 VSSplat:vs_5_0 VSGauss:vs_5_0 GSGauss:gs_5_0 VSGaussCell:vs_5_0 CSCells:cs_5_0 PSGaussMix:ps_5_0 PSGauss:ps_5_0 PSGaussResolve:ps_5_0 PSDownFirst:ps_5_0 PSDownNext:ps_5_0 PSGrad:ps_5_0 PSMatchFull:ps_5_0 PSMatchRefine:ps_5_0
     PSCheck:ps_5_0 PSFill:ps_5_0 PSMedian:ps_5_0 PSSpread:ps_5_0 PSFine:ps_5_0 PSGuide:ps_5_0 PSFuse:ps_5_0 PSDilate:ps_5_0 PSSplat:ps_5_0 PSHole:ps_5_0 PSCompose:ps_5_0 PSUnseen:ps_5_0 PSPlate:ps_5_0 PSFillDown:ps_5_0 PSShrink:ps_5_0 PSRight:ps_5_0 PSRightFill:ps_5_0 PSSnap:ps_5_0 PSLKSum:ps_5_0 PSLKSolve:ps_5_0)
 set(LOOK_SHADER_HEADERS)
 foreach(E ${LOOK_ENTRIES})

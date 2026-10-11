@@ -2958,20 +2958,21 @@ bool Gui::Render(GuiState& state)
                     "background rather than a blur. Needs the painter's file in the neural folder. Applies straight away.");
                 // ... and how the new views are drawn.
                 {
-                    static const char* kDraw[3] = { "Draw: Standard", "Draw: Gaussian Splats", "Draw: Gaussian Splats (Half)" };
-                    if (m_lookGauss < 0 || m_lookGauss > 2) m_lookGauss = 0;
+                    static const char* kDraw[4] = { "Draw: Standard", "Draw: Gaussian Splats", "Draw: Gaussian Splats (Half)", "Draw: Gaussian Outlines" };
+                    if (m_lookGauss < 0 || m_lookGauss > 3) m_lookGauss = 0;
                     ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
                     ImGui::SetNextItemWidth(halfW);
                     if (ImGui::BeginCombo("##lookgauss", kDraw[m_lookGauss]))
                     {
-                        for (int k = 0; k < 3; ++k)
+                        for (int k = 0; k < 4; ++k)
                             if (ImGui::Selectable(kDraw[k], m_lookGauss == k)) { m_lookGauss = k; Settings::WriteLookGauss(k); }
                         ImGui::EndCombo();
                     }
                     tip("Experimental. Standard: each pixel of the new view is looked up in the two eyes through the depth. "
                         "Gaussian Splats: every pixel of each eye is thrown forward as a soft Gaussian spot and the spots are "
                         "blended. Much heavier on the graphics card: expect a lower frame rate. Half uses one spot for "
-                        "every four pixels: quicker and softer. Applies straight away.");
+                        "every four pixels: quicker and softer. Gaussian Outlines draws the standard way and uses spots only "
+                        "along the outlines of things, where they matter: nearly as quick as Standard. Applies straight away.");
                 }
             }
         }
