@@ -1330,8 +1330,15 @@ GaussPt VSGauss(uint id : SV_VertexID)
     const float step = max(g_lk.x, 1.0);
     const int gw = (int)ceil(g_size.x / step), gh = (int)ceil(g_size.y / step);
     const uint per = (uint)(gw * gh);
-    const uint idx = id % per;
-    return GaussSpot((int)(id / per), (float2((float)(idx % (uint)gw), (float)(idx / (uint)gw)) + 0.5) * step);
+    // (Not in the picture's own order: runs of 128 spots, the runs taken from all over the picture one after
+    // another. The card shares its drawing out by where on the screen it falls, and spots all in one place at
+    // a time keep one part of it busy and the rest idle -- g_lk.w under 2.5: as they come.)
+    const uint blocks = (per + 127u) / 128u;
+    const uint slot = id % (blocks * 128u);
+    const uint idx = g_pad.w > 0.5 ? ((slot >> 7) * 65521u) % blocks * 128u + (slot & 127u) : slot;
+    GaussPt o = GaussSpot((int)(id / (blocks * 128u)), (float2((float)(idx % (uint)gw), (float)(min(idx, per - 1u) / (uint)gw)) + 0.5) * step);
+    if (idx >= per) o.keep = 0.0;
+    return o;
 }
 // The outlines only (see below): sixteen spots to each cell of the small map that CSCells listed.
 StructuredBuffer<uint> g_cells : register(t5);

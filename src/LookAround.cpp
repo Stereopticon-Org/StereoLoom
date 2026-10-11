@@ -510,6 +510,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         const float step = (float)m_gauss;
         const int gw = (int)std::ceil((float)eyeW / step), gh = (int)std::ceil((float)eyeH / step);
         cb.lk[0] = step; cb.lk[1] = m_gaussSigma; cb.lk[2] = m_gaussSeen; cb.lk[3] = (float)m_gaussEdge;
+        const float keepPad3 = cb.pad[3]; cb.pad[3] = m_gaussScramble ? 1.0f : 0.0f;
         m_context->ClearRenderTargetView(m_acc.rtv, zero);
         m_context->ClearRenderTargetView(m_accFar.rtv, zero);
         m_context->ClearRenderTargetView(m_cover.rtv, zero);
@@ -532,7 +533,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             // (Each view's spots kept to its own half: the viewport's edge is where they are cut.)
             D3D11_VIEWPORT vp{}; vp.TopLeftX = (FLOAT)(eye * eyeW); vp.Width = (FLOAT)eyeW; vp.Height = (FLOAT)eyeH; vp.MaxDepth = 1.0f;
             m_context->RSSetViewports(1, &vp);
-            m_context->Draw((UINT)(gw * gh * 2), 0);
+            m_context->Draw((UINT)((gw * gh + 127) / 128 * 128 * 2), 0);
         }
         m_context->GSSetShader(nullptr, nullptr, 0);
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -543,6 +544,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
         Prof("Gaussian spots");
         Pass(m_psGaussResolve, m_out[0], cb, m_acc.srv, m_accFar.srv, m_cover.srv);
+        cb.pad[3] = keepPad3;
     }
     else
     Pass(m_psCompose, m_out[0], cb, src, result[0]->srv, m_targetFilled.srv);
