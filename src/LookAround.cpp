@@ -431,7 +431,9 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     {
         const float zero4[4] = {};
         m_context->ClearRenderTargetView(m_est[m_estCur].rtv, zero4);
-        for (int k = levels - 1; k >= 0; --k)
+        // (Not at the finest size: it was four fifths of the finder's time, and what it added to the answer was
+        // a thousandth of a pixel a disparity -- m_lkFinest.)
+        for (int k = levels - 1; k >= (std::min)(m_lkFinest, levels - 1); --k)
         for (int it = 0; it < 2; ++it)
         {
             sized(k);
@@ -461,9 +463,11 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             m_estCur = 1 - m_estCur;
         }
         m_estHave = true;
+        Prof("motion found");
     }
     if (ownLevels) { for (int k = 0; k < levels; ++k) m_context->CopyResource(m_prevTmp[k].tex, m_tmp[k].tex); m_prevHave = true; }
     else m_prevHave = false;
+    Prof("levels kept");
     // The plate: the one before moved as the picture moved, and this picture put into it.
     if (m_plateOn)
     {

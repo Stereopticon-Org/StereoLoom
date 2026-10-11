@@ -98,6 +98,7 @@ namespace srw
         void SetProfile(bool on) { m_profOn = on; }
         bool TakeProfile(std::vector<std::pair<std::string, double>>& out);
         void SetGaussianScramble(bool on) { m_gaussScramble = on; }
+        void SetMotionFinest(int level) { m_lkFinest = level; }
         void SetGaussianSettle(int mode, float margin = 0.004f) { m_gaussSettle = mode; m_settleMargin = margin; m_settleHave = false; }
         void SetGaussianPoints(bool on) { m_gaussPoints = on; }
         void SetGaussianOver(bool on) { m_gaussOver = on; }
@@ -182,6 +183,7 @@ namespace srw
         float m_maxShare = 0.25f;   // (a quarter of the eye's width: no pop-out a picture can hold is past it)
         Tex   m_extPrep;            // (the other matcher's answer as prepared: kept for the pictures until its next)
         unsigned m_extSerial = 1, m_extPrepSerial = 0;
+        int   m_lkFinest = 1;       // (the finest size the motion finder works at: 0 the map's own)
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
         int   m_spread = 1;
         int   m_base = 0;
