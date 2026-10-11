@@ -1252,15 +1252,18 @@ GaussOut VSGauss(uint id : SV_VertexID)
     GaussOut o;
     o.pos = float4(at.x / g_size.x * 2.0 - 1.0, 1.0 - at.y / g_size.y * 2.0, 0.5, 1.0);
     o.off = q * ext / sig;
-    const float away = abs(t - (float)ref);
-    const float wg = max(1.0 - away, 0.02 * exp(-2.0 * away));
+    // (How much this eye counts at the new place, against the eye that counts most there: far outside the
+    // two eyes both count for next to nothing, and the nearer must still count in full.)
+    const float away = abs(t - (float)ref), awayO = abs(t - (float)(1 - ref));
+    const float wOwn = max(1.0 - away, 0.02 * exp(-2.0 * away)), wOther = max(1.0 - awayO, 0.02 * exp(-2.0 * awayO));
+    const float wg = wOwn / max(wOwn, wOther);
     o.col = float4(tex0.SampleLevel(sampLinear, float2(((float)ref * g_size.x + c.x) / (2.0 * g_size.x), c.y / g_size.y), 0).rgb, wg);
     o.d = d;
     if (g_only > -0.5 && g_only < 1.5 && abs(g_only - (float)ref) > 0.5) o.pos = float4(2.0, 2.0, 2.0, 1.0);
     // (The eye further from the new place, while it counts for under a quarter: only what the nearer eye
     // does not see is drawn of it -- where the nearer eye's own map has this surface, its own spot stands
     // for it. Half the spots, and nothing mixed that need not be.)
-    [branch] if (g_only < -0.5 && wg < 0.25)
+    [branch] if (g_only < -0.5 && wg < 0.25 && away > awayO)
     {
         const float2 lm = c / g_scale + float2(ref == 1 ? d : -d, 0.0);
         const bool inside = lm.x >= 0.0 && lm.x < (float)w && lm.y >= 0.0 && lm.y < (float)h;
