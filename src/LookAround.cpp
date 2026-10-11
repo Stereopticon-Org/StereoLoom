@@ -40,6 +40,8 @@
 #include "Look_VSPoint.h"
 #include "Look_PSPoint.h"
 #include "Look_PSPointResolve.h"
+#include "Look_PSSettle.h"
+#include "Look_VSPointS.h"
 #include "Look_PSGauss.h"
 #include "Look_PSGaussResolve.h"
 
@@ -53,6 +55,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSSplat, sizeof(g_Look_VSSplat), nullptr, &m_vsSplat);
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSGauss, sizeof(g_Look_VSGauss), nullptr, &m_vsGauss);
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSPoint, sizeof(g_Look_VSPoint), nullptr, &m_vsPoint);
+    if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSPointS, sizeof(g_Look_VSPointS), nullptr, &m_vsPointS);
     if (SUCCEEDED(hr)) hr = device->CreateGeometryShader(g_Look_GSGauss, sizeof(g_Look_GSGauss), nullptr, &m_gsGauss);
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSGaussCell, sizeof(g_Look_VSGaussCell), nullptr, &m_vsCell);
     if (SUCCEEDED(hr)) hr = device->CreateComputeShader(g_Look_CSCells, sizeof(g_Look_CSCells), nullptr, &m_csCells);
@@ -99,6 +102,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSGaussOver,   sizeof(g_Look_PSGaussOver),   &m_psGaussOver, "GaussOver" },
         { g_Look_PSPoint,       sizeof(g_Look_PSPoint),       &m_psPoint, "Point" },
         { g_Look_PSPointResolve, sizeof(g_Look_PSPointResolve), &m_psPointResolve, "PointResolve" },
+        { g_Look_PSSettle,      sizeof(g_Look_PSSettle),      &m_psSettle, "Settle" },
         { g_Look_PSGaussResolve, sizeof(g_Look_PSGaussResolve), &m_psGaussResolve, "GaussResolve" },
     };
     for (const auto& p : ps)
@@ -143,7 +147,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
-    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_blendMix); SAFE_RELEASE(m_profDisjoint); for (auto& q : m_profQ) SAFE_RELEASE(q); m_profQ.clear(); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); SAFE_RELEASE(m_psGaussOver); SAFE_RELEASE(m_vsPoint); SAFE_RELEASE(m_psPoint); SAFE_RELEASE(m_psPointResolve); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
+    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_blendMix); SAFE_RELEASE(m_profDisjoint); for (auto& q : m_profQ) SAFE_RELEASE(q); m_profQ.clear(); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); SAFE_RELEASE(m_psGaussOver); SAFE_RELEASE(m_vsPoint); SAFE_RELEASE(m_vsPointS); SAFE_RELEASE(m_psSettle); Release(m_settle); SAFE_RELEASE(m_psPoint); SAFE_RELEASE(m_psPointResolve); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
     m_device = nullptr; m_context = nullptr; m_eyeW = m_eyeH = 0;
 }
 
@@ -515,7 +519,17 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         const float zero[4] = {};
         const float step = (float)m_gauss;
         const int gw = (int)std::ceil((float)eyeW / step), gh = (int)std::ceil((float)eyeH / step);
-        cb.lk[0] = step; cb.lk[1] = m_gaussSigma; cb.lk[2] = m_gaussSeen; cb.lk[3] = (float)m_gaussEdge;
+        // (Each pixel's own depth settled against the two eyes first, where asked for and the spots are points:
+        // once for a picture and its map, kept while they stand.)
+        const bool settled = m_gaussPoints && m_gaussSettle > 0 && Ensure(m_settle, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16_FLOAT);
+        if (settled && (match || !m_settleHave))
+        {
+            cb.lk[1] = m_settleMargin;
+            Pass(m_psSettle, m_settle, cb, src, result[0]->srv);
+            m_settleHave = true;
+        }
+        if (!settled) m_settleHave = false;
+        cb.lk[0] = step; cb.lk[1] = m_gaussSigma; cb.lk[2] = m_gaussSeen; cb.lk[3] = settled ? (m_gaussSettle > 1 ? 4.0f : 3.0f) : (float)m_gaussEdge;
         const float keepPad3 = cb.pad[3]; cb.pad[3] = m_gaussScramble ? 1.0f : 0.0f;
         m_context->ClearRenderTargetView(m_acc.rtv, zero);
         m_context->ClearRenderTargetView(m_accFar.rtv, zero);
@@ -525,7 +539,8 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
         if (!m_gaussPoints) { m_context->GSSetShader(m_gsGauss, nullptr, 0); m_context->GSSetConstantBuffers(0, 1, &m_cb); }
         m_context->OMSetBlendState(m_blendAdd, nullptr, 0xFFFFFFFF);
-        m_context->VSSetShader(m_gaussPoints ? m_vsPoint : m_vsGauss, nullptr, 0);
+        m_context->VSSetShader(settled ? m_vsPointS : m_gaussPoints ? m_vsPoint : m_vsGauss, nullptr, 0);
+        if (settled) m_context->VSSetShaderResources(3, 1, &m_settle.srv);
         m_context->PSSetShader(m_gaussPoints ? m_psPoint : m_psGauss, nullptr, 0);
         ID3D11ShaderResourceView* vin[2] = { src, result[0]->srv };
         m_context->VSSetShaderResources(0, 2, vin);
@@ -540,6 +555,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             m_context->RSSetViewports(1, &vp);
             m_context->Draw((UINT)((gw * gh + 127) / 128 * 128 * 2), 0);
         }
+        { ID3D11ShaderResourceView* nul1 = nullptr; m_context->VSSetShaderResources(3, 1, &nul1); }
         m_context->GSSetShader(nullptr, nullptr, 0);
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         ID3D11ShaderResourceView* nul3[3] = {};

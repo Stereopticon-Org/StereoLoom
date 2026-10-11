@@ -1546,3 +1546,101 @@ float4 PSPointResolve(VSOut i) : SV_Target
     }
     return float4(acc / max(wsum, 1e-9), cover > g_lk.z ? 1.0 : 0.0);
 }
+
+// ---- Each pixel's own depth, settled against the two eyes -----------------------
+// The map is a texel to four pixels of the picture each way, and its word for a pixel is what lies between
+// its texels. Here every pixel of each eye settles its own: starting from the map's word, a quarter and a
+// half of a texel either side are tried against the other eye -- the pixel and the one each side of it set
+// against what the other eye has where that disparity puts them -- and the best is kept, set between its
+// neighbours by a parabola; but only where it is clearly better than the map's own, so that a flat wall, where
+// every disparity fits alike, stays where the map put it. At an outline the pixel takes the side that fits,
+// and the far side where neither does: it is then hidden from the other eye. Beside the disparity, how well
+// it fitted: 1 well, 0 not at all -- what a spot thrown from this pixel is worth.
+// (tex0: the two eyes, full size. tex1: their disparity, small. g_size: one eye, full size. Out: .r the
+// disparity, in the small map's texels; .g how well it fits.)
+float SettleCost(int ref, float2 c, float d, float3 own[3])
+{
+    const float sh = (ref == 1 ? d : -d) * g_scale.x;
+    float cost = 0.0;
+    [unroll] for (int b = 0; b < 3; ++b)
+    {
+        const float xo = c.x + (float)(b - 1) + sh;
+        const float3 o2 = sqrt(max(tex0.SampleLevel(sampLinear, float2(((float)(1 - ref) * g_size.x + clamp(xo, 0.5, g_size.x - 0.5)) / (2.0 * g_size.x), c.y / g_size.y), 0).rgb, 0.0));
+        cost += dot(abs(own[b] - o2), 1.0 / 9.0);
+        if (xo < 0.0 || xo > g_size.x) cost += 1.0;
+    }
+    return cost;
+}
+float4 PSSettle(VSOut i) : SV_Target
+{
+    const int W = (int)g_size.x;
+    const int ref = (int)i.pos.x >= W ? 1 : 0;
+    const float2 c = float2(i.pos.x - (float)(ref * W), i.pos.y);
+    const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
+    const float2 lo = c / g_scale - 0.5;
+    const int x0 = clamp((int)floor(lo.x), 0, w - 2), y0 = clamp((int)floor(lo.y), 0, h - 2);
+    const float2 f = saturate(lo - float2(x0, y0));
+    const float d00 = tex1.Load(int3(ref * w + x0, y0, 0)).r, d10 = tex1.Load(int3(ref * w + x0 + 1, y0, 0)).r;
+    const float d01 = tex1.Load(int3(ref * w + x0, y0 + 1, 0)).r, d11 = tex1.Load(int3(ref * w + x0 + 1, y0 + 1, 0)).r;
+    const float dHi = max(max(d00, d10), max(d01, d11)), dLo = min(min(d00, d10), min(d01, d11));
+    float3 own[3];
+    [unroll] for (int a = 0; a < 3; ++a)
+        own[a] = sqrt(max(tex0.SampleLevel(sampLinear, float2(((float)ref * g_size.x + clamp(c.x + (float)(a - 1), 0.5, g_size.x - 0.5)) / (2.0 * g_size.x), c.y / g_size.y), 0).rgb, 0.0));
+    float d, cost;
+    [branch] if (dHi - dLo < 1.0)
+    {
+        const float base = lerp(lerp(d00, d10, f.x), lerp(d01, d11, f.x), f.y);
+        float cs[5];
+        [unroll] for (int k = 0; k < 5; ++k) cs[k] = SettleCost(ref, c, base + (float)(k - 2) * 0.25, own);
+        int best = 2;
+        [unroll] for (int m = 0; m < 5; ++m) if (cs[m] < cs[best]) best = m;
+        d = base; cost = cs[2];
+        if (cs[best] < cs[2] - g_lk.y)
+        {
+            const float l = cs[max(best - 1, 0)], r = cs[min(best + 1, 4)], den = l - 2.0 * cs[best] + r;
+            const float sub = (best > 0 && best < 4 && den > 1e-5) ? clamp(0.5 * (l - r) / den, -0.5, 0.5) : 0.0;
+            d = base + ((float)(best - 2) + sub) * 0.25; cost = cs[best];
+        }
+    }
+    else
+    {
+        const float cHi = SettleCost(ref, c, dHi, own), cLo = SettleCost(ref, c, dLo, own);
+        const bool nearSide = cHi <= cLo && cHi <= 0.06;
+        d = nearSide ? dHi : dLo; cost = nearSide ? cHi : cLo;
+    }
+    return float4(d, saturate(1.0 - cost / 0.06), 0, 0);
+}
+// A spot from a pixel whose depth is settled (tex3: PSSettle's, both eyes, full size): VSPoint without the
+// map's own reading, and worth what its fit is.
+PointOut VSPointS(uint id : SV_VertexID)
+{
+    const float step = max(g_lk.x, 1.0);
+    const int gw = (int)ceil(g_size.x / step), gh = (int)ceil(g_size.y / step);
+    const uint per = (uint)(gw * gh);
+    const uint blocks = (per + 127u) / 128u;
+    const uint slot = id % (blocks * 128u);
+    const int ref = (int)(id / (blocks * 128u));
+    const float2 c = (float2((float)(slot % (uint)gw), (float)(min(slot, per - 1u) / (uint)gw)) + 0.5) * step;
+    const int W = (int)g_size.x, H = (int)g_size.y;
+    const float t = g_eye < 0.5 ? g_tL : g_tR;
+    const float2 sv = tex3.Load(int3(ref * W + clamp((int)c.x, 0, W - 1), clamp((int)c.y, 0, H - 1), 0)).rg;
+    const float d = sv.x;
+    const float2 p = c - d * Move((float)ref, t, c / g_size) * g_scale;
+    const float away = abs(t - (float)ref), awayO = abs(t - (float)(1 - ref));
+    const float wOwn = max(1.0 - away, 0.02 * exp(-2.0 * away)), wOther = max(1.0 - awayO, 0.02 * exp(-2.0 * awayO));
+    bool keep = slot < per && !(g_only > -0.5 && g_only < 1.5 && abs(g_only - (float)ref) > 0.5);
+    // (The eye further from the new place: only what the nearer eye does not see.)
+    [branch] if (g_only < -0.5 && away > awayO)
+    {
+        const float xo = c.x + (ref == 1 ? d : -d) * g_scale.x;
+        const float dn = tex3.Load(int3((1 - ref) * W + clamp((int)xo, 0, W - 1), clamp((int)c.y, 0, H - 1), 0)).r;
+        if (xo >= 0.0 && xo < g_size.x && abs(dn - d) < 1.0) keep = false;
+    }
+    PointOut o;
+    o.pos = keep ? float4(p.x / g_size.x * 2.0 - 1.0, 1.0 - p.y / g_size.y * 2.0, 0.5, 1.0) : float4(2.0, 2.0, 2.0, 1.0);
+    // (g_lk.w over 3.5: a spot counts by how well its depth fitted -- never for nothing.)
+    const float worth = g_lk.w > 3.5 ? max(sv.y, 0.15) : 1.0;
+    o.col = float4(tex0.SampleLevel(sampLinear, float2(((float)ref * g_size.x + c.x) / (2.0 * g_size.x), c.y / g_size.y), 0).rgb, wOwn / max(wOwn, wOther) * worth);
+    o.pda = float4(p, d, 1.0);
+    return o;
+}
