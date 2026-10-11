@@ -229,7 +229,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         ok = SUCCEEDED(m_device->CreateTexture2D(&td, nullptr, &m_depthTex)) && SUCCEEDED(m_device->CreateDepthStencilView(m_depthTex, nullptr, &m_dsv));
     }
     if (!ok) return false;
-    if (m_eyeW != eyeW || m_eyeH != eyeH) m_haveMaps = false;
+    if (m_eyeW != eyeW || m_eyeH != eyeH) { m_haveMaps = false; m_picHave = false; }
     m_eyeW = eyeW; m_eyeH = eyeH;
 
     // (Timed one frame in sixteen: five timestamps, read back when they are in.)
@@ -311,7 +311,11 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     // the smaller sizes feed nothing -- not made. They were two fifths of a frame's cost.)
     const bool extOnly = m_extDisp && m_extStage == 2;
     const bool ownLevels = !extOnly || m_plateOn;
-    if (match && ownLevels)
+    // (What is made of the PICTURE alone -- its levels, its own matching at the smaller sizes, how it moved, the
+    // plate -- is made when there is a new picture, and not again when only a new depth for the same picture has
+    // come from the trained matcher: that comes twenty times a second, and each time all of it was made again.)
+    const bool pic = newPicture || !m_picHave;
+    if (pic && ownLevels)
     {
     // 1. The levels.
     sized(0); cb.srcSize[0] = (float)eyeW; cb.srcSize[1] = (float)eyeH;
@@ -334,7 +338,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     {
     for (int k = levels - 1; k >= 0; --k)
     {
-        if (k > 0 && !ownLevels) continue;
+        if (k > 0 && (!ownLevels || !pic)) continue;
         sized(k);
         cb.range = std::ceil(m_maxShare * (float)w[k]) + 1.0f;
         // (7x7 at the two smaller sizes; 5x5 at 1/8, where the window is most of the cost.)
@@ -425,6 +429,9 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         }
     }
     m_haveMaps = true;
+    if (pic)
+    {
+    m_picHave = true;
     // How the picture moved since the one before: from the smallest level to the finest, twice at each.
     m_estHave = false;
     if (m_findMotion && m_plateOn && m_prevHave && m_plateHave)
@@ -481,6 +488,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         est[0] = est[1] = nullptr; m_context->PSSetShaderResources(3, 2, est);
         m_plateCur = 1 - m_plateCur; m_plateHave = true;
         for (int q = 0; q < 4; ++q) m_motion[q] = 0.0f;   // (it was this picture's: the same picture given again has not moved)
+    }
     }
     }
     mark(2);
@@ -584,7 +592,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         const UINT cap = (UINT)(w[0] * h[0] * 2);
         if (m_cellCap != cap)
         {
-            SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0;
+            SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; m_cellsHave = false;
             D3D11_BUFFER_DESC bd{};
             bd.ByteWidth = cap * 4; bd.Usage = D3D11_USAGE_DEFAULT; bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
             bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED; bd.StructureByteStride = 4;
@@ -599,7 +607,11 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         }
         if (m_cellCap)
         {
+        // (The list is of the map alone: made again when the map is -- a new picture or a new depth -- and not for
+        // every move of the head. Made every frame it cost more than the spots it lists.)
+        if (match || !m_cellsHave)
         {
+            m_cellsHave = true;
             m_context->UpdateSubresource(m_cb, 0, nullptr, &cb, 0, 0);
             const UINT none = 0;
             m_context->CSSetShader(m_csCells, nullptr, 0);

@@ -77,22 +77,22 @@ namespace srw
         // the right, the right's at x + d in the left). nullptr: its own again.
         // (keepPlate: the picture has moved on since -- a matcher that answers late, picture after picture: the plate
         // goes on. Else the plate was made with another depth for this same picture, and is begun again.)
-        void SetExternalDisparity(ID3D11Texture2D* tex, bool keepPlate = false) { m_extDisp = tex; m_haveMaps = false; ++m_extSerial; if (!keepPlate) m_plateHave = false; }
+        void SetExternalDisparity(ID3D11Texture2D* tex, bool keepPlate = false) { if ((tex != nullptr) != (m_extDisp != nullptr) || !keepPlate) m_picHave = false; m_extDisp = tex; m_haveMaps = false; ++m_extSerial; if (!keepPlate) m_plateHave = false; }
         // Both eyes of src made small (each w x h, side by side, 8-bit sRGB) for a matcher elsewhere to read back.
         ID3D11Texture2D* Shrink(ID3D11ShaderResourceView* src, int eyeW, int eyeH, int w, int h);
         void MapSize(int eyeW, int eyeH, int& w, int& h) const;
-        void SetExternalStage(int s) { m_extStage = s; m_haveMaps = false; }
-        void SetFuseBias(float b) { m_fuseBias = b; m_haveMaps = false; }
-        void SetFuseEdge(bool on) { m_fuseEdge = on; m_haveMaps = false; }
-        void SetFuseReach(float t) { m_fuseReach = t; m_haveMaps = false; }
-        void SetExternalDilate(int texels) { m_extDilate = texels; m_haveMaps = false; }
-        void SetExternalLeftOnly(bool on) { m_extLeftOnly = on; m_haveMaps = false; ++m_extSerial; }
-        void SetExternalSnap(int passes) { m_extSnap = passes; m_haveMaps = false; ++m_extSerial; }
+        void SetExternalStage(int s) { m_extStage = s; m_haveMaps = false; m_picHave = false; }
+        void SetFuseBias(float b) { m_fuseBias = b; m_haveMaps = false; m_picHave = false; }
+        void SetFuseEdge(bool on) { m_fuseEdge = on; m_haveMaps = false; m_picHave = false; }
+        void SetFuseReach(float t) { m_fuseReach = t; m_haveMaps = false; m_picHave = false; }
+        void SetExternalDilate(int texels) { m_extDilate = texels; m_haveMaps = false; m_picHave = false; }
+        void SetExternalLeftOnly(bool on) { m_extLeftOnly = on; m_haveMaps = false; m_picHave = false; ++m_extSerial; }
+        void SetExternalSnap(int passes) { m_extSnap = passes; m_haveMaps = false; m_picHave = false; ++m_extSerial; }
         void SetExternalSoft(float z) { m_extSoft = z; }   // (at a step in the other matcher's map, its answer stands)
         // The new views by Gaussian splats: every step-th pixel of each eye thrown forward as a soft spot (0: off --
         // each pixel of the new view looked up in the eyes). sigma: a spot's width in its spacings. seen: the weight
         // under which a pixel counts as reached by nothing.
-        void SetGaussian(int step, float sigma = 0.5f, float seen = 0.25f) { m_gauss = step; m_gaussSigma = sigma; m_gaussSeen = seen; }
+        void SetGaussian(int step, float sigma = 0.5f, float seen = 0.25f) { if (step != m_gauss) m_cellsHave = false; m_gauss = step; m_gaussSigma = sigma; m_gaussSeen = seen; }
         // Each pass timed on the graphics card (a test's: it costs a little itself). TakeProfile: the mean ms of each,
         // in the order drawn, since the last asking.
         void SetProfile(bool on) { m_profOn = on; }
@@ -103,10 +103,10 @@ namespace srw
         void SetGaussianPoints(bool on) { m_gaussPoints = on; }
         void SetGaussianOver(bool on) { m_gaussOver = on; }
         void SetGaussianEdge(int mode) { m_gaussEdge = mode; }   // (0 as the map has it; 1 each spot's side asked of the eyes; 2 and its share of each side: soft)   // (at an outline each spot's side asked of the two eyes: VSGauss)
-        void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
+        void SetBase(int base) { m_base = base; m_haveMaps = false; m_picHave = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
-        void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
-        void SetFine(int taps) { m_fine = taps > 0; m_fineR = (float)(taps > 0 ? taps : 1); m_haveMaps = false; }   // (0 off; else the window: 1 3x3, 2 5x5)
+        void SetSpread(int n) { m_spread = n; m_haveMaps = false; m_picHave = false; }
+        void SetFine(int taps) { m_fine = taps > 0; m_fineR = (float)(taps > 0 ? taps : 1); m_haveMaps = false; m_picHave = false; }   // (0 off; else the window: 1 3x3, 2 5x5)
 
         // GPU time of the last timed frame, by stage (ms): the levels, the
         // matching, the geometry, the new views; false while none is in.
@@ -134,7 +134,7 @@ namespace srw
         ID3D11GeometryShader* m_gsGauss = nullptr;
         ID3D11ComputeShader* m_csCells = nullptr;
         ID3D11Buffer*        m_cellBuf = nullptr, *m_cellArgs = nullptr;   // (the cells that have an outline, listed; and how many, as a draw's arguments)
-        ID3D11UnorderedAccessView* m_cellUav = nullptr; ID3D11ShaderResourceView* m_cellSrv = nullptr; UINT m_cellCap = 0;
+        ID3D11UnorderedAccessView* m_cellUav = nullptr; ID3D11ShaderResourceView* m_cellSrv = nullptr; UINT m_cellCap = 0; bool m_cellsHave = false;
         ID3D11VertexShader*  m_vsCell = nullptr;
         ID3D11PixelShader*   m_psGaussMix = nullptr, *m_psGaussOver = nullptr;
         bool  m_gaussScramble = false;  // (the spots drawn in runs from all over the picture, not in its own order: tried 2026-10-12, no quicker -- 20.3 ms against 19.3)
@@ -184,6 +184,7 @@ namespace srw
         Tex   m_extPrep;            // (the other matcher's answer as prepared: kept for the pictures until its next)
         unsigned m_extSerial = 1, m_extPrepSerial = 0;
         int   m_lkFinest = 1;       // (the finest size the motion finder works at: 0 the map's own)
+        bool  m_picHave = false;    // (what is made of the picture alone is made: Render)
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
         int   m_spread = 1;
         int   m_base = 0;

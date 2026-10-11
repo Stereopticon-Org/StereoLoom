@@ -415,6 +415,13 @@ static int RunLive(const wchar_t* file)
     LookAround look;
     if (!srv || !look.Initialize(dev, ctx)) { fwprintf(stderr, L"look-around init failed\n"); return 1; }
     look.SetPlate(false); look.SetExternalStage(2); look.SetExternalLeftOnly(true);
+    // (LOOKTEST_LIVEPLATE: earlier pictures remembered. LOOKTEST_GAUSS: the way of drawing. LOOKTEST_VIDEOFPS: a new
+    // picture that many times a second -- a video -- and the loops between only the head moving; 0: every loop.)
+    if (_wgetenv(L"LOOKTEST_LIVEPLATE")) look.SetPlate(true);
+    if (const wchar_t* gs = _wgetenv(L"LOOKTEST_GAUSS")) look.SetGaussian(_wtoi(gs));
+    const double videoFps = _wgetenv(L"LOOKTEST_VIDEOFPS") ? _wtof(_wgetenv(L"LOOKTEST_VIDEOFPS")) : 0.0;
+    double nextPicture = 0.0;
+    look.SetProfile(true);
     NeuralDepth neural;
     wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring dir = exe; const size_t cut = dir.find_last_of(L"/\\"); if (cut != std::wstring::npos) dir.resize(cut);
@@ -433,8 +440,12 @@ static int RunLive(const wchar_t* file)
     const bool trace = _wgetenv(L"LOOKTEST_TRACE") != nullptr;   // (each step's time printed)
     while (GetTickCount64() - t0 < (ULONGLONG)seconds * 1000)
     {
-        ++loops; ++serial;                                   // (every loop a "new picture": a video)
-        if (!copying && neural.Remaining() <= 14.0)
+        ++loops;
+        bool fresh = true;
+        if (videoFps > 0.0) { const double ts = (double)(GetTickCount64() - t0) / 1000.0; fresh = ts >= nextPicture; if (fresh) nextPicture = ts + 1.0 / videoFps; }
+        if (fresh) ++serial;
+        static unsigned submitted = 0;   // (as SR Loom: a picture is handed over once)
+        if (!copying && neural.Remaining() <= 14.0 && submitted != serial && ((submitted = serial), true))
         {
             neural.NetSize(aspect, 736, nw, nh);
             ID3D11Texture2D* shrunk = look.Shrink(srv, ew, eh, nw, nh);
@@ -475,7 +486,7 @@ static int RunLive(const wchar_t* file)
         }
         LookAround::View v; const float sway = 0.4f * std::sin((float)(GetTickCount64() - t0) * 0.002f);
         v.tL = sway; v.tR = 1.0f + sway;
-        look.Render(srv, ew, eh, v, true);
+        look.Render(srv, ew, eh, v, fresh);
         ctx->Flush();
         // (Paced as a display paces SR Loom -- LOOKTEST_HZ, 160 unless said; 0: as fast as it goes. Unpaced, the
         // card's queue is always full and the picture read back waits behind it: no measure of the real thing.)
@@ -512,6 +523,7 @@ static int RunLive(const wchar_t* file)
             for (size_t k = 0; k < (size_t)W * H; k += 64) { in += (px[k * 4] + px[k * 4 + 1] + px[k * 4 + 2]) / 3.0; ++ni; }
             wprintf(L"%4.1f s: %d loops, %d depth answers (%.0f ms each), %d backgrounds (%.0f ms each); output brightness %.1f (picture %.1f), wholly black pixels %.1f%%\n",
                     (now - t0) / 1000.0, loops, answers, answers ? ansMs / answers : 0.0, layers, layers ? layMs / layers : 0.0, n ? sum / n : 0.0, ni ? in / ni : 0.0, n ? 100.0 * black / n : 0.0);
+            { std::vector<std::pair<std::string, double>> pr; if (look.TakeProfile(pr)) { double all = 0; wprintf(L"        GPU ms a frame by pass:"); for (const auto& e : pr) { all += e.second; if (e.second >= 0.02) wprintf(L" %hs %.2f |", e.first.c_str(), e.second); } wprintf(L" all %.2f\n", all); } }
             { double tp = 0, tr = 0, ta = 0; neural.Times(tp, tr, ta); wprintf(L"        the matcher's thread: inputs %.1f ms, the model %.1f ms, all %.1f ms\n", tp, tr, ta); }
             lastPrint = now; loops = 0; answers = 0; layers = 0; ansMs = 0; layMs = 0;
         }
