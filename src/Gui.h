@@ -230,6 +230,7 @@ namespace srw
         std::string              m_lookModel;                      // Settings LookModel (the trained matcher's file; none: stereo.onnx)
         std::vector<std::string> m_lookModels;                     // the .onnx files in the neural folder, listed when the list is opened
         bool                     m_lookLive              = true;   // Settings LookLive (the trained matcher on every picture)
+        bool                     m_lookPlate             = false;  // Settings LookPlate (what was in sight in earlier pictures kept, for what is uncovered)
         bool                     m_lookPaint             = true;   // Settings LookPaint (a painted background for a picture that stays)
         bool                     m_eyeOrder              = false;  // Automatic works out the eye order
         int                      m_weaverChoice          = 0;      // Settings WeaverChoice (0 modern, 1-3 legacy ACT off/static/dynamic)

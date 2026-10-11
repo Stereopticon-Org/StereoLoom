@@ -458,6 +458,7 @@ bool Gui::Init(HWND mainHwnd, ID3D11Device* device, ID3D11DeviceContext* context
     m_lookGauss             = Settings::ReadLookGauss();
     m_lookLive              = Settings::ReadLookLive();
     m_lookPaint             = Settings::ReadLookPaint();
+    m_lookPlate             = Settings::ReadLookPlate();
     { const std::wstring lm = Settings::ReadLookModel(); m_lookModel.assign(lm.begin(), lm.end()); }
     m_eyeOrder              = Settings::ReadEyeOrderDetect();
     // The weave-skip test never survives a restart (a black 3D screen at
@@ -2974,6 +2975,15 @@ bool Gui::Render(GuiState& state)
                         "every four pixels: quicker and softer. Gaussian Outlines draws the standard way and uses spots only "
                         "along the outlines of things, where they matter: nearly as quick as Standard. Applies straight away.");
                 }
+                // Fourth row: what earlier pictures showed, kept.
+                if (pairToggle2("Remember Background", m_lookPlate, halfW))
+                {
+                    m_lookPlate = !m_lookPlate;
+                    Settings::WriteLookPlate(m_lookPlate);
+                }
+                tip("Experimental. Keeps what earlier pictures showed behind things, following the picture as the camera "
+                    "pans, so that looking round something shows the background that was really there a moment ago. "
+                    "Works with every Draw mode. Costs a little more of the graphics card. Applies straight away.");
             }
         }
         }   // (SETTINGS)

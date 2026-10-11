@@ -213,6 +213,7 @@ namespace srw::Settings
     bool ReadLookLive() { return ReadDword(kSettingsKey, L"LookLive", 1) != 0; }
     void WriteLookLive(bool on) { WriteDword(kSettingsKey, L"LookLive", on ? 1 : 0); }
     bool ReadLookPaint() { return ReadDword(kSettingsKey, L"LookPaint", 1) != 0; }
+    void WriteLookPlate(bool on) { WriteDword(kSettingsKey, L"LookPlate", on ? 1 : 0); }
     void WriteLookPaint(bool on) { WriteDword(kSettingsKey, L"LookPaint", on ? 1 : 0); }
     bool ReadLookPlate() { return ReadDword(kSettingsKey, L"LookPlate", 0) != 0; }
     int  ReadLookPaintGap() { const int v = (int)ReadDword(kSettingsKey, L"LookPaintGap", 200); return v >= 0 && v <= 5000 ? v : 200; }

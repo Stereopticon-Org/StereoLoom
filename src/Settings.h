@@ -131,6 +131,7 @@ namespace srw::Settings
     void WriteLookLive(bool on);
     bool ReadLookPaint();
     void WriteLookPaint(bool on);
+    void WriteLookPlate(bool on);
     // 1: the look-around keeps a plate of what was in sight in earlier pictures and finds how each picture moved (about
     // 3 ms a new picture); 0, as a rule: not. LookPlate.
     bool ReadLookPlate();
