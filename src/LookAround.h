@@ -14,6 +14,9 @@
 
 #include "Common.h"
 #include <d3d11.h>
+#include <string>
+#include <vector>
+#include <unordered_map>
 
 namespace srw
 {
@@ -90,6 +93,10 @@ namespace srw
         // each pixel of the new view looked up in the eyes). sigma: a spot's width in its spacings. seen: the weight
         // under which a pixel counts as reached by nothing.
         void SetGaussian(int step, float sigma = 0.5f, float seen = 0.25f) { m_gauss = step; m_gaussSigma = sigma; m_gaussSeen = seen; }
+        // Each pass timed on the graphics card (a test's: it costs a little itself). TakeProfile: the mean ms of each,
+        // in the order drawn, since the last asking.
+        void SetProfile(bool on) { m_profOn = on; }
+        bool TakeProfile(std::vector<std::pair<std::string, double>>& out);
         void SetGaussianEdge(int mode) { m_gaussEdge = mode; }   // (0 as the map has it; 1 each spot's side asked of the eyes; 2 and its share of each side: soft)   // (at an outline each spot's side asked of the two eyes: VSGauss)
         void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
@@ -112,7 +119,12 @@ namespace srw
         ID3D11DeviceContext* m_context = nullptr;
         ID3D11VertexShader*  m_vsFull = nullptr, *m_vsSplat = nullptr, *m_vsGauss = nullptr;
         ID3D11PixelShader*   m_psGauss = nullptr, *m_psGaussResolve = nullptr;
-        ID3D11BlendState*    m_blendAdd = nullptr;
+        ID3D11BlendState*    m_blendAdd = nullptr, *m_blendMix = nullptr;
+        void Prof(const char* name);
+        bool m_profOn = false, m_profFrame = false, m_profPending = false; ID3D11Query* m_profDisjoint = nullptr;
+        std::vector<ID3D11Query*> m_profQ; std::vector<const char*> m_profNames; size_t m_profUsed = 0;
+        std::vector<std::pair<std::string, double>> m_profSum; int m_profFrames = 0;
+        std::unordered_map<ID3D11PixelShader*, const char*> m_psNames;
         Tex   m_accFar;             // (... the layer behind the nearest)
         ID3D11GeometryShader* m_gsGauss = nullptr;
         ID3D11ComputeShader* m_csCells = nullptr;

@@ -188,6 +188,17 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
         }
         if (n) wprintf(L"GPU ms a frame (mean of %d): levels %.2f, matching %.2f, geometry %.2f, new views %.2f | total %.2f\n",
                        n, sum[0] / n, sum[1] / n, sum[2] / n, sum[3] / n, (sum[0] + sum[1] + sum[2] + sum[3]) / n);
+        // (... and pass by pass.)
+        look.SetProfile(true);
+        for (int f = 0; f < 240; ++f) { look.Render(srv, ew, eh, v); ctx->Flush(); if (f % 8 == 7) Sleep(5); }
+        std::vector<std::pair<std::string, double>> pr;
+        if (look.TakeProfile(pr))
+        {
+            double all = 0; wprintf(L"GPU ms by pass:");
+            for (const auto& e : pr) { if (e.second >= 0.005) wprintf(L" %hs %.2f |", e.first.c_str(), e.second); all += e.second; }
+            wprintf(L" all %.2f\n", all);
+        }
+        look.SetProfile(false);
     }
     if (!outdir.empty())
     {

@@ -58,39 +58,43 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         bl.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE; bl.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE; bl.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
         bl.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
         if (SUCCEEDED(hr)) hr = device->CreateBlendState(&bl, &m_blendAdd);
+        // (... and the outlines' spots mixed onto the standard picture by the second colour's alpha; seen: the larger.)
+        bl.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC1_ALPHA; bl.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC1_ALPHA;
+        bl.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_MAX;
+        if (SUCCEEDED(hr)) hr = device->CreateBlendState(&bl, &m_blendMix);
     }
-    struct { const void* code; size_t size; ID3D11PixelShader** out; } ps[] = {
-        { g_Look_PSDownFirst,   sizeof(g_Look_PSDownFirst),   &m_psDownFirst },
-        { g_Look_PSDownNext,    sizeof(g_Look_PSDownNext),    &m_psDownNext },
-        { g_Look_PSGrad,        sizeof(g_Look_PSGrad),        &m_psGrad },
-        { g_Look_PSMatchFull,   sizeof(g_Look_PSMatchFull),   &m_psMatchFull },
-        { g_Look_PSMatchRefine, sizeof(g_Look_PSMatchRefine), &m_psMatchRefine },
-        { g_Look_PSCheck,       sizeof(g_Look_PSCheck),       &m_psCheck },
-        { g_Look_PSFill,        sizeof(g_Look_PSFill),        &m_psFill },
-        { g_Look_PSMedian,      sizeof(g_Look_PSMedian),      &m_psMedian },
-        { g_Look_PSSpread,      sizeof(g_Look_PSSpread),      &m_psSpread },
-        { g_Look_PSFine,        sizeof(g_Look_PSFine),        &m_psFine },
-        { g_Look_PSGuide,       sizeof(g_Look_PSGuide),       &m_psGuide },
-        { g_Look_PSFuse,        sizeof(g_Look_PSFuse),        &m_psFuse },
-        { g_Look_PSDilate,      sizeof(g_Look_PSDilate),      &m_psDilate },
-        { g_Look_PSSplat,       sizeof(g_Look_PSSplat),       &m_psSplat },
-        { g_Look_PSHole,        sizeof(g_Look_PSHole),        &m_psHole },
-        { g_Look_PSCompose,     sizeof(g_Look_PSCompose),     &m_psCompose },
-        { g_Look_PSUnseen,      sizeof(g_Look_PSUnseen),      &m_psUnseen },
-        { g_Look_PSPlate,       sizeof(g_Look_PSPlate),       &m_psPlate },
-        { g_Look_PSFillDown,    sizeof(g_Look_PSFillDown),    &m_psFillDown },
-        { g_Look_PSShrink,      sizeof(g_Look_PSShrink),      &m_psShrink },
-        { g_Look_PSRight,       sizeof(g_Look_PSRight),       &m_psRight },
-        { g_Look_PSRightFill,   sizeof(g_Look_PSRightFill),   &m_psRightFill },
-        { g_Look_PSSnap,        sizeof(g_Look_PSSnap),        &m_psSnap },
-        { g_Look_PSLKSum,       sizeof(g_Look_PSLKSum),       &m_psLKSum },
-        { g_Look_PSLKSolve,     sizeof(g_Look_PSLKSolve),     &m_psLKSolve },
-        { g_Look_PSGauss,       sizeof(g_Look_PSGauss),       &m_psGauss },
-        { g_Look_PSGaussMix,    sizeof(g_Look_PSGaussMix),    &m_psGaussMix },
-        { g_Look_PSGaussResolve, sizeof(g_Look_PSGaussResolve), &m_psGaussResolve },
+    struct { const void* code; size_t size; ID3D11PixelShader** out; const char* name; } ps[] = {
+        { g_Look_PSDownFirst,   sizeof(g_Look_PSDownFirst),   &m_psDownFirst, "DownFirst" },
+        { g_Look_PSDownNext,    sizeof(g_Look_PSDownNext),    &m_psDownNext, "DownNext" },
+        { g_Look_PSGrad,        sizeof(g_Look_PSGrad),        &m_psGrad, "Grad" },
+        { g_Look_PSMatchFull,   sizeof(g_Look_PSMatchFull),   &m_psMatchFull, "MatchFull" },
+        { g_Look_PSMatchRefine, sizeof(g_Look_PSMatchRefine), &m_psMatchRefine, "MatchRefine" },
+        { g_Look_PSCheck,       sizeof(g_Look_PSCheck),       &m_psCheck, "Check" },
+        { g_Look_PSFill,        sizeof(g_Look_PSFill),        &m_psFill, "Fill" },
+        { g_Look_PSMedian,      sizeof(g_Look_PSMedian),      &m_psMedian, "Median" },
+        { g_Look_PSSpread,      sizeof(g_Look_PSSpread),      &m_psSpread, "Spread" },
+        { g_Look_PSFine,        sizeof(g_Look_PSFine),        &m_psFine, "Fine" },
+        { g_Look_PSGuide,       sizeof(g_Look_PSGuide),       &m_psGuide, "Guide" },
+        { g_Look_PSFuse,        sizeof(g_Look_PSFuse),        &m_psFuse, "Fuse" },
+        { g_Look_PSDilate,      sizeof(g_Look_PSDilate),      &m_psDilate, "Dilate" },
+        { g_Look_PSSplat,       sizeof(g_Look_PSSplat),       &m_psSplat, "Splat" },
+        { g_Look_PSHole,        sizeof(g_Look_PSHole),        &m_psHole, "Hole" },
+        { g_Look_PSCompose,     sizeof(g_Look_PSCompose),     &m_psCompose, "Compose" },
+        { g_Look_PSUnseen,      sizeof(g_Look_PSUnseen),      &m_psUnseen, "Unseen" },
+        { g_Look_PSPlate,       sizeof(g_Look_PSPlate),       &m_psPlate, "Plate" },
+        { g_Look_PSFillDown,    sizeof(g_Look_PSFillDown),    &m_psFillDown, "FillDown" },
+        { g_Look_PSShrink,      sizeof(g_Look_PSShrink),      &m_psShrink, "Shrink" },
+        { g_Look_PSRight,       sizeof(g_Look_PSRight),       &m_psRight, "Right" },
+        { g_Look_PSRightFill,   sizeof(g_Look_PSRightFill),   &m_psRightFill, "RightFill" },
+        { g_Look_PSSnap,        sizeof(g_Look_PSSnap),        &m_psSnap, "Snap" },
+        { g_Look_PSLKSum,       sizeof(g_Look_PSLKSum),       &m_psLKSum, "LKSum" },
+        { g_Look_PSLKSolve,     sizeof(g_Look_PSLKSolve),     &m_psLKSolve, "LKSolve" },
+        { g_Look_PSGauss,       sizeof(g_Look_PSGauss),       &m_psGauss, "Gauss" },
+        { g_Look_PSGaussMix,    sizeof(g_Look_PSGaussMix),    &m_psGaussMix, "GaussMix" },
+        { g_Look_PSGaussResolve, sizeof(g_Look_PSGaussResolve), &m_psGaussResolve, "GaussResolve" },
     };
     for (const auto& p : ps)
-        if (SUCCEEDED(hr)) hr = device->CreatePixelShader(p.code, p.size, nullptr, p.out);
+        if (SUCCEEDED(hr)) { hr = device->CreatePixelShader(p.code, p.size, nullptr, p.out); if (SUCCEEDED(hr)) m_psNames[*p.out] = p.name; }
 
     D3D11_BUFFER_DESC bd{};
     bd.ByteWidth = sizeof(CB); bd.Usage = D3D11_USAGE_DEFAULT; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
@@ -131,7 +135,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
-    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
+    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_blendMix); SAFE_RELEASE(m_profDisjoint); for (auto& q : m_profQ) SAFE_RELEASE(q); m_profQ.clear(); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
     m_device = nullptr; m_context = nullptr; m_eyeW = m_eyeH = 0;
 }
 
@@ -167,6 +171,7 @@ void LookAround::Pass(ID3D11PixelShader* ps, const Tex& target, const CB& cb, ID
     ID3D11ShaderResourceView* srvs[3] = { t0, t1, t2 };
     m_context->PSSetShaderResources(0, 3, srvs);
     m_context->Draw(3, 0);
+    if (m_profFrame) { const auto it = m_psNames.find(ps); Prof(it != m_psNames.end() ? it->second : "pass"); }
     ID3D11ShaderResourceView* nulls[3] = {};
     m_context->PSSetShaderResources(0, 3, nulls);
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -227,7 +232,37 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             m_timePending = false;
         }
     }
-    m_timing = !m_timePending && (m_frame++ % 16) == 0;
+    // (Each pass timed, where asked for -- SetProfile: a timestamp after every pass, read back when all are in.)
+    if (m_profPending && m_profDisjoint)
+    {
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj{};
+        if (m_context->GetData(m_profDisjoint, &dj, sizeof(dj), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK)
+        {
+            std::vector<UINT64> v(m_profUsed); bool ready = true;
+            for (size_t k = 0; k < m_profUsed && ready; ++k) ready = m_context->GetData(m_profQ[k], &v[k], sizeof(UINT64), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK;
+            if (ready)
+            {
+                if (!dj.Disjoint && dj.Frequency > 0)
+                {
+                    for (size_t k = 1; k < m_profUsed; ++k)
+                    {
+                        const double ms = (double)(v[k] - v[k - 1]) * 1000.0 / (double)dj.Frequency;
+                        auto it = std::find_if(m_profSum.begin(), m_profSum.end(), [&](const std::pair<std::string, double>& e) { return e.first == m_profNames[k]; });
+                        if (it == m_profSum.end()) m_profSum.emplace_back(m_profNames[k], ms); else it->second += ms;
+                    }
+                    ++m_profFrames;
+                }
+                m_profPending = false;
+            }
+        }
+    }
+    m_profFrame = m_profOn && !m_profPending;
+    if (m_profFrame)
+    {
+        if (!m_profDisjoint) { D3D11_QUERY_DESC qd{ D3D11_QUERY_TIMESTAMP_DISJOINT, 0 }; m_device->CreateQuery(&qd, &m_profDisjoint); }
+        if (m_profDisjoint) { m_context->Begin(m_profDisjoint); m_profUsed = 0; m_profNames.clear(); Prof("start"); } else m_profFrame = false;
+    }
+    m_timing = !m_profOn && !m_timePending && (m_frame++ % 16) == 0;
     auto mark = [&](int k) {
         if (!m_timing) return;
         if (!m_ts[k]) { D3D11_QUERY_DESC qd{ D3D11_QUERY_TIMESTAMP, 0 }; m_device->CreateQuery(&qd, &m_ts[k]); }
@@ -458,6 +493,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         m_context->VSSetShaderResources(0, 1, &nul);
         m_context->OMSetRenderTargets(0, nullptr, nullptr);
         m_context->OMSetDepthStencilState(nullptr, 0);
+        Prof("geometry thrown forward");
         Pass(m_psHole, m_targetFilled, cb, m_target.srv);
     }
     mark(3);
@@ -503,12 +539,12 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         m_context->PSSetShaderResources(0, 3, nul3);
         m_context->OMSetRenderTargets(0, nullptr, nullptr);
         m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+        Prof("Gaussian spots");
         Pass(m_psGaussResolve, m_out[0], cb, m_acc.srv, m_accFar.srv, m_cover.srv);
     }
     else
     Pass(m_psCompose, m_out[0], cb, src, result[0]->srv, m_targetFilled.srv);
-    if (m_gauss == 3 && Ensure(m_acc, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_accFar, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
-        Ensure(m_cover, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16_FLOAT) && Ensure(m_mix, 2 * eyeW, eyeH, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB))
+    if (m_gauss == 3 && Ensure(m_acc, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_cover, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16_FLOAT))
     {
         // Gaussian splats at the outlines only, over the standard picture. The cells of the small map that have
         // an outline are listed (CSCells); sixteen spots are then drawn for each listed.
@@ -545,11 +581,14 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             m_context->CSSetShaderResources(1, 1, &noSrv);
             m_context->CSSetShader(nullptr, nullptr, 0);
             m_context->CopyStructureCount(m_cellArgs, 4, m_cellUav);
+            Prof("list outline cells");
         }
         m_context->ClearRenderTargetView(m_acc.rtv, zero);
-        m_context->ClearRenderTargetView(m_accFar.rtv, zero);
         m_context->ClearRenderTargetView(m_cover.rtv, zero);
-        ID3D11RenderTargetView* three[3] = { m_acc.rtv, m_accFar.rtv, m_cover.rtv };
+        Prof("outline buffers cleared");
+        // (The layer behind is not kept here: a near spot's share is laid over the standard picture, which has what
+        // is behind already -- and a third fewer bytes are cleared and written.)
+        ID3D11RenderTargetView* three[3] = { m_acc.rtv, nullptr, m_cover.rtv };
         m_context->OMSetRenderTargets(3, three, nullptr);
         m_context->OMSetBlendState(m_blendAdd, nullptr, 0xFFFFFFFF);
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
@@ -578,11 +617,10 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         m_context->PSSetShaderResources(0, 3, nul3);
         m_context->OMSetRenderTargets(0, nullptr, nullptr);
         m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-        m_context->PSSetShaderResources(3, 1, &m_out[0].srv);
-        Pass(m_psGaussMix, m_mix, cb, m_acc.srv, m_accFar.srv, m_cover.srv);
-        ID3D11ShaderResourceView* nul = nullptr;
-        m_context->PSSetShaderResources(3, 1, &nul);
-        m_context->CopyResource(m_out[0].tex, m_mix.tex);
+        Prof("outline spots");
+        m_context->OMSetBlendState(m_blendMix, nullptr, 0xFFFFFFFF);
+        Pass(m_psGaussMix, m_out[0], cb, m_acc.srv, nullptr, m_cover.srv);
+        m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
         }
     }
     // The far side of things, level by level, for what neither eye saw.
@@ -624,7 +662,25 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     { ID3D11ShaderResourceView* fa[2] = { nullptr, nullptr }; m_context->PSSetShaderResources(3, 2, fa); }
     mark(4);
     if (m_timing) { m_context->End(m_disjoint); m_timePending = true; m_timing = false; }
+    if (m_profFrame) { Prof("the rest"); m_context->End(m_profDisjoint); m_profPending = true; m_profFrame = false; }
     m_context->RSSetState(nullptr);
+    return true;
+}
+
+void LookAround::Prof(const char* name)
+{
+    if (!m_profFrame) return;
+    if (m_profUsed == m_profQ.size()) { ID3D11Query* q = nullptr; D3D11_QUERY_DESC qd{ D3D11_QUERY_TIMESTAMP, 0 }; if (FAILED(m_device->CreateQuery(&qd, &q))) return; m_profQ.push_back(q); }
+    m_context->End(m_profQ[m_profUsed++]);
+    m_profNames.push_back(name);
+}
+
+bool LookAround::TakeProfile(std::vector<std::pair<std::string, double>>& out)
+{
+    if (m_profFrames <= 0) return false;
+    out = m_profSum;
+    for (auto& e : out) e.second /= (double)m_profFrames;
+    m_profSum.clear(); m_profFrames = 0;
     return true;
 }
 

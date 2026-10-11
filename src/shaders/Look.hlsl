@@ -1248,6 +1248,23 @@ GaussPt GaussSpot(int ref, float2 c)
     const bool one = dHi - dLo < 1.0;
     const float dNear = tex1.Load(int3(ref * w + clamp((int)floor(c.x / g_scale.x), 0, w - 1), clamp((int)floor(c.y / g_scale.y), 0, h - 1), 0)).r;
     float d1 = one ? lerp(lerp(d00, d10, f.x), lerp(d01, d11, f.x), f.y) : dNear, d2 = d1, share = 1.0;
+    // (The eye further from the new place: only what the nearer eye does not see is drawn of it. Asked first,
+    // before the outline's work: where the nearer eye's own map has both the surfaces this spot could be on,
+    // there is nothing to do here.)
+    const float awayE = abs(t - (float)ref), awayOE = abs(t - (float)(1 - ref));
+    [branch] if (g_only < -0.5 && awayE > awayOE)
+    {
+        bool seenAll = true;
+        [unroll] for (int e = 0; e < 2; ++e)
+        {
+            const float dq = one ? d1 : (e == 0 ? dHi : dLo);
+            const float2 lm = c / g_scale + float2(ref == 1 ? dq : -dq, 0.0);
+            const bool inside = lm.x >= 0.0 && lm.x < (float)w && lm.y >= 0.0 && lm.y < (float)h;
+            const float dn = tex1.Load(int3((1 - ref) * w + clamp((int)floor(lm.x), 0, w - 1), clamp((int)floor(lm.y), 0, h - 1), 0)).r;
+            seenAll = seenAll && inside && abs(dn - dq) < 1.0;
+        }
+        if (seenAll) { GaussPt z; z.cm = 0; z.col = 0; z.dd = 0; z.keep = 0.0; return z; }
+    }
     // (At an outline -- the four are not one surface -- the map is a texel coarse, and its texels are four
     // pixels of the picture: which side of the outline THIS pixel is on, and how much of it, is asked of the
     // two eyes themselves. The pixel and the two beside it are set against what the other eye has where the
@@ -1414,20 +1431,27 @@ void CSCells(uint3 id : SV_DispatchThreadID)
         if (max(max(d00, d10), max(d01, d11)) - min(min(d00, d10), min(d01, d11)) >= 1.0) g_cellsOut.Append((uint)(y0 * 2 * w + X));
     }
 }
-// (tex0: the near layer; tex1: the far; tex2: the near's whole weight and the cover; tex3: the new view made
-// the standard way. The spots over it, by how much of the pixel they cover; a near spot's share laid over the
-// far spots where there are any, else over the standard picture.)
-float4 PSGaussMix(VSOut i) : SV_Target
+// (tex0: the near layer; tex1: the far; tex2: the near's whole weight and the cover. Drawn ONTO the new view
+// made the standard way, mixed in by the second colour's alpha (dual-source blending) -- so nothing is
+// written, and next to nothing read, where no spot landed. The spots by how much of the pixel the NEAR layer
+// covers: spots of what is behind the standard picture's own surface are only what a near spot's share is
+// laid over, never drawn for themselves. A near spot's share is laid over the far spots where there are
+// any, else over the standard picture. .a: seen, the larger of the two kept.)
+struct MixOut { float4 c : SV_Target0; float4 f : SV_Target1; };
+MixOut PSGaussMix(VSOut i)
 {
     const int3 p = int3((int)i.pos.x, (int)i.pos.y, 0);
-    const float4 n = tex0.Load(p), b = tex1.Load(p), st = tex3.Load(p);
     const float2 wc = tex2.Load(p).rg;
-    const float3 under = b.a > 1e-7 ? b.rgb / b.a : st.rgb;
-    const float share = wc.x > 1e-7 ? saturate(n.a / wc.x) : 0.0;
-    const float3 g = n.a > 1e-9 ? lerp(under, n.rgb / n.a, share) : under;
-    // (By the NEAR layer's cover alone: spots of what is behind the standard picture's own surface are only
-    // what a near spot's share is laid over, never drawn for themselves.)
-    float k = saturate((wc.x - 0.15) / 0.5);
-    if (n.a < 1e-9) k = 0.0;
-    return float4(lerp(st.rgb, g, k), max(st.a, k > 0.5 ? 1.0 : 0.0));
+    const float k = saturate((wc.x - 0.15) / 0.5);
+    if (k <= 0.0) discard;
+    const float4 n = tex0.Load(p), b = tex1.Load(p);
+    if (n.a < 1e-9) discard;
+    const float share = saturate(n.a / wc.x);
+    const float3 cn = n.rgb / n.a;
+    MixOut o;
+    const bool behind = b.a > 1e-7;
+    o.c = float4(behind ? lerp(b.rgb / b.a, cn, share) : cn, k > 0.5 ? 1.0 : 0.0);
+    const float m = behind ? k : share * k;
+    o.f = float4(m, m, m, m);
+    return o;
 }
