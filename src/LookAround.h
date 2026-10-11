@@ -90,7 +90,7 @@ namespace srw
         // each pixel of the new view looked up in the eyes). sigma: a spot's width in its spacings. seen: the weight
         // under which a pixel counts as reached by nothing.
         void SetGaussian(int step, float sigma = 0.5f, float seen = 0.25f) { m_gauss = step; m_gaussSigma = sigma; m_gaussSeen = seen; }
-        void SetGaussianEdge(bool on) { m_gaussEdge = on; }   // (at an outline each spot's side asked of the two eyes: VSGauss)
+        void SetGaussianEdge(int mode) { m_gaussEdge = mode; }   // (0 as the map has it; 1 each spot's side asked of the eyes; 2 and its share of each side: soft)   // (at an outline each spot's side asked of the two eyes: VSGauss)
         void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
         void SetSpread(int n) { m_spread = n; m_haveMaps = false; }
@@ -113,9 +113,11 @@ namespace srw
         ID3D11VertexShader*  m_vsFull = nullptr, *m_vsSplat = nullptr, *m_vsGauss = nullptr;
         ID3D11PixelShader*   m_psGauss = nullptr, *m_psGaussResolve = nullptr;
         ID3D11BlendState*    m_blendAdd = nullptr;
+        Tex   m_accFar;             // (... the layer behind the nearest)
+        ID3D11GeometryShader* m_gsGauss = nullptr;
         Tex   m_cover;              // (... and how much of each pixel they cover)
         Tex   m_acc;                // (Gaussian splats: weighted colour and weight, added up)
-        int   m_gauss = 0; float m_gaussSigma = 0.5f, m_gaussSeen = 0.25f; bool m_gaussEdge = true;
+        int   m_gauss = 0; float m_gaussSigma = 0.5f, m_gaussSeen = 0.25f; int m_gaussEdge = 2;
         ID3D11PixelShader*   m_psDownFirst = nullptr, *m_psDownNext = nullptr, *m_psGrad = nullptr, *m_psMatchFull = nullptr,
                             *m_psMatchRefine = nullptr, *m_psCheck = nullptr, *m_psFill = nullptr, *m_psMedian = nullptr, *m_psSpread = nullptr, *m_psFine = nullptr, *m_psGuide = nullptr, *m_psFuse = nullptr, *m_psDilate = nullptr,
                             *m_psSplat = nullptr, *m_psHole = nullptr, *m_psCompose = nullptr, *m_psUnseen = nullptr, *m_psPlate = nullptr, *m_psFillDown = nullptr, *m_psShrink = nullptr, *m_psRight = nullptr, *m_psRightFill = nullptr, *m_psSnap = nullptr, *m_psLKSum = nullptr, *m_psLKSolve = nullptr;

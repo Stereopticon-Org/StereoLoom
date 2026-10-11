@@ -1211,23 +1211,36 @@ float4 PSSnap(VSOut i) : SV_Target
 // from the new place, as a Gaussian -- a soft round spot of its colour, its
 // middle where the pixel's middle goes, as wide as the pixel and stretched
 // along the row where the surface it lies on is stretched by the move. Where
-// spots overlap they are mixed by their weights. A spot of a surface that is
-// behind the nearest surface at the place it lands (tex2, the new views'
-// disparity) is not drawn: what is hidden stays hidden.
+// spots overlap they are mixed by their weights.
+//
+// Two layers are added up apart: the spots on the nearest surface at the place
+// they land (tex2, the new views' disparity), and those behind it. A pixel on
+// an outline is some of the thing and some of what is behind it: it is thrown
+// twice, as a spot at the thing's depth with its share of the thing, and one at
+// the far side's depth with the rest. The near layer is then laid over the far
+// by its share -- so an outline is soft where the picture has it soft.
 // (g_size: one eye, full size. g_srcSize: the small maps'. tex0: the two eyes.
 // tex1: their disparity, small. g_lk.x: pixels a spot, each way. g_lk.y: a
-// spot's width (sigma) in its own spacings. Six vertices a spot, both eyes'
-// spots one after the other; drawn once for each new view, into its half.)
-struct GaussOut { float4 pos : SV_POSITION; float2 off : TEXCOORD0; nointerpolation float4 col : TEXCOORD1; nointerpolation float d : TEXCOORD2; };
-GaussOut VSGauss(uint id : SV_VertexID)
+// spot's width (sigma) in its own spacings. g_lk.z: the cover under which a
+// pixel counts as reached by nothing. g_lk.w: 1 the outlines asked of the eyes.
+// One point a spot, both eyes' one after the other, made a quad or two by
+// GSGauss; drawn once for each new view, into its half.)
+struct GaussPt
+{
+    float4 cm : TEXCOORD0;      // the spot's middle in its eye (pixels); how it moves a disparity (Move)
+    float4 col : TEXCOORD1;     // its colour; how much its eye counts
+    float4 dd : TEXCOORD2;      // the nearer disparity, the farther, the nearer's share, the row's stretch
+    float keep : TEXCOORD3;
+};
+struct GaussOut { float4 pos : SV_POSITION; float2 off : TEXCOORD0; nointerpolation float4 col : TEXCOORD1; nointerpolation float2 da : TEXCOORD2; };
+GaussPt VSGauss(uint id : SV_VertexID)
 {
     const float step = max(g_lk.x, 1.0);
     const int gw = (int)ceil(g_size.x / step), gh = (int)ceil(g_size.y / step);
     const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
-    const uint quad = id / 6u, corner = id % 6u;
     const uint per = (uint)(gw * gh);
-    const int ref = (int)(quad / per);
-    const uint idx = quad % per;
+    const int ref = (int)(id / per);
+    const uint idx = id % per;
     const float2 c = (float2((float)(idx % (uint)gw), (float)(idx / (uint)gw)) + 0.5) * step;   // (the spot's middle, pixels of the eye)
     const float t = g_eye < 0.5 ? g_tL : g_tR;
     // Its disparity: between the four texels round it where they are one surface; else the texel it is in.
@@ -1236,74 +1249,98 @@ GaussOut VSGauss(uint id : SV_VertexID)
     const float2 f = saturate(lo - float2(x0, y0));
     const float d00 = tex1.Load(int3(ref * w + x0, y0, 0)).r, d10 = tex1.Load(int3(ref * w + x0 + 1, y0, 0)).r;
     const float d01 = tex1.Load(int3(ref * w + x0, y0 + 1, 0)).r, d11 = tex1.Load(int3(ref * w + x0 + 1, y0 + 1, 0)).r;
-    const bool one = max(max(d00, d10), max(d01, d11)) - min(min(d00, d10), min(d01, d11)) < 1.0;
+    const float dHi = max(max(d00, d10), max(d01, d11)), dLo = min(min(d00, d10), min(d01, d11));
+    const bool one = dHi - dLo < 1.0;
     const float dNear = tex1.Load(int3(ref * w + clamp((int)floor(c.x / g_scale.x), 0, w - 1), clamp((int)floor(c.y / g_scale.y), 0, h - 1), 0)).r;
-    float d = one ? lerp(lerp(d00, d10, f.x), lerp(d01, d11, f.x), f.y) : dNear;
+    float d1 = one ? lerp(lerp(d00, d10, f.x), lerp(d01, d11, f.x), f.y) : dNear, d2 = d1, share = 1.0;
     // (At an outline -- the four are not one surface -- the map is a texel coarse, and its texels are four
-    // pixels of the picture: which side of the outline THIS pixel is on is asked of the two eyes themselves.
-    // Each of the four's disparities is tried: the pixel and the two beside it against what the other eye has
-    // where that disparity puts them. The best fit is taken. Where none fits, the other eye does not see this
-    // pixel at all -- it is behind something -- and it takes the farthest.)
+    // pixels of the picture: which side of the outline THIS pixel is on, and how much of it, is asked of the
+    // two eyes themselves. The pixel and the two beside it are set against what the other eye has where the
+    // near side's disparity puts them, and where the far side's does. It is the near side's by as much as
+    // that fits the better. Where neither fits, the other eye does not see this pixel at all -- it is behind
+    // something -- and it is the far side's.)
     [branch] if (!one && g_lk.w > 0.5)
     {
-        const float cand[4] = { d00, d10, d01, d11 };
+        const float cand[2] = { dHi, dLo };
         float3 own[3];
         [unroll] for (int a = 0; a < 3; ++a)
             own[a] = sqrt(max(tex0.SampleLevel(sampLinear, float2(((float)ref * g_size.x + clamp(c.x + (float)(a - 1) * step, 0.5, g_size.x - 0.5)) / (2.0 * g_size.x), c.y / g_size.y), 0).rgb, 0.0));
-        float best = 1e9, dBest = dNear, dFar = min(min(d00, d10), min(d01, d11)), costOwn = 1e9;
-        [unroll] for (int k = 0; k < 4; ++k)
+        float cost[2] = { 0.0, 0.0 };
+        [unroll] for (int k = 0; k < 2; ++k)
         {
             const float sh = (ref == 1 ? cand[k] : -cand[k]) * g_scale.x;
-            float cost = 0.0;
             [unroll] for (int b = 0; b < 3; ++b)
             {
                 const float xo = c.x + (float)(b - 1) * step + sh;
                 const float3 o2 = sqrt(max(tex0.SampleLevel(sampLinear, float2(((float)(1 - ref) * g_size.x + clamp(xo, 0.5, g_size.x - 0.5)) / (2.0 * g_size.x), c.y / g_size.y), 0).rgb, 0.0));
-                cost += dot(abs(own[b] - o2), 1.0 / 9.0);
-                if (xo < 0.0 || xo > g_size.x) cost += 1.0;
+                cost[k] += dot(abs(own[b] - o2), 1.0 / 9.0);
+                if (xo < 0.0 || xo > g_size.x) cost[k] += 1.0;
             }
-            if (abs(cand[k] - dNear) < 0.01) costOwn = min(costOwn, cost);
-            if (cost < best) { best = cost; dBest = cand[k]; }
         }
-        // (The map's own word stands unless another does clearly better.)
-        if (costOwn < best + 0.01) dBest = dNear;
-        d = best > 0.06 ? dFar : dBest;
+        d1 = dHi; d2 = dLo;
+        share = min(cost[0], cost[1]) > 0.06 ? 0.0 : smoothstep(0.3, 0.7, cost[1] / (cost[0] + cost[1] + 1e-4));
+        // (g_lk.w under 1.5: one side or the other, whole.)
+        if (g_lk.w < 1.5) share = share > 0.5 ? 1.0 : 0.0;
     }
     const float2 mv = Move((float)ref, t, c / g_size);
-    const float2 p = c - d * mv * g_scale;
     // (How the move stretches the surface along the row: a wall turned towards the new place is drawn out.)
     const float slope = one ? lerp(d10 - d00, d11 - d01, f.y) : 0.0;
     const float sx = clamp(abs(1.0 - slope * mv.x), 1.0, 3.0);
-    const float2 sig = g_lk.y * step * float2(sx, 1.0);
-    static const float2 kQ[6] = { float2(-1, -1), float2(1, -1), float2(-1, 1), float2(-1, 1), float2(1, -1), float2(1, 1) };
-    const float2 q = kQ[corner];
-    const float2 ext = 2.5 * sig + 0.5;
-    const float2 at = p + q * ext;
-    GaussOut o;
-    o.pos = float4(at.x / g_size.x * 2.0 - 1.0, 1.0 - at.y / g_size.y * 2.0, 0.5, 1.0);
-    o.off = q * ext / sig;
     // (How much this eye counts at the new place, against the eye that counts most there: far outside the
     // two eyes both count for next to nothing, and the nearer must still count in full.)
     const float away = abs(t - (float)ref), awayO = abs(t - (float)(1 - ref));
     const float wOwn = max(1.0 - away, 0.02 * exp(-2.0 * away)), wOther = max(1.0 - awayO, 0.02 * exp(-2.0 * awayO));
     const float wg = wOwn / max(wOwn, wOther);
+    GaussPt o;
+    o.cm = float4(c, mv);
     o.col = float4(tex0.SampleLevel(sampLinear, float2(((float)ref * g_size.x + c.x) / (2.0 * g_size.x), c.y / g_size.y), 0).rgb, wg);
-    o.d = d;
-    if (g_only > -0.5 && g_only < 1.5 && abs(g_only - (float)ref) > 0.5) o.pos = float4(2.0, 2.0, 2.0, 1.0);
-    // (The eye further from the new place, while it counts for under a quarter: only what the nearer eye
+    o.dd = float4(d1, d2, share, sx);
+    o.keep = 1.0;
+    if (g_only > -0.5 && g_only < 1.5 && abs(g_only - (float)ref) > 0.5) o.keep = 0.0;
+    // (The eye further from the new place: only what the nearer eye
     // does not see is drawn of it -- where the nearer eye's own map has this surface, its own spot stands
     // for it. Half the spots, and nothing mixed that need not be.)
-    [branch] if (g_only < -0.5 && wg < 0.25 && away > awayO)
+    [branch] if (g_only < -0.5 && away > awayO)
     {
+        const float d = share > 0.5 ? d1 : d2;
         const float2 lm = c / g_scale + float2(ref == 1 ? d : -d, 0.0);
         const bool inside = lm.x >= 0.0 && lm.x < (float)w && lm.y >= 0.0 && lm.y < (float)h;
         const float dn = tex1.Load(int3((1 - ref) * w + clamp((int)floor(lm.x), 0, w - 1), clamp((int)floor(lm.y), 0, h - 1), 0)).r;
-        if (inside && abs(dn - d) < 1.0) o.pos = float4(2.0, 2.0, 2.0, 1.0);
+        if (inside && abs(dn - d) < 1.0) o.keep = 0.0;
     }
     return o;
 }
-// (tex2: the new views' disparity, small. Added up: colour times weight, and the weight.)
-struct GaussAcc { float4 sum : SV_Target0; float cover : SV_Target1; };
+void GaussQuad(GaussPt i, float d, float share, inout TriangleStream<GaussOut> s)
+{
+    const float step = max(g_lk.x, 1.0);
+    const float2 p = i.cm.xy - d * i.cm.zw * g_scale;
+    const float2 sig = g_lk.y * step * float2(i.dd.w, 1.0);
+    const float2 ext = 2.0 * sig + 0.5;
+    static const float2 kQ[4] = { float2(-1, -1), float2(1, -1), float2(-1, 1), float2(1, 1) };
+    GaussOut o;
+    o.col = i.col; o.da = float2(d, share);
+    [unroll] for (int k = 0; k < 4; ++k)
+    {
+        const float2 at = p + kQ[k] * ext;
+        o.pos = float4(at.x / g_size.x * 2.0 - 1.0, 1.0 - at.y / g_size.y * 2.0, 0.5, 1.0);
+        o.off = kQ[k] * ext / sig;
+        s.Append(o);
+    }
+    s.RestartStrip();
+}
+[maxvertexcount(8)]
+void GSGauss(point GaussPt i[1], inout TriangleStream<GaussOut> s)
+{
+    if (i[0].keep > 0.5)
+    {
+        if (i[0].dd.z > 0.02) GaussQuad(i[0], i[0].dd.x, i[0].dd.z, s);
+        if (i[0].dd.z < 0.98) GaussQuad(i[0], i[0].dd.y, 1.0 - i[0].dd.z, s);
+    }
+}
+// (tex2: the new views' disparity, small. Added up -- near: colour by weight by share, and that weight;
+// far: the same of what is behind; and apart, the near layer's weight without the share, and how much of the
+// pixel is covered at all.)
+struct GaussAcc { float4 near : SV_Target0; float4 far : SV_Target1; float2 wc : SV_Target2; };
 GaussAcc PSGauss(GaussOut i)
 {
     const int W = (int)g_size.x;
@@ -1311,18 +1348,26 @@ GaussAcc PSGauss(GaussOut i)
     const float2 full = float2(i.pos.x - (float)(pane * W), i.pos.y);
     const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
     const float dT = tex2.Load(int3(pane * w + clamp((int)(full.x / g_scale.x), 0, w - 1), clamp((int)(full.y / g_scale.y), 0, h - 1), 0)).r;
-    // (What is behind the nearest surface there counts for next to nothing beside it -- by degrees, not at a
-    // line: the nearest as the small map has it is a texel coarse, and a pixel the eyes put on the far side of
-    // an outline is not thrown away for standing in a texel the map calls near.)
-    const float front = exp(3.0 * clamp(i.d - dT, -2.5, 1.0));
-    // (The colour by how much its eye counts at the new place; how much of the pixel is covered at all, apart.)
     const float g = exp(-0.5 * dot(i.off, i.off));
-    GaussAcc o; o.sum = float4(i.col.rgb, 1.0) * (g * i.col.a * front); o.cover = g;
+    const float wt = g * i.col.a;
+    const float back = i.da.x - dT;
+    GaussAcc o;
+    o.near = 0; o.far = 0; o.wc = float2(0, g);
+    if (back > -1.0) { o.near = float4(i.col.rgb, 1.0) * (wt * i.da.y); o.wc.x = wt; }
+    // (Of what is behind, the nearer counts the more -- by degrees.)
+    else o.far = float4(i.col.rgb, 1.0) * (wt * i.da.y * exp(1.5 * max(back, -6.0)));
     return o;
 }
-// (tex0: what was added up; tex1: how much of each pixel the spots cover. A pixel hardly any spot reached is not seen: PSUnseen's.)
+// (tex0: the near layer; tex1: the far; tex2: the near's whole weight and the cover. The near laid over the
+// far by its share; with nothing behind it, whole. A pixel hardly any spot reached is not seen: PSUnseen's.)
 float4 PSGaussResolve(VSOut i) : SV_Target
 {
-    const float4 a = tex0.Load(int3((int)i.pos.x, (int)i.pos.y, 0));
-    return float4(a.rgb / max(a.a, 1e-9), tex1.Load(int3((int)i.pos.x, (int)i.pos.y, 0)).r > g_lk.z ? 1.0 : 0.0);
+    const int3 p = int3((int)i.pos.x, (int)i.pos.y, 0);
+    const float4 n = tex0.Load(p), b = tex1.Load(p);
+    const float2 wc = tex2.Load(p).rg;
+    const float3 cn = n.rgb / max(n.a, 1e-9), cb = b.rgb / max(b.a, 1e-9);
+    float share = wc.x > 1e-7 ? saturate(n.a / wc.x) : 0.0;
+    if (b.a < 1e-7) share = 1.0;
+    if (n.a < 1e-9) share = 0.0;
+    return float4(lerp(cb, cn, share), wc.y > g_lk.z ? 1.0 : 0.0);
 }

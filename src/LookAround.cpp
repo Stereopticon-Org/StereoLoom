@@ -32,6 +32,7 @@
 #include "Look_PSLKSum.h"
 #include "Look_PSLKSolve.h"
 #include "Look_VSGauss.h"
+#include "Look_GSGauss.h"
 #include "Look_PSGauss.h"
 #include "Look_PSGaussResolve.h"
 
@@ -44,6 +45,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
     HRESULT hr = device->CreateVertexShader(g_Look_VSFull, sizeof(g_Look_VSFull), nullptr, &m_vsFull);
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSSplat, sizeof(g_Look_VSSplat), nullptr, &m_vsSplat);
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSGauss, sizeof(g_Look_VSGauss), nullptr, &m_vsGauss);
+    if (SUCCEEDED(hr)) hr = device->CreateGeometryShader(g_Look_GSGauss, sizeof(g_Look_GSGauss), nullptr, &m_gsGauss);
     {
         // (The Gaussians' weights and weighted colours added up.)
         D3D11_BLEND_DESC bl{};
@@ -123,7 +125,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
-    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); Release(m_acc); Release(m_cover);
+    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_gsGauss); Release(m_acc); Release(m_accFar); Release(m_cover);
     m_device = nullptr; m_context = nullptr; m_eyeW = m_eyeH = 0;
 }
 
@@ -456,17 +458,22 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
 
     // 4. The new views, at full size; then what neither eye saw.
     cb.size[0] = (float)eyeW; cb.size[1] = (float)eyeH; cb.srcSize[0] = (float)w[0]; cb.srcSize[1] = (float)h[0];
-    if (m_gauss > 0 && Ensure(m_acc, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_cover, 2 * eyeW, eyeH, DXGI_FORMAT_R16_FLOAT))
+    if (m_gauss > 0 && Ensure(m_acc, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_accFar, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+        Ensure(m_cover, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16_FLOAT))
     {
         // Gaussian splats: every spot of both eyes drawn into each new view's half, added up; then divided out.
         const float zero[4] = {};
         const float step = (float)m_gauss;
         const int gw = (int)std::ceil((float)eyeW / step), gh = (int)std::ceil((float)eyeH / step);
-        cb.lk[0] = step; cb.lk[1] = m_gaussSigma; cb.lk[2] = m_gaussSeen; cb.lk[3] = m_gaussEdge ? 1.0f : 0.0f;
+        cb.lk[0] = step; cb.lk[1] = m_gaussSigma; cb.lk[2] = m_gaussSeen; cb.lk[3] = (float)m_gaussEdge;
         m_context->ClearRenderTargetView(m_acc.rtv, zero);
+        m_context->ClearRenderTargetView(m_accFar.rtv, zero);
         m_context->ClearRenderTargetView(m_cover.rtv, zero);
-        ID3D11RenderTargetView* both[2] = { m_acc.rtv, m_cover.rtv };
-        m_context->OMSetRenderTargets(2, both, nullptr);
+        ID3D11RenderTargetView* both[3] = { m_acc.rtv, m_accFar.rtv, m_cover.rtv };
+        m_context->OMSetRenderTargets(3, both, nullptr);
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+        m_context->GSSetShader(m_gsGauss, nullptr, 0);
+        m_context->GSSetConstantBuffers(0, 1, &m_cb);
         m_context->OMSetBlendState(m_blendAdd, nullptr, 0xFFFFFFFF);
         m_context->VSSetShader(m_vsGauss, nullptr, 0);
         m_context->PSSetShader(m_psGauss, nullptr, 0);
@@ -481,14 +488,16 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             // (Each view's spots kept to its own half: the viewport's edge is where they are cut.)
             D3D11_VIEWPORT vp{}; vp.TopLeftX = (FLOAT)(eye * eyeW); vp.Width = (FLOAT)eyeW; vp.Height = (FLOAT)eyeH; vp.MaxDepth = 1.0f;
             m_context->RSSetViewports(1, &vp);
-            m_context->Draw((UINT)(6 * gw * gh * 2), 0);
+            m_context->Draw((UINT)(gw * gh * 2), 0);
         }
+        m_context->GSSetShader(nullptr, nullptr, 0);
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         ID3D11ShaderResourceView* nul3[3] = {};
         m_context->VSSetShaderResources(0, 2, nul3);
         m_context->PSSetShaderResources(0, 3, nul3);
         m_context->OMSetRenderTargets(0, nullptr, nullptr);
         m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-        Pass(m_psGaussResolve, m_out[0], cb, m_acc.srv, m_cover.srv);
+        Pass(m_psGaussResolve, m_out[0], cb, m_acc.srv, m_accFar.srv, m_cover.srv);
     }
     else
     Pass(m_psCompose, m_out[0], cb, src, result[0]->srv, m_targetFilled.srv);
