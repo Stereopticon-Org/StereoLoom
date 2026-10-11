@@ -8239,6 +8239,18 @@ namespace
                         const double out = lookDrawn ? middle(app.look.OutputTexture(), app.look.OutputPerEyeWidth(), app.look.OutputHeight()) : -1.0;
                         Log("LookAround: drew %d; brightness at the middle of the left eye: in %.1f, out %.1f (0 black, 255 white; under 0: could not be read); head %.2f across, %.2f down, nearness %.2f; depth from %s, painted background %s",
                             lookDrawn ? 1 : 0, in, out, app.lookX, app.lookY, app.lookRho, app.neuralActive ? "the network" : "its own matcher", app.layerSrv ? "in use" : "none");
+                        // (... and what each of its passes cost the card, a frame, on average over the frames timed: where the
+                        // time goes while it is really running, beside whatever else has the card.)
+                        {
+                            app.look.SetProfile(true);
+                            std::vector<std::pair<std::string, double>> pr;
+                            if (app.look.TakeProfile(pr))
+                            {
+                                std::string line; double all = 0.0; char one[96];
+                                for (const auto& e : pr) { all += e.second; if (e.second >= 0.02) { _snprintf_s(one, _TRUNCATE, " %s %.2f |", e.first.c_str(), e.second); line += one; } }
+                                Log("LookAround: GPU ms a frame by pass:%s all %.2f", line.c_str(), all);
+                            }
+                        }
                     }
                 }
                 else if (app.lookBound)
