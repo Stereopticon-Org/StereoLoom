@@ -37,6 +37,9 @@
 #include "Look_CSCells.h"
 #include "Look_PSGaussMix.h"
 #include "Look_PSGaussOver.h"
+#include "Look_VSPoint.h"
+#include "Look_PSPoint.h"
+#include "Look_PSPointResolve.h"
 #include "Look_PSGauss.h"
 #include "Look_PSGaussResolve.h"
 
@@ -49,6 +52,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
     HRESULT hr = device->CreateVertexShader(g_Look_VSFull, sizeof(g_Look_VSFull), nullptr, &m_vsFull);
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSSplat, sizeof(g_Look_VSSplat), nullptr, &m_vsSplat);
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSGauss, sizeof(g_Look_VSGauss), nullptr, &m_vsGauss);
+    if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSPoint, sizeof(g_Look_VSPoint), nullptr, &m_vsPoint);
     if (SUCCEEDED(hr)) hr = device->CreateGeometryShader(g_Look_GSGauss, sizeof(g_Look_GSGauss), nullptr, &m_gsGauss);
     if (SUCCEEDED(hr)) hr = device->CreateVertexShader(g_Look_VSGaussCell, sizeof(g_Look_VSGaussCell), nullptr, &m_vsCell);
     if (SUCCEEDED(hr)) hr = device->CreateComputeShader(g_Look_CSCells, sizeof(g_Look_CSCells), nullptr, &m_csCells);
@@ -93,6 +97,8 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSGauss,       sizeof(g_Look_PSGauss),       &m_psGauss, "Gauss" },
         { g_Look_PSGaussMix,    sizeof(g_Look_PSGaussMix),    &m_psGaussMix, "GaussMix" },
         { g_Look_PSGaussOver,   sizeof(g_Look_PSGaussOver),   &m_psGaussOver, "GaussOver" },
+        { g_Look_PSPoint,       sizeof(g_Look_PSPoint),       &m_psPoint, "Point" },
+        { g_Look_PSPointResolve, sizeof(g_Look_PSPointResolve), &m_psPointResolve, "PointResolve" },
         { g_Look_PSGaussResolve, sizeof(g_Look_PSGaussResolve), &m_psGaussResolve, "GaussResolve" },
     };
     for (const auto& p : ps)
@@ -137,7 +143,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
-    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_blendMix); SAFE_RELEASE(m_profDisjoint); for (auto& q : m_profQ) SAFE_RELEASE(q); m_profQ.clear(); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); SAFE_RELEASE(m_psGaussOver); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
+    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_blendMix); SAFE_RELEASE(m_profDisjoint); for (auto& q : m_profQ) SAFE_RELEASE(q); m_profQ.clear(); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); SAFE_RELEASE(m_psGaussOver); SAFE_RELEASE(m_vsPoint); SAFE_RELEASE(m_psPoint); SAFE_RELEASE(m_psPointResolve); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
     m_device = nullptr; m_context = nullptr; m_eyeW = m_eyeH = 0;
 }
 
@@ -514,14 +520,13 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         m_context->ClearRenderTargetView(m_acc.rtv, zero);
         m_context->ClearRenderTargetView(m_accFar.rtv, zero);
         m_context->ClearRenderTargetView(m_cover.rtv, zero);
-        ID3D11RenderTargetView* both[3] = { m_acc.rtv, m_accFar.rtv, m_cover.rtv };
+        ID3D11RenderTargetView* both[3] = { m_acc.rtv, m_gaussPoints ? m_cover.rtv : m_accFar.rtv, m_gaussPoints ? nullptr : m_cover.rtv };
         m_context->OMSetRenderTargets(3, both, nullptr);
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
-        m_context->GSSetShader(m_gsGauss, nullptr, 0);
-        m_context->GSSetConstantBuffers(0, 1, &m_cb);
+        if (!m_gaussPoints) { m_context->GSSetShader(m_gsGauss, nullptr, 0); m_context->GSSetConstantBuffers(0, 1, &m_cb); }
         m_context->OMSetBlendState(m_blendAdd, nullptr, 0xFFFFFFFF);
-        m_context->VSSetShader(m_vsGauss, nullptr, 0);
-        m_context->PSSetShader(m_psGauss, nullptr, 0);
+        m_context->VSSetShader(m_gaussPoints ? m_vsPoint : m_vsGauss, nullptr, 0);
+        m_context->PSSetShader(m_gaussPoints ? m_psPoint : m_psGauss, nullptr, 0);
         ID3D11ShaderResourceView* vin[2] = { src, result[0]->srv };
         m_context->VSSetShaderResources(0, 2, vin);
         ID3D11ShaderResourceView* pin[3] = { nullptr, nullptr, m_targetFilled.srv };
@@ -543,6 +548,8 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         m_context->OMSetRenderTargets(0, nullptr, nullptr);
         m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
         Prof("Gaussian spots");
+        if (m_gaussPoints) Pass(m_psPointResolve, m_out[0], cb, m_acc.srv, m_cover.srv);
+        else
         Pass(m_psGaussResolve, m_out[0], cb, m_acc.srv, m_accFar.srv, m_cover.srv);
         cb.pad[3] = keepPad3;
     }

@@ -1325,7 +1325,7 @@ GaussPt GaussSpot(int ref, float2 c)
     }
     return o;
 }
-GaussPt VSGauss(uint id : SV_VertexID)
+GaussPt SpotOfId(uint id)
 {
     const float step = max(g_lk.x, 1.0);
     const int gw = (int)ceil(g_size.x / step), gh = (int)ceil(g_size.y / step);
@@ -1340,6 +1340,7 @@ GaussPt VSGauss(uint id : SV_VertexID)
     if (idx >= per) o.keep = 0.0;
     return o;
 }
+GaussPt VSGauss(uint id : SV_VertexID) { return SpotOfId(id); }
 // The outlines only (see below): sixteen spots to each cell of the small map that CSCells listed.
 StructuredBuffer<uint> g_cells : register(t5);
 GaussPt VSGaussCell(uint k : SV_VertexID, uint inst : SV_InstanceID)
@@ -1484,4 +1485,61 @@ MixOut PSGaussOver(GaussOut i)
     o.c = float4(i.col.rgb, a > 0.5 ? 1.0 : 0.0);
     o.f = float4(a, a, a, a);
     return o;
+}
+
+// ---- Gaussian splats as points ------------------------------------------------
+// The same spots, drawn the cheapest way there is: each a single point -- one vertex, one pixel -- which adds
+// its colour and weight to the pixel its middle falls in, and with them how far from that pixel's own middle
+// it really lies. Each pixel of the new view is then made from the nine round it: every one's spots taken as a
+// Gaussian at the place they truly are, not at the pixel's middle. A sixth of the vertices of a quad a spot,
+// and no small triangles; the cost is that all the spots of one pixel are spread from their mean place.
+// (tex2: the new views' disparity, small.)
+struct PointOut { float4 pos : SV_POSITION; nointerpolation float4 col : TEXCOORD0; nointerpolation float4 pda : TEXCOORD1; };
+PointOut VSPoint(uint id : SV_VertexID)
+{
+    const GaussPt g = SpotOfId(id);
+    const bool nearSide = g.dd.z >= 0.5;
+    const float d = nearSide ? g.dd.x : g.dd.y;
+    const float2 p = g.cm.xy - d * g.cm.zw * g_scale;
+    PointOut o;
+    o.pos = float4(p.x / g_size.x * 2.0 - 1.0, 1.0 - p.y / g_size.y * 2.0, 0.5, 1.0);
+    if (g.keep < 0.5) o.pos = float4(2.0, 2.0, 2.0, 1.0);
+    o.col = g.col;
+    o.pda = float4(p, d, nearSide ? g.dd.z : 1.0 - g.dd.z);
+    return o;
+}
+struct PointAcc { float4 sum : SV_Target0; float2 off : SV_Target1; };
+PointAcc PSPoint(PointOut i)
+{
+    const int W = (int)g_size.x;
+    const int pane = g_eye < 0.5 ? 0 : 1;
+    const float2 full = float2(i.pos.x - (float)(pane * W), i.pos.y);
+    const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
+    const float dT = tex2.Load(int3(pane * w + clamp((int)(full.x / g_scale.x), 0, w - 1), clamp((int)(full.y / g_scale.y), 0, h - 1), 0)).r;
+    if (i.pda.z - dT <= -1.0) discard;
+    const float wt = i.col.a * i.pda.w;
+    PointAcc o;
+    o.sum = float4(i.col.rgb, 1.0) * wt;
+    o.off = (i.pda.xy - full) * wt;
+    return o;
+}
+// (tex0: colour by weight, and weight; tex1: the spots' mean place by weight. g_lk.y: a spot's width in pixels.)
+float4 PSPointResolve(VSOut i) : SV_Target
+{
+    const int W = (int)g_size.x;
+    const int2 p = int2((int)i.pos.x, (int)i.pos.y);
+    const int pane = p.x >= W ? 1 : 0;
+    const float inv = 0.5 / max(g_lk.y * g_lk.y * max(g_lk.x, 1.0) * max(g_lk.x, 1.0), 1e-4);
+    float3 acc = 0; float wsum = 0, cover = 0;
+    [unroll] for (int k = 0; k < 9; ++k)
+    {
+        const int2 n = int2(k % 3 - 1, k / 3 - 1);
+        const int2 q = int2(clamp(p.x + n.x, pane * W, pane * W + W - 1), clamp(p.y + n.y, 0, (int)g_size.y - 1));
+        const float4 a = tex0.Load(int3(q, 0));
+        const float2 m = tex1.Load(int3(q, 0)).rg;
+        const float2 r = float2(q - p) + m / max(a.a, 1e-9);
+        const float g = a.a > 1e-9 ? exp(-dot(r, r) * inv) : 0.0;
+        acc += a.rgb * g; wsum += a.a * g; cover += g;
+    }
+    return float4(acc / max(wsum, 1e-9), cover > g_lk.z ? 1.0 : 0.0);
 }

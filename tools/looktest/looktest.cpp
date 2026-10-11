@@ -88,6 +88,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
     if (const wchar_t* ff = _wgetenv(L"LOOKTEST_FARFILL")) look.SetFarFill(_wtoi(ff) != 0);
     if (const wchar_t* gx = _wgetenv(L"LOOKTEST_GSCRAMBLE")) look.SetGaussianScramble(_wtoi(gx) != 0);
+    if (const wchar_t* gp = _wgetenv(L"LOOKTEST_GPOINT")) look.SetGaussianPoints(_wtoi(gp) != 0);
     if (const wchar_t* go = _wgetenv(L"LOOKTEST_GOVER")) look.SetGaussianOver(_wtoi(go) != 0);
     if (const wchar_t* ge = _wgetenv(L"LOOKTEST_GEDGE")) look.SetGaussianEdge(_wtoi(ge));
     if (const wchar_t* gs = _wgetenv(L"LOOKTEST_GAUSS")) look.SetGaussian(_wtoi(gs), _wgetenv(L"LOOKTEST_GSIGMA") ? (float)_wtof(_wgetenv(L"LOOKTEST_GSIGMA")) : 0.5f, _wgetenv(L"LOOKTEST_GSEEN") ? (float)_wtof(_wgetenv(L"LOOKTEST_GSEEN")) : 0.25f);
@@ -588,6 +589,7 @@ int wmain(int argc, wchar_t** argv)
     if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
     if (const wchar_t* ff = _wgetenv(L"LOOKTEST_FARFILL")) look.SetFarFill(_wtoi(ff) != 0);
     if (const wchar_t* gx = _wgetenv(L"LOOKTEST_GSCRAMBLE")) look.SetGaussianScramble(_wtoi(gx) != 0);
+    if (const wchar_t* gp = _wgetenv(L"LOOKTEST_GPOINT")) look.SetGaussianPoints(_wtoi(gp) != 0);
     if (const wchar_t* go = _wgetenv(L"LOOKTEST_GOVER")) look.SetGaussianOver(_wtoi(go) != 0);
     if (const wchar_t* ge = _wgetenv(L"LOOKTEST_GEDGE")) look.SetGaussianEdge(_wtoi(ge));
     if (const wchar_t* gs = _wgetenv(L"LOOKTEST_GAUSS")) look.SetGaussian(_wtoi(gs), _wgetenv(L"LOOKTEST_GSIGMA") ? (float)_wtof(_wgetenv(L"LOOKTEST_GSIGMA")) : 0.5f, _wgetenv(L"LOOKTEST_GSEEN") ? (float)_wtof(_wgetenv(L"LOOKTEST_GSEEN")) : 0.25f);

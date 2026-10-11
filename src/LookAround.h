@@ -98,6 +98,7 @@ namespace srw
         void SetProfile(bool on) { m_profOn = on; }
         bool TakeProfile(std::vector<std::pair<std::string, double>>& out);
         void SetGaussianScramble(bool on) { m_gaussScramble = on; }
+        void SetGaussianPoints(bool on) { m_gaussPoints = on; }
         void SetGaussianOver(bool on) { m_gaussOver = on; }
         void SetGaussianEdge(int mode) { m_gaussEdge = mode; }   // (0 as the map has it; 1 each spot's side asked of the eyes; 2 and its share of each side: soft)   // (at an outline each spot's side asked of the two eyes: VSGauss)
         void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
@@ -135,6 +136,8 @@ namespace srw
         ID3D11VertexShader*  m_vsCell = nullptr;
         ID3D11PixelShader*   m_psGaussMix = nullptr, *m_psGaussOver = nullptr;
         bool  m_gaussScramble = false;  // (the spots drawn in runs from all over the picture, not in its own order: tried 2026-10-12, no quicker -- 20.3 ms against 19.3)
+        bool  m_gaussPoints = true;     // (the full mode's spots as single points, spread by a second pass)
+        ID3D11VertexShader* m_vsPoint = nullptr; ID3D11PixelShader* m_psPoint = nullptr, *m_psPointResolve = nullptr;
         bool  m_gaussOver = true;   // (the outlines' spots straight onto the picture, one over another; else added up apart and mixed in)
         Tex   m_mix;                // (the outlines' spots laid over the standard picture)
         Tex   m_cover;              // (... and how much of each pixel they cover)
