@@ -1651,3 +1651,25 @@ PointOut VSPointS(uint id : SV_VertexID)
     o.pda = float4(p, d, 1.0);
     return o;
 }
+
+// ---- The depth made smooth ------------------------------------------------------
+// What the two eyes show is the picture's own depth, and stays so whatever is drawn here: a point moved by the
+// same amount in both eyes is as deep as it was. What the map adds is only how far each thing moves as the head
+// does. A map with every outline in it moves things rightly and tears where an outline is wrong; a smooth one
+// tears nowhere -- near things draw what is beside them along a little, as a sheet of rubber -- and there is
+// nothing uncovered to fill. This makes it as smooth as asked: a Gaussian, across then down.
+// (tex1: the disparity. g_winR: how far, in texels. g_eye: 0 across, 1 down.)
+float4 PSBlurDisp(VSOut i) : SV_Target
+{
+    int half; int2 p; Place(i.pos, half, p);
+    const int w = (int)g_size.x, h = (int)g_size.y;
+    const int R = (int)g_winR;
+    float s = 0.0, n = 0.0;
+    [loop] for (int k = -R; k <= R; ++k)
+    {
+        const int2 q = g_eye < 0.5 ? int2(clamp(p.x + k, 0, w - 1), p.y) : int2(p.x, clamp(p.y + k, 0, h - 1));
+        const float wt = exp(-2.0 * (float)(k * k) / (float)(R * R));
+        s += tex1.Load(int3(half * w + q.x, q.y, 0)).r * wt; n += wt;
+    }
+    return float4(s / n, 1, 0, 0);
+}

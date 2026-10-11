@@ -41,6 +41,7 @@
 #include "Look_PSPoint.h"
 #include "Look_PSPointResolve.h"
 #include "Look_PSSettle.h"
+#include "Look_PSBlurDisp.h"
 #include "Look_VSPointS.h"
 #include "Look_PSGauss.h"
 #include "Look_PSGaussResolve.h"
@@ -103,6 +104,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSPoint,       sizeof(g_Look_PSPoint),       &m_psPoint, "Point" },
         { g_Look_PSPointResolve, sizeof(g_Look_PSPointResolve), &m_psPointResolve, "PointResolve" },
         { g_Look_PSSettle,      sizeof(g_Look_PSSettle),      &m_psSettle, "Settle" },
+        { g_Look_PSBlurDisp,    sizeof(g_Look_PSBlurDisp),    &m_psBlurDisp, "BlurDisp" },
         { g_Look_PSGaussResolve, sizeof(g_Look_PSGaussResolve), &m_psGaussResolve, "GaussResolve" },
     };
     for (const auto& p : ps)
@@ -147,7 +149,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
-    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_blendMix); SAFE_RELEASE(m_profDisjoint); for (auto& q : m_profQ) SAFE_RELEASE(q); m_profQ.clear(); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); SAFE_RELEASE(m_psGaussOver); SAFE_RELEASE(m_vsPoint); SAFE_RELEASE(m_vsPointS); SAFE_RELEASE(m_psSettle); Release(m_settle); SAFE_RELEASE(m_psPoint); SAFE_RELEASE(m_psPointResolve); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
+    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_blendMix); SAFE_RELEASE(m_profDisjoint); for (auto& q : m_profQ) SAFE_RELEASE(q); m_profQ.clear(); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); SAFE_RELEASE(m_psGaussOver); SAFE_RELEASE(m_vsPoint); SAFE_RELEASE(m_vsPointS); SAFE_RELEASE(m_psSettle); SAFE_RELEASE(m_psBlurDisp); Release(m_settle); SAFE_RELEASE(m_psPoint); SAFE_RELEASE(m_psPointResolve); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
     m_device = nullptr; m_context = nullptr; m_eyeW = m_eyeH = 0;
 }
 
@@ -377,8 +379,17 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         const bool prepKept = k == 0 && extOnly && m_extPrepSerial == m_extSerial && m_extPrep.tex && m_extPrep.w == 2 * w[0] && m_extPrep.h == h[0];
         if (prepKept) m_context->CopyResource(m_dispB[0].tex, m_extPrep.tex);
         if (k == 0 && extOnly && !prepKept) m_context->CopyResource(m_dispB[0].tex, m_extDisp);   // (after everything but the making finer)
+        // (Made smooth where asked -- SetExternalBlur: across, then down, the answer left in B. Its outlines are
+        // then not made steps again.)
+        if (k == 0 && extOnly && !prepKept && m_extBlur > 0)
+        {
+            const float keepR = cb.winR, keepEye = cb.eye;
+            cb.winR = (float)m_extBlur; cb.eye = 0.0f; Pass(m_psBlurDisp, m_dispA[0], cb, nullptr, m_dispB[0].srv);
+            cb.eye = 1.0f; Pass(m_psBlurDisp, m_dispB[0], cb, nullptr, m_dispA[0].srv);
+            cb.winR = keepR; cb.eye = keepEye;
+        }
         // (Its ramps made steps again: PSSnap, in pairs so the answer is left in B.)
-        if (k == 0 && extOnly && !prepKept)
+        if (k == 0 && extOnly && !prepKept && m_extBlur <= 0)
             for (int it = 0; it < (m_extSnap + 1) / 2; ++it)
             {
                 Pass(m_psSnap, m_dispA[0], cb, nullptr, m_dispB[0].srv);

@@ -87,6 +87,9 @@ namespace srw
         void SetFuseReach(float t) { m_fuseReach = t; m_haveMaps = false; m_picHave = false; }
         void SetExternalDilate(int texels) { m_extDilate = texels; m_haveMaps = false; m_picHave = false; }
         void SetExternalLeftOnly(bool on) { m_extLeftOnly = on; m_haveMaps = false; m_picHave = false; ++m_extSerial; }
+        // The trained matcher's depth made smooth by that many texels before it is used (0: as it is, outlines and
+        // all). Smooth, nothing tears and nothing is uncovered; things draw what is beside them along instead.
+        void SetExternalBlur(int texels) { m_extBlur = texels; m_haveMaps = false; ++m_extSerial; }
         void SetExternalSnap(int passes) { m_extSnap = passes; m_haveMaps = false; m_picHave = false; ++m_extSerial; }
         void SetExternalSoft(float z) { m_extSoft = z; }   // (at a step in the other matcher's map, its answer stands)
         // The new views by Gaussian splats: every step-th pixel of each eye thrown forward as a soft spot (0: off --
@@ -184,6 +187,7 @@ namespace srw
         Tex   m_extPrep;            // (the other matcher's answer as prepared: kept for the pictures until its next)
         unsigned m_extSerial = 1, m_extPrepSerial = 0;
         int   m_lkFinest = 1;       // (the finest size the motion finder works at: 0 the map's own)
+        int   m_extBlur = 0; ID3D11PixelShader* m_psBlurDisp = nullptr;
         bool  m_picHave = false;    // (what is made of the picture alone is made: Render)
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
         int   m_spread = 1;

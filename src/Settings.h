@@ -121,6 +121,7 @@ namespace srw::Settings
     // Where the look-around's depth is from: 0 its own matcher; 1 a trained stereo matcher's (src/NeuralDepth, for a
     // picture that stays, where that is installed) and its own, the better at each place; 2 the trained matcher's
     // alone. LookDepth.
+    int  ReadLookSmooth();   // (LookSmooth: the depth made smooth by that many texels before it is used; 0 not)
     int  ReadLookGauss();   // (LookGauss: 0 the new views looked up in the eyes; 1 Gaussian splats, one a pixel; 2 one to four pixels)
     void WriteLookGauss(int mode);
     int  ReadLookDepth();

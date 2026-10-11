@@ -10134,6 +10134,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     // what it paints, and it shares the card with everything else.)
                     app.neural.SetPaintGap((std::max)(Settings::ReadLookPaintGap(), app.lookPlate ? 500 : 0));
                     app.look.SetGaussian(Settings::ReadLookGauss());
+                    { static int s_smooth = -1; const int sm = Settings::ReadLookSmooth(); if (sm != s_smooth) { s_smooth = sm; app.look.SetExternalBlur(sm); } }
                     { const bool ed = Settings::ReadLookEdges(); if (ed != app.lookEdges) { app.lookEdges = ed; app.look.SetExternalSnap(ed ? 2 : 0); } }
                     const std::wstring lm = Settings::ReadLookModel();
                     if (lm != app.lookModel && !app.neural.Busy())

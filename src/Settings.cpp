@@ -206,6 +206,7 @@ namespace srw::Settings
     bool ReadLookAround() { return ReadDword(kSettingsKey, L"LookAround", 0) != 0; }
     bool ReadLookShow() { return ReadDword(kSettingsKey, L"LookShow", 0) != 0; }
     int  ReadLookSize() { return (int)ReadDword(kSettingsKey, L"LookSize", 0); }
+    int  ReadLookSmooth() { return (int)(std::min)((DWORD)64, ReadDword(kSettingsKey, L"LookSmooth", 0)); }
     int  ReadLookGauss() { return (int)(std::min)((DWORD)3, ReadDword(kSettingsKey, L"LookGauss", 0)); }
     void WriteLookGauss(int mode) { WriteDword(kSettingsKey, L"LookGauss", (DWORD)mode); }
     int  ReadLookDepth() { return (int)(std::min)((DWORD)2, ReadDword(kSettingsKey, L"LookDepth", 2)); }
