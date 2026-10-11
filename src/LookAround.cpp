@@ -36,6 +36,7 @@
 #include "Look_VSGaussCell.h"
 #include "Look_CSCells.h"
 #include "Look_PSGaussMix.h"
+#include "Look_PSGaussOver.h"
 #include "Look_PSGauss.h"
 #include "Look_PSGaussResolve.h"
 
@@ -91,6 +92,7 @@ bool LookAround::Initialize(ID3D11Device* device, ID3D11DeviceContext* context)
         { g_Look_PSLKSolve,     sizeof(g_Look_PSLKSolve),     &m_psLKSolve, "LKSolve" },
         { g_Look_PSGauss,       sizeof(g_Look_PSGauss),       &m_psGauss, "Gauss" },
         { g_Look_PSGaussMix,    sizeof(g_Look_PSGaussMix),    &m_psGaussMix, "GaussMix" },
+        { g_Look_PSGaussOver,   sizeof(g_Look_PSGaussOver),   &m_psGaussOver, "GaussOver" },
         { g_Look_PSGaussResolve, sizeof(g_Look_PSGaussResolve), &m_psGaussResolve, "GaussResolve" },
     };
     for (const auto& p : ps)
@@ -135,7 +137,7 @@ void LookAround::Shutdown()
     SAFE_RELEASE(m_psMedian); SAFE_RELEASE(m_psFill); SAFE_RELEASE(m_psCheck); SAFE_RELEASE(m_psMatchRefine);
     SAFE_RELEASE(m_psMatchFull); SAFE_RELEASE(m_psGrad); SAFE_RELEASE(m_psDownNext); SAFE_RELEASE(m_psDownFirst);
     SAFE_RELEASE(m_vsSplat); SAFE_RELEASE(m_vsFull);
-    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_blendMix); SAFE_RELEASE(m_profDisjoint); for (auto& q : m_profQ) SAFE_RELEASE(q); m_profQ.clear(); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
+    SAFE_RELEASE(m_vsGauss); SAFE_RELEASE(m_psGauss); SAFE_RELEASE(m_psGaussResolve); SAFE_RELEASE(m_blendAdd); SAFE_RELEASE(m_blendMix); SAFE_RELEASE(m_profDisjoint); for (auto& q : m_profQ) SAFE_RELEASE(q); m_profQ.clear(); SAFE_RELEASE(m_gsGauss); SAFE_RELEASE(m_vsCell); SAFE_RELEASE(m_csCells); SAFE_RELEASE(m_cellSrv); SAFE_RELEASE(m_cellUav); SAFE_RELEASE(m_cellArgs); SAFE_RELEASE(m_cellBuf); m_cellCap = 0; SAFE_RELEASE(m_psGaussMix); SAFE_RELEASE(m_psGaussOver); Release(m_mix); Release(m_acc); Release(m_accFar); Release(m_cover);
     m_device = nullptr; m_context = nullptr; m_eyeW = m_eyeH = 0;
 }
 
@@ -544,7 +546,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     }
     else
     Pass(m_psCompose, m_out[0], cb, src, result[0]->srv, m_targetFilled.srv);
-    if (m_gauss == 3 && Ensure(m_acc, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_cover, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16_FLOAT))
+    if (m_gauss == 3 && (m_gaussOver || (Ensure(m_acc, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16B16A16_FLOAT) && Ensure(m_cover, 2 * eyeW, eyeH, DXGI_FORMAT_R16G16_FLOAT))))
     {
         // Gaussian splats at the outlines only, over the standard picture. The cells of the small map that have
         // an outline are listed (CSCells); sixteen spots are then drawn for each listed.
@@ -583,20 +585,26 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
             m_context->CopyStructureCount(m_cellArgs, 4, m_cellUav);
             Prof("list outline cells");
         }
+        if (m_gaussOver)
+        {
+            m_context->OMSetRenderTargets(1, &m_out[0].rtv, nullptr);
+            m_context->OMSetBlendState(m_blendMix, nullptr, 0xFFFFFFFF);
+        }
+        else
+        {
         m_context->ClearRenderTargetView(m_acc.rtv, zero);
         m_context->ClearRenderTargetView(m_cover.rtv, zero);
         Prof("outline buffers cleared");
-        // (The layer behind is not kept here: a near spot's share is laid over the standard picture, which has what
-        // is behind already -- and a third fewer bytes are cleared and written.)
         ID3D11RenderTargetView* three[3] = { m_acc.rtv, nullptr, m_cover.rtv };
         m_context->OMSetRenderTargets(3, three, nullptr);
         m_context->OMSetBlendState(m_blendAdd, nullptr, 0xFFFFFFFF);
+        }
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
         m_context->VSSetShader(m_vsCell, nullptr, 0);
         m_context->GSSetShader(m_gsGauss, nullptr, 0);
         m_context->GSSetConstantBuffers(0, 1, &m_cb);
         m_context->VSSetShaderResources(5, 1, &m_cellSrv);
-        m_context->PSSetShader(m_psGauss, nullptr, 0);
+        m_context->PSSetShader(m_gaussOver ? m_psGaussOver : m_psGauss, nullptr, 0);
         ID3D11ShaderResourceView* vin[2] = { src, result[0]->srv };
         m_context->VSSetShaderResources(0, 2, vin);
         ID3D11ShaderResourceView* pin[3] = { nullptr, nullptr, m_targetFilled.srv };
@@ -618,9 +626,12 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         m_context->OMSetRenderTargets(0, nullptr, nullptr);
         m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
         Prof("outline spots");
+        if (!m_gaussOver)
+        {
         m_context->OMSetBlendState(m_blendMix, nullptr, 0xFFFFFFFF);
         Pass(m_psGaussMix, m_out[0], cb, m_acc.srv, nullptr, m_cover.srv);
         m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+        }
         }
     }
     // The far side of things, level by level, for what neither eye saw.

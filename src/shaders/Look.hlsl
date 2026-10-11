@@ -404,6 +404,9 @@ float4 PSHole(VSOut i) : SV_Target
 // (Set by PSCompose: nothing of either eye landed anywhere round this pixel -- a gap. There the
 // eyes agreeing is chance, and is not believed.)
 static bool s_gap = false;
+// (Tried, 2026-10-12, and taken out: the eye further from the new place not read at all where it counts for
+// next to nothing and the nearer sees the surface. Half the lookups for a view outside the eyes -- and the
+// pass was slower for it, 1.61 ms against 1.41: the branch cost more than the reads it saved.)
 void Try(float d, float2 lo, float2 full, float t, int w, int h, out float3 col, out float cost, out float seen)
 {
     float3 c[2]; float vis[2]; float wg[2];
@@ -1453,5 +1456,25 @@ MixOut PSGaussMix(VSOut i)
     o.c = float4(behind ? lerp(b.rgb / b.a, cn, share) : cn, k > 0.5 ? 1.0 : 0.0);
     const float m = behind ? k : share * k;
     o.f = float4(m, m, m, m);
+    return o;
+}
+
+// (The outlines' spots drawn straight onto the new view made the standard way, each over what is there by its
+// own weight -- as Gaussian splats are commonly drawn, and with no buffers of their own to clear, add into and
+// read back. Not sorted: they are all of the nearest surface -- what is behind it is left out -- and of one
+// outline, so which goes over which changes little. tex2: the new views' disparity, small. .a: seen.)
+MixOut PSGaussOver(GaussOut i)
+{
+    const int W = (int)g_size.x;
+    const int pane = g_eye < 0.5 ? 0 : 1;
+    const float2 full = float2(i.pos.x - (float)(pane * W), i.pos.y);
+    const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
+    const float dT = tex2.Load(int3(pane * w + clamp((int)(full.x / g_scale.x), 0, w - 1), clamp((int)(full.y / g_scale.y), 0, h - 1), 0)).r;
+    if (i.da.x - dT <= -1.0) discard;
+    const float a = exp(-0.5 * dot(i.off, i.off)) * i.da.y;
+    if (a < 0.02) discard;
+    MixOut o;
+    o.c = float4(i.col.rgb, a > 0.5 ? 1.0 : 0.0);
+    o.f = float4(a, a, a, a);
     return o;
 }

@@ -87,6 +87,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (_wgetenv(L"LOOKTEST_MARKFILL")) look.SetMarkFill(true);   // (what filled each unseen pixel, by colour: yellow the painted background, magenta the plate, blue the far side, green the mirrored row)
     if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
     if (const wchar_t* ff = _wgetenv(L"LOOKTEST_FARFILL")) look.SetFarFill(_wtoi(ff) != 0);
+    if (const wchar_t* go = _wgetenv(L"LOOKTEST_GOVER")) look.SetGaussianOver(_wtoi(go) != 0);
     if (const wchar_t* ge = _wgetenv(L"LOOKTEST_GEDGE")) look.SetGaussianEdge(_wtoi(ge));
     if (const wchar_t* gs = _wgetenv(L"LOOKTEST_GAUSS")) look.SetGaussian(_wtoi(gs), _wgetenv(L"LOOKTEST_GSIGMA") ? (float)_wtof(_wgetenv(L"LOOKTEST_GSIGMA")) : 0.5f, _wgetenv(L"LOOKTEST_GSEEN") ? (float)_wtof(_wgetenv(L"LOOKTEST_GSEEN")) : 0.25f);
     if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
@@ -585,6 +586,7 @@ int wmain(int argc, wchar_t** argv)
     if (const wchar_t* ds = _wgetenv(L"LOOKTEST_DSP")) look.SetExternalDisparity(LoadDsp(dev, look, ds, ew, eh));
     if (const wchar_t* es = _wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(_wtoi(es));
     if (const wchar_t* ff = _wgetenv(L"LOOKTEST_FARFILL")) look.SetFarFill(_wtoi(ff) != 0);
+    if (const wchar_t* go = _wgetenv(L"LOOKTEST_GOVER")) look.SetGaussianOver(_wtoi(go) != 0);
     if (const wchar_t* ge = _wgetenv(L"LOOKTEST_GEDGE")) look.SetGaussianEdge(_wtoi(ge));
     if (const wchar_t* gs = _wgetenv(L"LOOKTEST_GAUSS")) look.SetGaussian(_wtoi(gs), _wgetenv(L"LOOKTEST_GSIGMA") ? (float)_wtof(_wgetenv(L"LOOKTEST_GSIGMA")) : 0.5f, _wgetenv(L"LOOKTEST_GSEEN") ? (float)_wtof(_wgetenv(L"LOOKTEST_GSEEN")) : 0.25f);
     if (const wchar_t* fb = _wgetenv(L"LOOKTEST_FUSE")) look.SetFuseBias((float)_wtof(fb));
