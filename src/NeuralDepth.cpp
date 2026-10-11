@@ -40,6 +40,22 @@ namespace
         static const float mean[3] = { 0.485f, 0.456f, 0.406f }, dev[3] = { 0.229f, 0.224f, 0.225f };
         out.resize((size_t)3 * w * h);
         const size_t pitch = (size_t)eyeW * 2 * 4;
+        // (Already the model's size -- as SR Loom hands it over: a pixel for a pixel, by a table.)
+        if (eyeW == w && eyeH == h)
+        {
+            static float lut[3][256]; static bool made = false;
+            if (!made) { for (int c = 0; c < 3; ++c) for (int v = 0; v < 256; ++v) lut[c][v] = ((float)v / 255.0f - mean[c]) / dev[c]; made = true; }
+            std::vector<int> col((size_t)w);
+            for (int x = 0; x < w; ++x) { int xs = (std::min)(w - 1, x + slide); if (mirror) xs = w - 1 - xs; col[(size_t)x] = xs * 4; }
+            const size_t plane = (size_t)w * h;
+            for (int y = 0; y < h; ++y)
+            {
+                const uint8_t* row = px.data() + (size_t)y * pitch + (size_t)eye * eyeW * 4;
+                float* o = out.data() + (size_t)y * w;
+                for (int x = 0; x < w; ++x) { const uint8_t* q = row + col[(size_t)x]; o[x] = lut[0][q[0]]; o[plane + x] = lut[1][q[1]]; o[2 * plane + x] = lut[2][q[2]]; }
+            }
+            return;
+        }
         for (int y = 0; y < h; ++y)
         {
             const int y0 = y * eyeH / h, y1 = (std::max)(y0 + 1, (y + 1) * eyeH / h);
@@ -349,10 +365,11 @@ void NeuralDepth::NetSize(float aspect, int width, int& w, int& h) const
 
 bool NeuralDepth::Submit(const uint8_t* rgba, int pitch, int eyeW, int eyeH, float aspect, int width, int mapW, int mapH, unsigned serial)
 {
-    if (!m_ready.load() || m_busy.load() || !rgba || eyeW < 64 || eyeH < 64 || mapW < 8 || mapH < 8) return false;
+    if (!m_ready.load() || !rgba || eyeW < 64 || eyeH < 64 || mapW < 8 || mapH < 8) return false;
     {
+        // (A picture waiting while another is worked on is replaced by this newer one: the thread goes from
+        // one answer straight to the newest picture there is.)
         std::lock_guard<std::mutex> g(m_lock);
-        if (m_haveJob) return false;
         m_job.px.resize((size_t)eyeW * 2 * 4 * eyeH);
         for (int y = 0; y < eyeH; ++y) memcpy(&m_job.px[(size_t)y * eyeW * 2 * 4], rgba + (size_t)y * pitch, (size_t)eyeW * 2 * 4);
         m_job.eyeW = eyeW; m_job.eyeH = eyeH; m_job.mapW = mapW; m_job.mapH = mapH; m_job.aspect = aspect; m_job.width = width; m_job.serial = serial;
@@ -360,6 +377,16 @@ bool NeuralDepth::Submit(const uint8_t* rgba, int pitch, int eyeW, int eyeH, flo
     }
     m_wake.notify_all();
     return true;
+}
+
+// How long until the thread is free for another picture, as far as can be told: what is left of the answer
+// it is on, by how long the last few took. 0: free now.
+double NeuralDepth::Remaining()
+{
+    std::lock_guard<std::mutex> g(m_lock);
+    if (!m_running) return m_haveJob ? m_tAll : 0.0;
+    const double gone = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - m_began).count();
+    return (std::max)(0.0, m_tAll - gone);
 }
 
 bool NeuralDepth::Take(std::vector<uint16_t>& halfRGBA, int& mapW, int& mapH, unsigned& serial, double& ms)
@@ -464,6 +491,7 @@ void NeuralDepth::Run()
                 m_wake.wait(g, [this] { return m_quit || m_haveJob; });
                 if (m_quit) return;
                 job = std::move(m_job); m_haveJob = false;
+                m_began = std::chrono::steady_clock::now(); m_running = true;
             }
             const auto t0 = std::chrono::steady_clock::now();
             int w = 0, h = 0; NetSize(job.aspect, job.width, w, h);
@@ -493,21 +521,36 @@ void NeuralDepth::Run()
                 tPrep += std::chrono::duration<double, std::milli>(p1 - p0).count(); tRun += std::chrono::duration<double, std::milli>(p2 - p1).count();
                 const float* d = out[0].GetTensorData<float>();
                 disp[eye].resize((size_t)w * h);
-                for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x)
-                    disp[eye][(size_t)y * w + x] = d[(size_t)y * w + (eye == 1 ? w - 1 - x : x)] - (float)slide;
+                const float fs = (float)slide;
+                if (eye == 0) for (size_t i = 0, n = (size_t)w * h; i < n; ++i) disp[0][i] = d[i] - fs;
+                else for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x)
+                    disp[eye][(size_t)y * w + x] = d[(size_t)y * w + (w - 1 - x)] - fs;
             }
             // To the map: bilinear, and from the model's pixels to the map's texels.
             std::vector<uint16_t> res((size_t)job.mapW * 2 * job.mapH * 4, 0);
             const float k = (float)job.mapW / (float)w;
             const uint16_t one = ToHalf(1.0f);
+            // (Where each of the map's columns lies among the model's, worked out once; a row at a time.)
+            std::vector<int> cx((size_t)job.mapW); std::vector<float> cf((size_t)job.mapW), line((size_t)job.mapW);
+            for (int x = 0; x < job.mapW; ++x)
+            {
+                const float fx = (std::max)(0.0f, (std::min)((float)w - 1.001f, ((float)x + 0.5f) * (float)w / (float)job.mapW - 0.5f));
+                cx[(size_t)x] = (int)fx; cf[(size_t)x] = fx - (float)(int)fx;
+            }
             for (int eye = 0; eye < eyes; ++eye)
                 for (int y = 0; y < job.mapH; ++y)
+                {
+                    const float fy = (std::max)(0.0f, (std::min)((float)h - 1.001f, ((float)y + 0.5f) * (float)h / (float)job.mapH - 0.5f));
+                    const int y0 = (int)fy; const float wy = fy - (float)y0;
+                    const float* r0 = &disp[eye][(size_t)y0 * w]; const float* r1 = r0 + w;
                     for (int x = 0; x < job.mapW; ++x)
                     {
-                        const float v = Bilinear(disp[eye], w, h, ((float)x + 0.5f) * (float)w / (float)job.mapW - 0.5f, ((float)y + 0.5f) * (float)h / (float)job.mapH - 0.5f);
-                        uint16_t* o = &res[((size_t)y * job.mapW * 2 + (size_t)eye * job.mapW + x) * 4];
-                        o[0] = ToHalf(v * k); o[1] = one;
+                        const int x0 = cx[(size_t)x]; const float wx = cf[(size_t)x];
+                        line[(size_t)x] = ((r0[x0] * (1 - wx) + r0[x0 + 1] * wx) * (1 - wy) + (r1[x0] * (1 - wx) + r1[x0 + 1] * wx) * wy) * k;
                     }
+                    uint16_t* o = &res[((size_t)y * job.mapW * 2 + (size_t)eye * job.mapW) * 4];
+                    for (int x = 0; x < job.mapW; ++x) { o[x * 4] = ToHalf(line[(size_t)x]); o[x * 4 + 1] = one; }
+                }
             const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             // (Handed to the painter's thread: the picture and its depth.)
             if (m_painter)
@@ -521,8 +564,9 @@ void NeuralDepth::Run()
                 std::lock_guard<std::mutex> g(m_lock);
                 m_result.swap(res); m_resW = job.mapW; m_resH = job.mapH; m_resSerial = job.serial; m_resMs = ms; m_haveResult = true;
                 m_tPrep += (tPrep - m_tPrep) * 0.2; m_tRun += (tRun - m_tRun) * 0.2; m_tAll += (ms - m_tAll) * 0.2;
+                m_running = false;
+                if (!m_haveJob) m_busy = false;
             }
-            m_busy = false;
         }
     }
     catch (const std::exception& e)
@@ -593,6 +637,17 @@ void NeuralDepth::PaintRun()
                 m_layer.swap(layer); m_layerN = n; m_layerDoneSerial = shot.serial; m_haveLayer = true;
                 m_layerMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             }
+            // (Following a moving picture: no more often than m_paintGap -- the painter and the matcher share
+            // the card, and with the painter going all the time the matcher's answers took twice as long.)
+            if (m_autoPaint.load())
+                for (;;)
+                {
+                    const double gone = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                    if (gone >= (double)m_paintGap.load()) break;
+                    { std::lock_guard<std::mutex> q(m_lock); if (m_quit) return; }
+                    { std::lock_guard<std::mutex> g(m_paintLock); if (m_wantLayer) break; }
+                    Sleep(5);
+                }
         }
     }
     catch (const std::exception& e) { Log("NeuralDepth: the painter failed: %s", e.what()); }

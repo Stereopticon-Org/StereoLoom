@@ -3421,6 +3421,39 @@ namespace
     {
         if (!IsTopmostWeaveMode(app)) return;
         const HMONITOR mon = SrMonitor(app);
+        // A game that holds the display to itself (exclusive fullscreen: Direct3D's,
+        // or a Vulkan / OpenGL game the driver presents natively) is shown instead of
+        // every window, the weave included, whatever the window order says -- the
+        // lens is on and the picture under it is the game's own side-by-side. Seen
+        // from here only by asking Windows; nothing can be drawn over it, so: said
+        // in the log, and once to the user.
+        {
+            QUERY_USER_NOTIFICATION_STATE qs = QUNS_ACCEPTS_NOTIFICATIONS;
+            const bool exclusive = SUCCEEDED(SHQueryUserNotificationState(&qs)) && qs == QUNS_RUNNING_D3D_FULL_SCREEN;
+            static bool s_was = false, s_told = false;
+            static DWORD s_lastMs = 0;
+            if (exclusive && (!s_was || GetTickCount() - s_lastMs > 5000))
+            {
+                s_lastMs = GetTickCount();
+                const HWND fg = ::GetForegroundWindow();
+                char cls[64] = {};
+                if (fg) GetClassNameA(fg, cls, (int)sizeof(cls));
+                Log("Weave: a program holds the display exclusively (foreground %p '%s', class '%s', %s the SR display) -- the weave cannot be shown over it; it needs borderless / windowed fullscreen",
+                    (void*)fg, fg ? ForegroundExeBaseName(fg).c_str() : "", cls,
+                    fg && MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) == mon ? "on" : "not on");
+                if (!s_told && fg && MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) == mon)
+                {
+                    s_told = true;
+                    NOTIFYICONDATAA nid{ sizeof(nid) };
+                    nid.hWnd = app.hwnd; nid.uID = 1; nid.uFlags = NIF_INFO; nid.dwInfoFlags = NIIF_WARNING;
+                    _snprintf_s(nid.szInfoTitle, _TRUNCATE, "SR Loom can't show over this game");
+                    _snprintf_s(nid.szInfo, _TRUNCATE, "It is in exclusive fullscreen. Set it to borderless or windowed fullscreen (for Vulkan / OpenGL games on NVIDIA: present method 'Prefer layered on DXGI Swapchain').");
+                    Shell_NotifyIconA(NIM_MODIFY, &nid);
+                }
+            }
+            if (!exclusive && s_was) Log("Weave: the display is no longer held exclusively");
+            s_was = exclusive;
+        }
         for (HWND h = GetWindow(app.hwnd, GW_HWNDPREV); h; h = GetWindow(h, GW_HWNDPREV))
         {
             if (!IsWindowVisible(h) || IsCloaked(h) || IsOwnProcessWindow(h)) continue;
@@ -8082,8 +8115,10 @@ namespace
                         const ULONGLONG nowMs = GetTickCount64();
                         // (Handed over in two steps so the loop never waits on the GPU: made small and
                         // copied out this time round; read, a loop or two on, when the copy is done.)
-                        if (!app.neuralCopying && !app.neural.Busy() && app.neuralSubmitted != app.lookSerial &&
-                            (app.lookLive || nowMs - app.neuralTick > 150))
+                        // (Live: the next picture is made ready a loop or two before the thread is free for it --
+                        // so it goes from one answer straight to a picture that is new, and never waits for one.)
+                        if (!app.neuralCopying && app.neuralSubmitted != app.lookSerial &&
+                            (app.lookLive ? app.neural.Remaining() <= 14.0 : (!app.neural.Busy() && nowMs - app.neuralTick > 150)))
                         {
                             int nw = 0, nh = 0; app.neural.NetSize(aspect, 736, nw, nh);
                             ID3D11Texture2D* shrunk = app.look.Shrink(app.converter.OutputSRV(), ew, eh, nw, nh);
@@ -8362,6 +8397,19 @@ namespace
                             int ev[5] = {};
                             if (app.weaver.TakeEventCounts(ev))
                                 Log("  SR events: viewer lost %d, found %d | lens on %d, off %d | other %d", ev[0], ev[1], ev[2], ev[3], ev[4]);
+                            // (What is in front, and whether it has the display to itself: a
+                            // weave that is drawn and not seen is explained by this line.)
+                            if (const HWND fg = ::GetForegroundWindow())
+                            {
+                                char cls[64] = {};
+                                GetClassNameA(fg, cls, (int)sizeof(cls));
+                                QUERY_USER_NOTIFICATION_STATE qs = QUNS_ACCEPTS_NOTIFICATIONS;
+                                SHQueryUserNotificationState(&qs);
+                                const LONG_PTR ex = GetWindowLongPtr(fg, GWL_EXSTYLE);
+                                Log("  in front: %p '%s' (class '%s'%s%s, band %lu) | Windows' state %d%s", (void*)fg, ForegroundExeBaseName(fg).c_str(), cls,
+                                    IsWindowFullscreen(fg) ? ", fills its display" : "", (ex & WS_EX_TOPMOST) ? ", topmost" : "", (unsigned long)WindowBand(fg),
+                                    (int)qs, qs == QUNS_RUNNING_D3D_FULL_SCREEN ? " (a program holds the display exclusively)" : "");
+                            }
                         }
                         Present12::AsyncStats as;
                         if (app.renderer.IsDX12() && app.renderer.DX12()->TakeAsyncStats(as))

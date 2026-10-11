@@ -401,7 +401,7 @@ static int RunLive(const wchar_t* file)
     wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring dir = exe; const size_t cut = dir.find_last_of(L"/\\"); if (cut != std::wstring::npos) dir.resize(cut);
     if (!neural.Start(dir, _wgetenv(L"LOOKTEST_MODEL") ? _wgetenv(L"LOOKTEST_MODEL") : L"")) { fwprintf(stderr, L"no neural matcher beside the exe\n"); return 1; }
-    neural.SetLeftOnly(true); neural.SetAutoPaint(_wgetenv(L"LOOKTEST_NOPAINT") == nullptr);
+    neural.SetLeftOnly(true); neural.SetAutoPaint(_wgetenv(L"LOOKTEST_NOPAINT") == nullptr); if (_wgetenv(L"LOOKTEST_PAINTGAP")) neural.SetPaintGap(_wtoi(_wgetenv(L"LOOKTEST_PAINTGAP")));
     for (int k = 0; k < 6000 && !neural.Ready() && !neural.Failed(); ++k) Sleep(100);
     if (!neural.Ready()) { fwprintf(stderr, L"the model did not load\n"); return 1; }
     wprintf(L"runtime: %s\n", neural.OnTensorRT() ? L"TensorRT" : L"DirectML");
@@ -416,7 +416,7 @@ static int RunLive(const wchar_t* file)
     while (GetTickCount64() - t0 < (ULONGLONG)seconds * 1000)
     {
         ++loops; ++serial;                                   // (every loop a "new picture": a video)
-        if (!copying && !neural.Busy())
+        if (!copying && neural.Remaining() <= 14.0)
         {
             neural.NetSize(aspect, 736, nw, nh);
             ID3D11Texture2D* shrunk = look.Shrink(srv, ew, eh, nw, nh);
@@ -459,6 +459,20 @@ static int RunLive(const wchar_t* file)
         v.tL = sway; v.tR = 1.0f + sway;
         look.Render(srv, ew, eh, v, true);
         ctx->Flush();
+        // (Paced as a display paces SR Loom -- LOOKTEST_HZ, 160 unless said; 0: as fast as it goes. Unpaced, the
+        // card's queue is always full and the picture read back waits behind it: no measure of the real thing.)
+        {
+            static const double hz = _wgetenv(L"LOOKTEST_HZ") ? _wtof(_wgetenv(L"LOOKTEST_HZ")) : 160.0;
+            static LARGE_INTEGER qf{}, next{};
+            if (hz > 0.0)
+            {
+                if (!qf.QuadPart) { QueryPerformanceFrequency(&qf); QueryPerformanceCounter(&next); }
+                next.QuadPart += (LONGLONG)((double)qf.QuadPart / hz);
+                LARGE_INTEGER q{}; QueryPerformanceCounter(&q);
+                if (q.QuadPart > next.QuadPart) next = q;   // (late: no catching up)
+                while (q.QuadPart < next.QuadPart) { YieldProcessor(); QueryPerformanceCounter(&q); }
+            }
+        }
         const ULONGLONG now = GetTickCount64();
         if (now - lastPrint >= 2000)
         {
@@ -480,6 +494,7 @@ static int RunLive(const wchar_t* file)
             for (size_t k = 0; k < (size_t)W * H; k += 64) { in += (px[k * 4] + px[k * 4 + 1] + px[k * 4 + 2]) / 3.0; ++ni; }
             wprintf(L"%4.1f s: %d loops, %d depth answers (%.0f ms each), %d backgrounds (%.0f ms each); output brightness %.1f (picture %.1f), wholly black pixels %.1f%%\n",
                     (now - t0) / 1000.0, loops, answers, answers ? ansMs / answers : 0.0, layers, layers ? layMs / layers : 0.0, n ? sum / n : 0.0, ni ? in / ni : 0.0, n ? 100.0 * black / n : 0.0);
+            { double tp = 0, tr = 0, ta = 0; neural.Times(tp, tr, ta); wprintf(L"        the matcher's thread: inputs %.1f ms, the model %.1f ms, all %.1f ms\n", tp, tr, ta); }
             lastPrint = now; loops = 0; answers = 0; layers = 0; ansMs = 0; layMs = 0;
         }
     }

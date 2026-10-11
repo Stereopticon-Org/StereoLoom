@@ -74,7 +74,7 @@ namespace srw
         // the right, the right's at x + d in the left). nullptr: its own again.
         // (keepPlate: the picture has moved on since -- a matcher that answers late, picture after picture: the plate
         // goes on. Else the plate was made with another depth for this same picture, and is begun again.)
-        void SetExternalDisparity(ID3D11Texture2D* tex, bool keepPlate = false) { m_extDisp = tex; m_haveMaps = false; if (!keepPlate) m_plateHave = false; }
+        void SetExternalDisparity(ID3D11Texture2D* tex, bool keepPlate = false) { m_extDisp = tex; m_haveMaps = false; ++m_extSerial; if (!keepPlate) m_plateHave = false; }
         // Both eyes of src made small (each w x h, side by side, 8-bit sRGB) for a matcher elsewhere to read back.
         ID3D11Texture2D* Shrink(ID3D11ShaderResourceView* src, int eyeW, int eyeH, int w, int h);
         void MapSize(int eyeW, int eyeH, int& w, int& h) const;
@@ -83,8 +83,8 @@ namespace srw
         void SetFuseEdge(bool on) { m_fuseEdge = on; m_haveMaps = false; }
         void SetFuseReach(float t) { m_fuseReach = t; m_haveMaps = false; }
         void SetExternalDilate(int texels) { m_extDilate = texels; m_haveMaps = false; }
-        void SetExternalLeftOnly(bool on) { m_extLeftOnly = on; m_haveMaps = false; }
-        void SetExternalSnap(int passes) { m_extSnap = passes; m_haveMaps = false; }
+        void SetExternalLeftOnly(bool on) { m_extLeftOnly = on; m_haveMaps = false; ++m_extSerial; }
+        void SetExternalSnap(int passes) { m_extSnap = passes; m_haveMaps = false; ++m_extSerial; }
         void SetExternalSoft(float z) { m_extSoft = z; }   // (at a step in the other matcher's map, its answer stands)
         void SetBase(int base) { m_base = base; m_haveMaps = false; }   // (the finest matching size: 1 the eye itself, 2 half, ...; 0 as it sees fit)
         // How many times the edges are drawn in at the finest size (pairs of passes; 0: not). A test switch.
@@ -140,6 +140,8 @@ namespace srw
         ID3D11Texture2D* m_estRead = nullptr;
         int   m_eyeW = 0, m_eyeH = 0;
         float m_maxShare = 0.25f;   // (a quarter of the eye's width: no pop-out a picture can hold is past it)
+        Tex   m_extPrep;            // (the other matcher's answer as prepared: kept for the pictures until its next)
+        unsigned m_extSerial = 1, m_extPrepSerial = 0;
         bool  m_haveMaps = false;   // (the disparity maps hold a picture's)
         int   m_spread = 1;
         int   m_base = 0;

@@ -26,6 +26,7 @@
 // nothing else is touched.
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -46,6 +47,8 @@ namespace srw
         void Shutdown();
         bool Ready() const { return m_ready.load(); }      // the model is loaded
         bool Busy() const { return m_busy.load(); }        // a picture is being worked on
+        void SetPaintGap(int ms) { m_paintGap = ms; }      // following a moving picture, a background no more often than this
+        double Remaining();                                // ms until it is free for another (0: now), as far as can be told
         bool Failed() const { return m_failed.load(); }
         bool OnTensorRT() const { return m_trt; }
         void SetAllowTensorRT(bool on) { m_allowTrt = on; }   // (before Start: the TensorRT runtime may be used where it is installed)
@@ -113,6 +116,8 @@ namespace srw
         std::atomic<bool> m_ready{ false }, m_busy{ false }, m_failed{ false };
         std::atomic<int> m_fixW{ 0 }, m_fixH{ 0 };
         std::atomic<bool> m_leftOnly{ false };
+        std::atomic<int> m_paintGap{ 200 };
+        std::chrono::steady_clock::time_point m_began; bool m_running = false;   // (the answer being worked on: Remaining)
         double m_tPrep = 0.0, m_tRun = 0.0, m_tAll = 0.0;   // (smoothed, ms: making the inputs, the model, all of it)
     };
 }

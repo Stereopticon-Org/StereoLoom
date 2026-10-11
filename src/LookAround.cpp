@@ -92,7 +92,7 @@ void LookAround::Release(Tex& t) { SAFE_RELEASE(t.srv); SAFE_RELEASE(t.rtv); SAF
 
 void LookAround::Shutdown()
 {
-    Release(m_plate[0]); Release(m_plate[1]); Release(m_extCopy); Release(m_small);
+    Release(m_plate[0]); Release(m_plate[1]); Release(m_extCopy); Release(m_extPrep); Release(m_small);
     for (int k = 0; k < kFillMax; ++k) { SAFE_RELEASE(m_fillRtv[k]); SAFE_RELEASE(m_fillMip[k]); }
     SAFE_RELEASE(m_fillAll); SAFE_RELEASE(m_fillTex); m_fillMips = 0;
     for (int k = 0; k < 4; ++k) Release(m_lkSum[k]);
@@ -237,7 +237,11 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     auto sized = [&](int k) { cb.size[0] = (float)w[k]; cb.size[1] = (float)h[k]; };
 
     const bool match = newPicture || !m_haveMaps;
-    if (match)
+    // (A trained matcher's depth alone, and no plate kept: the look-around's own levels and its own matching at
+    // the smaller sizes feed nothing -- not made. They were two fifths of a frame's cost.)
+    const bool extOnly = m_extDisp && m_extStage == 2;
+    const bool ownLevels = !extOnly || m_plateOn;
+    if (match && ownLevels)
     {
     // 1. The levels.
     sized(0); cb.srcSize[0] = (float)eyeW; cb.srcSize[1] = (float)eyeH;
@@ -260,6 +264,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
     {
     for (int k = levels - 1; k >= 0; --k)
     {
+        if (k > 0 && !ownLevels) continue;
         sized(k);
         cb.range = std::ceil(m_maxShare * (float)w[k]) + 1.0f;
         // (7x7 at the two smaller sizes; 5x5 at 1/8, where the window is most of the cost.)
@@ -292,19 +297,29 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         }
         }
         result[k] = &m_dispB[k];
-        if (k == 0 && m_extDisp && m_extStage == 2) m_context->CopyResource(m_dispB[0].tex, m_extDisp);   // (after everything but the making finer)
+        // (What is made of the other matcher's answer without the picture -- its ramps made steps, the right eye's
+        // map from the left's -- is made once for each answer and kept: m_extPrep. A video gives a new picture many
+        // times for each answer.)
+        const bool prepKept = k == 0 && extOnly && m_extPrepSerial == m_extSerial && m_extPrep.tex && m_extPrep.w == 2 * w[0] && m_extPrep.h == h[0];
+        if (prepKept) m_context->CopyResource(m_dispB[0].tex, m_extPrep.tex);
+        if (k == 0 && extOnly && !prepKept) m_context->CopyResource(m_dispB[0].tex, m_extDisp);   // (after everything but the making finer)
         // (Its ramps made steps again: PSSnap, in pairs so the answer is left in B.)
-        if (k == 0 && m_extDisp && m_extStage == 2)
+        if (k == 0 && extOnly && !prepKept)
             for (int it = 0; it < (m_extSnap + 1) / 2; ++it)
             {
                 Pass(m_psSnap, m_dispA[0], cb, nullptr, m_dispB[0].srv);
                 Pass(m_psSnap, m_dispB[0], cb, nullptr, m_dispA[0].srv);
             }
         // (... the left eye's only: the right eye's made from it.)
-        if (k == 0 && m_extDisp && m_extStage == 2 && m_extLeftOnly)
+        if (k == 0 && extOnly && !prepKept && m_extLeftOnly)
         {
             Pass(m_psRight, m_dispA[0], cb, nullptr, m_dispB[0].srv);
             Pass(m_psRightFill, m_dispB[0], cb, nullptr, m_dispA[0].srv);
+        }
+        if (k == 0 && extOnly && !prepKept && Ensure(m_extPrep, 2 * w[0], h[0], DXGI_FORMAT_R16G16B16A16_FLOAT))
+        {
+            m_context->CopyResource(m_extPrep.tex, m_dispB[0].tex);
+            m_extPrepSerial = m_extSerial;
         }
         // (4: the better of it and the look-around's own at each texel: PSFuse.)
         if (k == 0 && m_extDisp && m_extStage == 4 && Ensure(m_extCopy, 2 * w[0], h[0], DXGI_FORMAT_R16G16B16A16_FLOAT))
@@ -377,8 +392,8 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         }
         m_estHave = true;
     }
-    for (int k = 0; k < levels; ++k) m_context->CopyResource(m_prevTmp[k].tex, m_tmp[k].tex);
-    m_prevHave = true;
+    if (ownLevels) { for (int k = 0; k < levels; ++k) m_context->CopyResource(m_prevTmp[k].tex, m_tmp[k].tex); m_prevHave = true; }
+    else m_prevHave = false;
     // The plate: the one before moved as the picture moved, and this picture put into it.
     if (m_plateOn)
     {
