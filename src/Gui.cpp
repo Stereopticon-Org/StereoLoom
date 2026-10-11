@@ -2884,9 +2884,19 @@ bool Gui::Render(GuiState& state)
                 const std::string curFile = m_lookModel.empty() ? std::string("Lite Any Stereo M 512x288.onnx") : m_lookModel;
                 std::string curFamily; int curW = 0, curH = 0; splitName(curFile, curFamily, curW, curH);
                 auto choose = [&](const std::string& file) { m_lookModel = file; Settings::WriteLookModel(std::wstring(file.begin(), file.end())); };
+                // (Which is quick and which is heavy, said beside the name: S, M and H do not say it themselves.)
+                auto modelLabel = [](const std::string& fam) {
+                    const size_t n = fam.size();
+                    const char last = n >= 2 && fam[n - 2] == ' ' ? fam[n - 1] : 0;
+                    if (last == 'S') return fam + " (fastest)";
+                    if (last == 'M') return fam + " (balanced)";
+                    if (last == 'H') return fam + " (heaviest)";
+                    if (fam.find("FoundationStereo") != std::string::npos) return fam + " (very slow)";
+                    return fam;
+                };
                 ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
                 ImGui::SetNextItemWidth(halfW);
-                if (ImGui::BeginCombo("##lookmodel", curFamily.c_str()))
+                if (ImGui::BeginCombo("##lookmodel", modelLabel(curFamily).c_str()))
                 {
                     if (ImGui::IsWindowAppearing()) listModels();
                     if (m_lookModels.empty()) ImGui::TextDisabled("No models found");
@@ -2896,7 +2906,7 @@ bool Gui::Render(GuiState& state)
                         std::string fam; int w = 0, h = 0; splitName(f, fam, w, h);
                         if (std::find(seen.begin(), seen.end(), fam) != seen.end()) continue;
                         seen.push_back(fam);
-                        if (ImGui::Selectable(fam.c_str(), fam == curFamily) && fam != curFamily)
+                        if (ImGui::Selectable(modelLabel(fam).c_str(), fam == curFamily) && fam != curFamily)
                         {
                             // (The same size as now where the model has it; else the nearest it has.)
                             std::string best; int bestGap = 1 << 30;
@@ -2912,7 +2922,7 @@ bool Gui::Render(GuiState& state)
                     }
                     ImGui::EndCombo();
                 }
-                tip("The neural network's model. Lite Any Stereo S, M and H run from quickest to most accurate; "
+                tip("The neural network's model. Lite Any Stereo S is the fastest, M is balanced and H is the heaviest and most accurate; "
                     "Fast-FoundationStereo is the most accurate and takes a second or more a picture. Any model placed in the "
                     "neural folder beside SR Loom is listed. Applies straight away (a model takes a few seconds to load).");
                 // Second row: the size it is run at; and whether every picture is given to it.
@@ -2932,7 +2942,8 @@ bool Gui::Render(GuiState& state)
                     {
                         std::string fam2; int w2 = 0, h2 = 0; splitName(s.second, fam2, w2, h2);
                         char item[48];
-                        if (w2 > 0) snprintf(item, sizeof(item), "%dx%d", w2, h2); else snprintf(item, sizeof(item), "Any");
+                        const char* note = sizes.size() < 2 ? "" : &s == &sizes.front() ? " (fastest)" : &s == &sizes.back() ? " (heaviest)" : "";
+                        if (w2 > 0) snprintf(item, sizeof(item), "%dx%d%s", w2, h2, note); else snprintf(item, sizeof(item), "Any");
                         if (ImGui::Selectable(item, s.second == curFile)) choose(s.second);
                     }
                     ImGui::EndCombo();

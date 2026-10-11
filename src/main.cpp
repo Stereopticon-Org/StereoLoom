@@ -10118,7 +10118,9 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint();
                     app.neural.SetAutoPaint(app.lookLive && app.lookPaint);
                     { const bool pl = Settings::ReadLookPlate(); if (pl != app.lookPlate) { app.lookPlate = pl; app.look.SetPlate(pl); } }
-                    app.neural.SetPaintGap(Settings::ReadLookPaintGap());
+                    // (With earlier pictures remembered the painter is asked for less often: what was seen stands before
+                    // what it paints, and it shares the card with everything else.)
+                    app.neural.SetPaintGap((std::max)(Settings::ReadLookPaintGap(), app.lookPlate ? 500 : 0));
                     app.look.SetGaussian(Settings::ReadLookGauss());
                     { const bool ed = Settings::ReadLookEdges(); if (ed != app.lookEdges) { app.lookEdges = ed; app.look.SetExternalSnap(ed ? 2 : 0); } }
                     const std::wstring lm = Settings::ReadLookModel();
