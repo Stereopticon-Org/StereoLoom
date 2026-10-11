@@ -623,38 +623,8 @@ float4 PSUnseen(VSOut i) : SV_Target
     const int2 p = int2((int)i.pos.x - pane * W, (int)i.pos.y);
     const float4 v = tex0.Load(int3(pane * W + p.x, p.y, 0));
     if (v.a > 0.5) return float4(v.rgb, 1);
-    // (Before all: a background painted for this picture -- tex4, the LEFT eye with every near
-    // thing lifted off at its edges and what is behind it painted in, and that background's own
-    // disparity in .a. It is looked up as the plate is: where the surface behind this gap would be
-    // in the left eye, by the layer's own disparity there.)
-    [branch] if (g_plate.w > 0.5)
-    {
-        const int w0 = (int)g_srcSize.x, h0 = (int)g_srcSize.y;
-        const float2 full = float2((float)p.x + 0.5, (float)p.y + 0.5);
-        const float2 uv = full / g_size;
-        const float t = pane == 0 ? g_tL : g_tR;
-        const float db = tex2.Load(int3(pane * w0 + clamp((int)(full.x / g_scale.x), 0, w0 - 1), clamp((int)(full.y / g_scale.y), 0, h0 - 1), 0)).r;
-        // (Begun from the gap's far side as the geometry has it; and, failing that, from the painted
-        // background's own disparity hereabouts -- the two are guesses of the same thing.)
-        const float dHere = tex4.SampleLevel(sampLinear, clamp(uv, 0.001, 0.999), 0).a;
-        float3 got = 0; bool hit = false;
-        [unroll] for (int st = 0; st < 2; ++st)
-        {
-        float d = st == 0 ? db : min(db, dHere); float4 ly = float4(0, 0, 0, -1e4); bool ok = false, live = !hit;
-        [unroll] for (int it = 0; it < 3; ++it)
-        {
-            const float2 q = full + d * Move(0.0, t, uv) * g_scale;
-            const bool inside = q.x >= 0.5 && q.x <= g_size.x - 0.5 && q.y >= 0.5 && q.y <= g_size.y - 0.5;
-            const float4 s = tex4.SampleLevel(sampLinear, clamp(q / g_size, 0.001, 0.999), 0);
-            const bool near3 = inside && abs(s.a - d) <= 6.0;
-            if (live) { ok = near3 && abs(s.a - d) < (it == 0 ? 6.0 : 1.0); if (near3) { ly = s; d = s.a; } }
-            live = live && near3;
-        }
-        if (!hit && ok && d <= db + 2.0) { got = ly.rgb; hit = true; }
-        }
-        if (hit) return float4(g_plate.z > 0.5 ? float3(1, 1, 0) : got, 1);
-    }
-    // (First: was it in sight in an earlier picture? The plate has what was
+    // (Before all -- before the painted background too, which is made up, where this was seen: was it in sight
+    // in an earlier picture? The plate has what was
     // farthest at each place of each eye. The surface behind this gap -- the
     // farther side's disparity -- is looked for in the plate where each eye
     // would have it; the plate's own disparity there is then believed and the
@@ -684,6 +654,37 @@ float4 PSUnseen(VSOut i) : SV_Target
             if (!hit && ok && d <= db + 1.0) { got = pl.rgb; hit = true; }
         }
         if (hit) return float4(g_plate.z > 0.5 ? float3(1, 0, 1) : got, 1);
+    }
+    // (Then: a background painted for this picture -- tex4, the LEFT eye with every near
+    // thing lifted off at its edges and what is behind it painted in, and that background's own
+    // disparity in .a. It is looked up as the plate is: where the surface behind this gap would be
+    // in the left eye, by the layer's own disparity there.)
+    [branch] if (g_plate.w > 0.5)
+    {
+        const int w0 = (int)g_srcSize.x, h0 = (int)g_srcSize.y;
+        const float2 full = float2((float)p.x + 0.5, (float)p.y + 0.5);
+        const float2 uv = full / g_size;
+        const float t = pane == 0 ? g_tL : g_tR;
+        const float db = tex2.Load(int3(pane * w0 + clamp((int)(full.x / g_scale.x), 0, w0 - 1), clamp((int)(full.y / g_scale.y), 0, h0 - 1), 0)).r;
+        // (Begun from the gap's far side as the geometry has it; and, failing that, from the painted
+        // background's own disparity hereabouts -- the two are guesses of the same thing.)
+        const float dHere = tex4.SampleLevel(sampLinear, clamp(uv, 0.001, 0.999), 0).a;
+        float3 got = 0; bool hit = false;
+        [unroll] for (int st = 0; st < 2; ++st)
+        {
+        float d = st == 0 ? db : min(db, dHere); float4 ly = float4(0, 0, 0, -1e4); bool ok = false, live = !hit;
+        [unroll] for (int it = 0; it < 3; ++it)
+        {
+            const float2 q = full + d * Move(0.0, t, uv) * g_scale;
+            const bool inside = q.x >= 0.5 && q.x <= g_size.x - 0.5 && q.y >= 0.5 && q.y <= g_size.y - 0.5;
+            const float4 s = tex4.SampleLevel(sampLinear, clamp(q / g_size, 0.001, 0.999), 0);
+            const bool near3 = inside && abs(s.a - d) <= 6.0;
+            if (live) { ok = near3 && abs(s.a - d) < (it == 0 ? 6.0 : 1.0); if (near3) { ly = s; d = s.a; } }
+            live = live && near3;
+        }
+        if (!hit && ok && d <= db + 2.0) { got = ly.rgb; hit = true; }
+        }
+        if (hit) return float4(g_plate.z > 0.5 ? float3(1, 1, 0) : got, 1);
     }
     // (Then: what lies BEHIND, carried in. tex3 is the picture made smaller and
     // smaller, each texel keeping only the farthest of what it covers
