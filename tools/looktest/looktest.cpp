@@ -484,8 +484,12 @@ static int RunLive(const wchar_t* file)
                 look.SetLayer(layerSrv); ++layers; layMs += lms;
             }
         }
-        LookAround::View v; const float sway = 0.4f * std::sin((float)(GetTickCount64() - t0) * 0.002f);
+        static const float swayBy = _wgetenv(L"LOOKTEST_SWAY") ? (float)_wtof(_wgetenv(L"LOOKTEST_SWAY")) : 0.4f;   // (how far the head goes to each side, in eye spacings)
+        LookAround::View v; const float sway = swayBy * std::sin((float)(GetTickCount64() - t0) * 0.002f);
         v.tL = sway; v.tR = 1.0f + sway;
+        // (LOOKTEST_RHO: the head nearer the screen than the eyes' own distance -- 1.4: at 46 cm -- on a screen 9.5 eye
+        // spacings wide and 5.3 high, and a little below centre.)
+        if (const wchar_t* rh = _wgetenv(L"LOOKTEST_RHO")) { v.rho = (float)_wtof(rh); v.screenW = 9.5f; v.screenH = 5.3f; v.ty = 0.2f; }
         look.Render(srv, ew, eh, v, fresh);
         ctx->Flush();
         // (Paced as a display paces SR Loom -- LOOKTEST_HZ, 160 unless said; 0: as fast as it goes. Unpaced, the

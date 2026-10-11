@@ -637,21 +637,26 @@ float4 PSUnseen(VSOut i) : SV_Target
         const float t = pane == 0 ? g_tL : g_tR;
         const float db = tex2.Load(int3(pane * w0 + clamp((int)(full.x / g_scale.x), 0, w0 - 1), clamp((int)(full.y / g_scale.y), 0, h0 - 1), 0)).r;
         const int first = abs(t) <= abs(t - 1.0) ? 0 : 1;
+        // (Real loops, left as soon as there is nothing more to learn: the second eye is not asked where the
+        // first has it, nor a further step taken once the trail is lost. Unrolled, every pixel neither eye saw
+        // paid for all six readings whatever the first one said -- and with the head well to one side that is
+        // a great many pixels.)
         float3 got = 0; bool hit = false;
-        [unroll] for (int e = 0; e < 2; ++e)
+        [loop] for (int e = 0; e < 2 && !hit; ++e)
         {
             const int r = e == 0 ? first : 1 - first;
             const bool allowed = !(g_only > -0.5 && g_only < 1.5 && abs(g_only - (float)r) > 0.5);
             float d = db; float4 pl = float4(0, 0, 0, -1e4); bool ok = false, live = allowed;
-            [unroll] for (int it = 0; it < 3; ++it)
+            [loop] for (int it = 0; it < 3 && live; ++it)
             {
                 const float2 q = full + d * Move((float)r, t, uv) * g_scale;
                 const float4 s = PlateAt(tex1, r, q);
                 const bool near3 = s.a > -1000.0 && abs(s.a - d) <= 3.0;
-                if (live) { ok = near3 && abs(s.a - d) < (it == 0 ? 3.0 : 0.5); if (near3) { pl = s; d = s.a; } }
-                live = live && near3;
+                ok = near3 && abs(s.a - d) < (it == 0 ? 3.0 : 0.5);
+                if (near3) { pl = s; d = s.a; }
+                live = near3;
             }
-            if (!hit && ok && d <= db + 1.0) { got = pl.rgb; hit = true; }
+            if (ok && d <= db + 1.0) { got = pl.rgb; hit = true; }
         }
         if (hit) return float4(g_plate.z > 0.5 ? float3(1, 0, 1) : got, 1);
     }
@@ -670,19 +675,20 @@ float4 PSUnseen(VSOut i) : SV_Target
         // background's own disparity hereabouts -- the two are guesses of the same thing.)
         const float dHere = tex4.SampleLevel(sampLinear, clamp(uv, 0.001, 0.999), 0).a;
         float3 got = 0; bool hit = false;
-        [unroll] for (int st = 0; st < 2; ++st)
+        [loop] for (int st = 0; st < 2 && !hit; ++st)
         {
-        float d = st == 0 ? db : min(db, dHere); float4 ly = float4(0, 0, 0, -1e4); bool ok = false, live = !hit;
-        [unroll] for (int it = 0; it < 3; ++it)
+        float d = st == 0 ? db : min(db, dHere); float4 ly = float4(0, 0, 0, -1e4); bool ok = false, live = true;
+        [loop] for (int it = 0; it < 3 && live; ++it)
         {
             const float2 q = full + d * Move(0.0, t, uv) * g_scale;
             const bool inside = q.x >= 0.5 && q.x <= g_size.x - 0.5 && q.y >= 0.5 && q.y <= g_size.y - 0.5;
             const float4 s = tex4.SampleLevel(sampLinear, clamp(q / g_size, 0.001, 0.999), 0);
             const bool near3 = inside && abs(s.a - d) <= 6.0;
-            if (live) { ok = near3 && abs(s.a - d) < (it == 0 ? 6.0 : 1.0); if (near3) { ly = s; d = s.a; } }
-            live = live && near3;
+            ok = near3 && abs(s.a - d) < (it == 0 ? 6.0 : 1.0);
+            if (near3) { ly = s; d = s.a; }
+            live = near3;
         }
-        if (!hit && ok && d <= db + 2.0) { got = ly.rgb; hit = true; }
+        if (ok && d <= db + 2.0) { got = ly.rgb; hit = true; }
         }
         if (hit) return float4(g_plate.z > 0.5 ? float3(1, 1, 0) : got, 1);
     }
