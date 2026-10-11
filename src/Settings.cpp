@@ -206,6 +206,8 @@ namespace srw::Settings
     bool ReadLookAround() { return ReadDword(kSettingsKey, L"LookAround", 0) != 0; }
     bool ReadLookShow() { return ReadDword(kSettingsKey, L"LookShow", 0) != 0; }
     int  ReadLookSize() { return (int)ReadDword(kSettingsKey, L"LookSize", 0); }
+    int  ReadLookGauss() { return (int)(std::min)((DWORD)2, ReadDword(kSettingsKey, L"LookGauss", 0)); }
+    void WriteLookGauss(int mode) { WriteDword(kSettingsKey, L"LookGauss", (DWORD)mode); }
     int  ReadLookDepth() { return (int)(std::min)((DWORD)2, ReadDword(kSettingsKey, L"LookDepth", 2)); }
     void WriteLookDepth(int mode) { WriteDword(kSettingsKey, L"LookDepth", (DWORD)mode); }
     bool ReadLookLive() { return ReadDword(kSettingsKey, L"LookLive", 1) != 0; }
@@ -213,6 +215,7 @@ namespace srw::Settings
     bool ReadLookPaint() { return ReadDword(kSettingsKey, L"LookPaint", 1) != 0; }
     void WriteLookPaint(bool on) { WriteDword(kSettingsKey, L"LookPaint", on ? 1 : 0); }
     bool ReadLookPlate() { return ReadDword(kSettingsKey, L"LookPlate", 0) != 0; }
+    int  ReadLookPaintGap() { const int v = (int)ReadDword(kSettingsKey, L"LookPaintGap", 200); return v >= 0 && v <= 5000 ? v : 200; }
     bool ReadLookEdges() { return ReadDword(kSettingsKey, L"LookEdges", 1) != 0; }
     std::wstring ReadLookModel() { return ReadText(kSettingsKey, L"LookModel"); }
     void WriteLookModel(const std::wstring& file) { WriteText(kSettingsKey, L"LookModel", file); }

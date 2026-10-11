@@ -455,6 +455,7 @@ bool Gui::Init(HWND mainHwnd, ID3D11Device* device, ID3D11DeviceContext* context
     m_autoPlaneOn           = Settings::ReadAutoPlane();
     m_lookOn                = Settings::ReadLookAround();
     m_lookDepth             = Settings::ReadLookDepth();
+    m_lookGauss             = Settings::ReadLookGauss();
     m_lookLive              = Settings::ReadLookLive();
     m_lookPaint             = Settings::ReadLookPaint();
     { const std::wstring lm = Settings::ReadLookModel(); m_lookModel.assign(lm.begin(), lm.end()); }
@@ -2953,9 +2954,25 @@ bool Gui::Render(GuiState& state)
                     m_lookPaint = !m_lookPaint;
                     Settings::WriteLookPaint(m_lookPaint);
                 }
-                tip("Once a picture has stopped changing, a second network paints in what is hidden behind things, so "
-                    "looking round them shows a likely background rather than a blur. It takes a few seconds and uses the "
-                    "processor. Needs the painter's file in the neural folder. Applies straight away.");
+                tip("A second network paints in what is hidden behind things, so looking round them shows a likely "
+                    "background rather than a blur. Needs the painter's file in the neural folder. Applies straight away.");
+                // ... and how the new views are drawn.
+                {
+                    static const char* kDraw[3] = { "Draw: Standard", "Draw: Gaussian Splats", "Draw: Gaussian Splats (Half)" };
+                    if (m_lookGauss < 0 || m_lookGauss > 2) m_lookGauss = 0;
+                    ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
+                    ImGui::SetNextItemWidth(halfW);
+                    if (ImGui::BeginCombo("##lookgauss", kDraw[m_lookGauss]))
+                    {
+                        for (int k = 0; k < 3; ++k)
+                            if (ImGui::Selectable(kDraw[k], m_lookGauss == k)) { m_lookGauss = k; Settings::WriteLookGauss(k); }
+                        ImGui::EndCombo();
+                    }
+                    tip("Experimental. Standard: each pixel of the new view is looked up in the two eyes through the depth. "
+                        "Gaussian Splats: every pixel of each eye is thrown forward as a soft Gaussian spot and the spots are "
+                        "blended. Much heavier on the graphics card: expect a lower frame rate. Half uses one spot for "
+                        "every four pixels: quicker and softer. Applies straight away.");
+                }
             }
         }
         }   // (SETTINGS)

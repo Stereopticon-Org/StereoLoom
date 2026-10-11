@@ -10118,6 +10118,8 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint();
                     app.neural.SetAutoPaint(app.lookLive && app.lookPaint);
                     { const bool pl = Settings::ReadLookPlate(); if (pl != app.lookPlate) { app.lookPlate = pl; app.look.SetPlate(pl); } }
+                    app.neural.SetPaintGap(Settings::ReadLookPaintGap());
+                    app.look.SetGaussian(Settings::ReadLookGauss());
                     { const bool ed = Settings::ReadLookEdges(); if (ed != app.lookEdges) { app.lookEdges = ed; app.look.SetExternalSnap(ed ? 2 : 0); } }
                     const std::wstring lm = Settings::ReadLookModel();
                     if (lm != app.lookModel && !app.neural.Busy())
@@ -10385,6 +10387,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
         app.look.SetExternalStage(app.lookDepth == 2 ? 2 : 4);
         app.look.SetExternalLeftOnly(app.lookDepth == 2); app.neural.SetLeftOnly(app.lookDepth == 2);   // (the trained matcher alone: the left eye asked for, the right made from it)
         app.lookPlate = Settings::ReadLookPlate(); app.look.SetPlate(app.lookPlate);
+        app.neural.SetPaintGap(Settings::ReadLookPaintGap()); app.look.SetGaussian(Settings::ReadLookGauss());
         app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint(); app.neural.SetAutoPaint(app.lookLive && app.lookPaint);
         app.neural.Start(dir, app.lookModel);
     }

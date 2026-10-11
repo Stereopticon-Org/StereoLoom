@@ -121,6 +121,8 @@ namespace srw::Settings
     // Where the look-around's depth is from: 0 its own matcher; 1 a trained stereo matcher's (src/NeuralDepth, for a
     // picture that stays, where that is installed) and its own, the better at each place; 2 the trained matcher's
     // alone. LookDepth.
+    int  ReadLookGauss();   // (LookGauss: 0 the new views looked up in the eyes; 1 Gaussian splats, one a pixel; 2 one to four pixels)
+    void WriteLookGauss(int mode);
     int  ReadLookDepth();
     void WriteLookDepth(int mode);
     // 1 (as a rule): the trained matcher is given every picture it is free for and its answers used as they come;
@@ -132,6 +134,7 @@ namespace srw::Settings
     // 1: the look-around keeps a plate of what was in sight in earlier pictures and finds how each picture moved (about
     // 3 ms a new picture); 0, as a rule: not. LookPlate.
     bool ReadLookPlate();
+    int  ReadLookPaintGap();   // (ms between painted backgrounds on a moving picture; 0: as often as the painter can)
     // 1 (as a rule): with a trained matcher's depth, a step in depth is kept a step (no texels between a thing and
     // what is behind it) and the two sides are not mixed; 0: as it was, softer and with the in-between. LookEdges.
     bool ReadLookEdges();

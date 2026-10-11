@@ -225,6 +225,7 @@ namespace srw
         bool                     m_gpuRealtime           = false;  // Settings GpuRealtime (the GPU scheduler's realtime class: needs administrator)
         bool                     m_autoPlaneOn           = true;   // Settings AutoPlane (straight to the display when nothing shows through)
         bool                     m_lookOn                = false;  // Settings LookAround (new views as the head moves: an experiment)
+        int                      m_lookGauss             = 0;      // Settings LookGauss
         int                      m_lookDepth             = 2;      // Settings LookDepth (0 its own matcher, 1 a trained one and its own, 2 the trained one alone)
         std::string              m_lookModel;                      // Settings LookModel (the trained matcher's file; none: stereo.onnx)
         std::vector<std::string> m_lookModels;                     // the .onnx files in the neural folder, listed when the list is opened
