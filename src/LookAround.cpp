@@ -462,7 +462,7 @@ bool LookAround::Render(ID3D11ShaderResourceView* src, int eyeW, int eyeH, const
         const float zero[4] = {};
         const float step = (float)m_gauss;
         const int gw = (int)std::ceil((float)eyeW / step), gh = (int)std::ceil((float)eyeH / step);
-        cb.lk[0] = step; cb.lk[1] = m_gaussSigma; cb.lk[2] = m_gaussSeen;
+        cb.lk[0] = step; cb.lk[1] = m_gaussSigma; cb.lk[2] = m_gaussSeen; cb.lk[3] = m_gaussEdge ? 1.0f : 0.0f;
         m_context->ClearRenderTargetView(m_acc.rtv, zero);
         m_context->ClearRenderTargetView(m_cover.rtv, zero);
         ID3D11RenderTargetView* both[2] = { m_acc.rtv, m_cover.rtv };

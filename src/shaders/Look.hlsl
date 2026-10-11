@@ -1238,7 +1238,37 @@ GaussOut VSGauss(uint id : SV_VertexID)
     const float d01 = tex1.Load(int3(ref * w + x0, y0 + 1, 0)).r, d11 = tex1.Load(int3(ref * w + x0 + 1, y0 + 1, 0)).r;
     const bool one = max(max(d00, d10), max(d01, d11)) - min(min(d00, d10), min(d01, d11)) < 1.0;
     const float dNear = tex1.Load(int3(ref * w + clamp((int)floor(c.x / g_scale.x), 0, w - 1), clamp((int)floor(c.y / g_scale.y), 0, h - 1), 0)).r;
-    const float d = one ? lerp(lerp(d00, d10, f.x), lerp(d01, d11, f.x), f.y) : dNear;
+    float d = one ? lerp(lerp(d00, d10, f.x), lerp(d01, d11, f.x), f.y) : dNear;
+    // (At an outline -- the four are not one surface -- the map is a texel coarse, and its texels are four
+    // pixels of the picture: which side of the outline THIS pixel is on is asked of the two eyes themselves.
+    // Each of the four's disparities is tried: the pixel and the two beside it against what the other eye has
+    // where that disparity puts them. The best fit is taken. Where none fits, the other eye does not see this
+    // pixel at all -- it is behind something -- and it takes the farthest.)
+    [branch] if (!one && g_lk.w > 0.5)
+    {
+        const float cand[4] = { d00, d10, d01, d11 };
+        float3 own[3];
+        [unroll] for (int a = 0; a < 3; ++a)
+            own[a] = sqrt(max(tex0.SampleLevel(sampLinear, float2(((float)ref * g_size.x + clamp(c.x + (float)(a - 1) * step, 0.5, g_size.x - 0.5)) / (2.0 * g_size.x), c.y / g_size.y), 0).rgb, 0.0));
+        float best = 1e9, dBest = dNear, dFar = min(min(d00, d10), min(d01, d11)), costOwn = 1e9;
+        [unroll] for (int k = 0; k < 4; ++k)
+        {
+            const float sh = (ref == 1 ? cand[k] : -cand[k]) * g_scale.x;
+            float cost = 0.0;
+            [unroll] for (int b = 0; b < 3; ++b)
+            {
+                const float xo = c.x + (float)(b - 1) * step + sh;
+                const float3 o2 = sqrt(max(tex0.SampleLevel(sampLinear, float2(((float)(1 - ref) * g_size.x + clamp(xo, 0.5, g_size.x - 0.5)) / (2.0 * g_size.x), c.y / g_size.y), 0).rgb, 0.0));
+                cost += dot(abs(own[b] - o2), 1.0 / 9.0);
+                if (xo < 0.0 || xo > g_size.x) cost += 1.0;
+            }
+            if (abs(cand[k] - dNear) < 0.01) costOwn = min(costOwn, cost);
+            if (cost < best) { best = cost; dBest = cand[k]; }
+        }
+        // (The map's own word stands unless another does clearly better.)
+        if (costOwn < best + 0.01) dBest = dNear;
+        d = best > 0.06 ? dFar : dBest;
+    }
     const float2 mv = Move((float)ref, t, c / g_size);
     const float2 p = c - d * mv * g_scale;
     // (How the move stretches the surface along the row: a wall turned towards the new place is drawn out.)
@@ -1281,10 +1311,13 @@ GaussAcc PSGauss(GaussOut i)
     const float2 full = float2(i.pos.x - (float)(pane * W), i.pos.y);
     const int w = (int)g_srcSize.x, h = (int)g_srcSize.y;
     const float dT = tex2.Load(int3(pane * w + clamp((int)(full.x / g_scale.x), 0, w - 1), clamp((int)(full.y / g_scale.y), 0, h - 1), 0)).r;
-    if (i.d < dT - 1.0) discard;
+    // (What is behind the nearest surface there counts for next to nothing beside it -- by degrees, not at a
+    // line: the nearest as the small map has it is a texel coarse, and a pixel the eyes put on the far side of
+    // an outline is not thrown away for standing in a texel the map calls near.)
+    const float front = exp(3.0 * clamp(i.d - dT, -2.5, 1.0));
     // (The colour by how much its eye counts at the new place; how much of the pixel is covered at all, apart.)
     const float g = exp(-0.5 * dot(i.off, i.off));
-    GaussAcc o; o.sum = float4(i.col.rgb, 1.0) * (g * i.col.a); o.cover = g;
+    GaussAcc o; o.sum = float4(i.col.rgb, 1.0) * (g * i.col.a * front); o.cover = g;
     return o;
 }
 // (tex0: what was added up; tex1: how much of each pixel the spots cover. A pixel hardly any spot reached is not seen: PSUnseen's.)
