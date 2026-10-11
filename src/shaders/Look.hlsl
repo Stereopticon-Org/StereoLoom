@@ -557,7 +557,10 @@ float4 PSCompose(VSOut i) : SV_Target
             }
         }
     }
-    [branch] if (hi4 - lo4 > 0.25)
+    // (Over 0.6 of a texel between the surfaces round the pixel -- it was 0.25: a floor or a wall seen aslant has
+    // that much between neighbours everywhere, and every pixel of it tried each corner again for nothing. A third
+    // of this pass's time; the score moved by less than it moves between two runs.)
+    [branch] if (hi4 - lo4 > 0.6)
     {
         cost += 0.5 / 255.0;
         // (Across a real step the value between the four is on neither surface -- a point hanging in the
