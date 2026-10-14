@@ -2881,16 +2881,17 @@ bool Gui::Render(GuiState& state)
                     if (sscanf_s(family.c_str() + sp + 1, "%d%c%d%c", &a, &x, 1, &b, &extra, 1) == 3 && x == 'x' && a > 0 && b > 0) { w = a; h = b; family.resize(sp); }
                 };
                 if (m_lookModels.empty()) listModels();
-                const std::string curFile = m_lookModel.empty() ? std::string("Lite Any Stereo M 512x288.onnx") : m_lookModel;
+                const std::string curFile = m_lookModel.empty() ? std::string("Lite Any Stereo H 640x352.onnx") : m_lookModel;
                 std::string curFamily; int curW = 0, curH = 0; splitName(curFile, curFamily, curW, curH);
                 auto choose = [&](const std::string& file) { m_lookModel = file; Settings::WriteLookModel(std::wstring(file.begin(), file.end())); };
                 // (Which is quick and which is heavy, said beside the name: S, M and H do not say it themselves.)
                 auto modelLabel = [](const std::string& fam) {
                     const size_t n = fam.size();
                     const char last = n >= 2 && fam[n - 2] == ' ' ? fam[n - 1] : 0;
-                    if (last == 'S') return fam + " (fastest)";
-                    if (last == 'M') return fam + " (balanced)";
-                    if (last == 'H') return fam + " (heaviest)";
+                    // (Measured: S takes as long as M on the card and is less accurate; H is the most accurate.)
+                    if (last == 'S') return fam + " (least accurate)";
+                    if (last == 'M') return fam + " (fast)";
+                    if (last == 'H') return fam + " (most accurate)";
                     if (fam.find("FoundationStereo") != std::string::npos) return fam + " (very slow)";
                     return fam;
                 };
@@ -2922,7 +2923,7 @@ bool Gui::Render(GuiState& state)
                     }
                     ImGui::EndCombo();
                 }
-                tip("The neural network's model. Lite Any Stereo S is the fastest, M is balanced and H is the heaviest and most accurate; "
+                tip("The neural network's model. Lite Any Stereo H is the most accurate and the default, at 640x352; M is quicker and less accurate; S takes as long as M and is the least accurate; "
                     "Fast-FoundationStereo is the most accurate and takes a second or more a picture. Any model placed in the "
                     "neural folder beside SR Loom is listed. Applies straight away (a model takes a few seconds to load).");
                 // Second row: the size it is run at; and whether every picture is given to it.

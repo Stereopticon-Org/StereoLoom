@@ -357,6 +357,28 @@ static int RunMb(const std::wstring& dir)
     if (const wchar_t* fr = _wgetenv(L"LOOKTEST_FUSEREACH")) look.SetFuseReach((float)_wtof(fr));
     if (const wchar_t* xd = _wgetenv(L"LOOKTEST_DILATE")) look.SetExternalDilate(_wtoi(xd));
     if (const wchar_t* dp = _wgetenv(L"LOOKTEST_DUMPPAIR")) { SavePNG(std::wstring(dp) + L"/left.png", a, (UINT)ew, (UINT)eh); SavePNG(std::wstring(dp) + L"/right.png", b, (UINT)ew, (UINT)eh); }
+    // LOOKTEST_NEURAL: the trained matcher's depth, as SR Loom gets it (LOOKTEST_MODEL: which).
+    NeuralDepth neural; ID3D11Texture2D* neuralTex = nullptr;
+    if (_wgetenv(L"LOOKTEST_NEURAL"))
+    {
+        wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring ndir = exe; const size_t cut = ndir.find_last_of(L"/\134"); if (cut != std::wstring::npos) ndir.resize(cut);
+        if (!neural.Start(ndir, _wgetenv(L"LOOKTEST_MODEL") ? _wgetenv(L"LOOKTEST_MODEL") : L"")) { fwprintf(stderr, L"no neural matcher beside the exe\n"); return 1; }
+        neural.SetLeftOnly(true); look.SetExternalLeftOnly(true); neural.SetSteady(false);
+        for (int k = 0; k < 6000 && !neural.Ready() && !neural.Failed(); ++k) Sleep(100);
+        if (!neural.Ready()) { fwprintf(stderr, L"the model did not load\n"); return 1; }
+        int mw = 0, mh = 0; look.MapSize(ew, eh, mw, mh);
+        neural.Submit(sbs.data(), ew * 2 * 4, ew, eh, (float)ew / (float)eh, 736, mw, mh, 1u);
+        std::vector<uint16_t> res; int rw = 0, rh = 0; unsigned rs = 0; double ms = 0;
+        while (!neural.Take(res, rw, rh, rs, ms)) { if (neural.Failed()) { fwprintf(stderr, L"the model failed\n"); return 1; } Sleep(20); }
+        D3D11_TEXTURE2D_DESC nd{};
+        nd.Width = (UINT)(rw * 2); nd.Height = (UINT)rh; nd.MipLevels = 1; nd.ArraySize = 1; nd.SampleDesc.Count = 1;
+        nd.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; nd.Usage = D3D11_USAGE_DEFAULT; nd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA init{ res.data(), (UINT)(rw * 2 * 8), 0 };
+        dev->CreateTexture2D(&nd, &init, &neuralTex);
+        look.SetExternalDisparity(neuralTex);
+        if (!_wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(2);
+    }
     LookAround::View v0; look.Render(srv, ew, eh, v0);
     D3D11_TEXTURE2D_DESC dd{}; look.DisparityTexture()->GetDesc(&dd);
     D3D11_TEXTURE2D_DESC sd2 = dd; sd2.Usage = D3D11_USAGE_STAGING; sd2.BindFlags = 0; sd2.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -385,11 +407,44 @@ static int RunMb(const std::wstring& dir)
         }
         if (edge) { ++ne; e4 += e > 4.0f; e8 += e > 8.0f; }
     }
+    // At full size, as the picture is drawn: the map read between its texels (bilinear), every pixel with a
+    // truth; outlines = within 3 px of a step of over 2 px in the truth (as depthbench.py).
+    size_t fn = 0, f1 = 0, f2 = 0, f4 = 0, fe = 0, fe2 = 0, fe4 = 0; double fsum = 0;
+    {
+        auto mapAt = [&](int x, int y) { x = (std::max)(0, (std::min)(dw - 1, x)); y = (std::max)(0, (std::min)(dh - 1, y));
+            const uint16_t* p = (const uint16_t*)((const uint8_t*)m.pData + (size_t)y * m.RowPitch) + (size_t)x * 4; return half(p[0]) * sx; };
+        std::vector<float> lo((size_t)W * H), hi((size_t)W * H);
+        for (int y = 0; y < eh; ++y) for (int x = 0; x < ew; ++x)
+        {
+            float mn = 1e9f, mx = -1e9f;
+            for (int dy = -3; dy <= 3; ++dy) for (int dx = -3; dx <= 3; ++dx)
+            {
+                const int xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= ew || yy >= eh) continue;
+                const float g = gt[(size_t)yy * W + xx]; if (!(g > 0.0f) || !std::isfinite(g)) continue;
+                mn = (std::min)(mn, g); mx = (std::max)(mx, g);
+            }
+            lo[(size_t)y * W + x] = mn; hi[(size_t)y * W + x] = mx;
+        }
+        for (int y = 0; y < eh; ++y) for (int x = 0; x < ew; ++x)
+        {
+            const float g = gt[(size_t)y * W + x]; if (!(g > 0.0f) || !std::isfinite(g)) continue;
+            const float u = ((float)x + 0.5f) / sx - 0.5f, v = ((float)y + 0.5f) / sy - 0.5f;
+            const int x0 = (int)std::floor(u), y0 = (int)std::floor(v); const float fx = u - (float)x0, fy = v - (float)y0;
+            const float d = (mapAt(x0, y0) * (1 - fx) + mapAt(x0 + 1, y0) * fx) * (1 - fy) + (mapAt(x0, y0 + 1) * (1 - fx) + mapAt(x0 + 1, y0 + 1) * fx) * fy;
+            const float e = std::fabs(d - g);
+            ++fn; fsum += e; f1 += e > 1.0f; f2 += e > 2.0f; f4 += e > 4.0f;
+            if (hi[(size_t)y * W + x] - lo[(size_t)y * W + x] > 2.0f) { ++fe; fe2 += e > 2.0f; fe4 += e > 4.0f; }
+        }
+    }
     ctx->Unmap(st, 0); st->Release();
     const std::wstring name = dir.substr(dir.find_last_of(L"/") + 1);
+    wprintf(L"%-20s FULL SIZE: >1 %5.1f%% >2 %5.1f%% >4 %5.1f%% mean %.2f px | at outlines (%4.1f%%) >2 %5.1f%% >4 %5.1f%%\n", name.c_str(),
+            100.0 * f1 / (std::max)(fn, (size_t)1), 100.0 * f2 / (std::max)(fn, (size_t)1), 100.0 * f4 / (std::max)(fn, (size_t)1), fsum / (std::max)(fn, (size_t)1),
+            100.0 * fe / (std::max)(fn, (size_t)1), 100.0 * fe2 / (std::max)(fe, (size_t)1), 100.0 * fe4 / (std::max)(fe, (size_t)1));
     wprintf(L"%-20s %dx%d, map %dx%d: out by > 2 px %5.1f%% | > 4 px %5.1f%% | > 8 px %5.1f%% | mean error %.2f px\n", name.c_str(), ew, eh, dw, dh,
             100.0 * b2 / (std::max)(n, (size_t)1), 100.0 * b4 / (std::max)(n, (size_t)1), 100.0 * b8 / (std::max)(n, (size_t)1), sum / (std::max)(n, (size_t)1));
     wprintf(L"%-20s at outlines (%.1f%% of the picture): out by > 4 px %5.1f%% | > 8 px %5.1f%%\n", name.c_str(), 100.0 * ne / (std::max)(n, (size_t)1), 100.0 * e4 / (std::max)(ne, (size_t)1), 100.0 * e8 / (std::max)(ne, (size_t)1));
+    neural.Shutdown(); if (neuralTex) neuralTex->Release();
     look.Shutdown();
     return 0;
 }

@@ -301,9 +301,10 @@ bool NeuralDepth::Start(const std::wstring& exeDir, const std::wstring& modelFil
 {
 #ifdef SRLOOM_NEURAL
     if (m_thread.joinable()) return true;
-    m_model = exeDir + L"\\neural\\" + (modelFile.empty() ? std::wstring(L"Lite Any Stereo M 512x288.onnx") : modelFile);
+    m_model = exeDir + L"\\neural\\" + (modelFile.empty() ? std::wstring(L"Lite Any Stereo H 640x352.onnx") : modelFile);
     // (A model chosen once and since taken away: the usual one.)
-    if (!Exists(m_model)) m_model = exeDir + L"\\neural\\Lite Any Stereo M 512x288.onnx";
+    if (!Exists(m_model)) m_model = exeDir + L"\\neural\\Lite Any Stereo H 640x352.onnx";
+    if (!Exists(m_model)) m_model = exeDir + L"\\neural\\Lite Any Stereo M 512x288.onnx";   // (an install from before H 640x352)
     // (TensorRT, on an NVIDIA card: where neural\trt holds ONNX Runtime's GPU build with its TensorRT and
     // CUDA libraries, that runtime is the one loaded -- about half as long again as quick as DirectML with
     // the half-precision models, with the card to itself. One runtime to a process: decided the first time.

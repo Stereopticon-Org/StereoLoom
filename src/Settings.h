@@ -140,7 +140,7 @@ namespace srw::Settings
     // 1 (as a rule): with a trained matcher's depth, a step in depth is kept a step (no texels between a thing and
     // what is behind it) and the two sides are not mixed; 0: as it was, softer and with the in-between. LookEdges.
     bool ReadLookEdges();
-    // The trained matcher's model: a file name in the neural folder beside the exe (none: Lite Any Stereo M 512x288.onnx). LookModel.
+    // The trained matcher's model: a file name in the neural folder beside the exe (none: Lite Any Stereo H 640x352.onnx). LookModel.
     std::wstring ReadLookModel();
     void WriteLookModel(const std::wstring& file);
     void WriteLookParallax(int pct);
