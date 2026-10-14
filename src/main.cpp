@@ -2648,7 +2648,12 @@ namespace
             // re-applies.
             if (fg != app.lastAppliedHwnd || p.name != app.lastAutoAppliedProfile)
             {
-                ApplyProfile(app, p, fg, title);
+                // (Weaving another display, and the game is on it: that display stays the
+                // source -- capturing the game's window instead would put it back on its
+                // own display, as an overlay, and nothing on the SR one.)
+                const bool onPicked = app.source == SourceKind::CaptureMonitor && app.foreignDisplay &&
+                                      MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) == app.sourceMonitor;
+                ApplyProfile(app, p, onPicked ? nullptr : fg, title);
                 app.lastAppliedHwnd        = fg;
                 app.lastAutoAppliedProfile = p.name;
                 app.lastAutoAppliedTitle   = title;
@@ -4274,6 +4279,9 @@ namespace
             return;
         if (app.capture.StartMonitor(mon))
         {
+            // (A picked display's fallback duplication: not this one.)
+            if (app.dxgiActive) { app.captureDxgi.Stop(); app.dxgiActive = false; }
+            app.wgcStuck = 0;
             if (app.weavingEnabled) BeginCaptureWarmup(app);
             app.source = SourceKind::CaptureMonitor;
             app.sourceMonitor = mon;
@@ -4656,8 +4664,19 @@ namespace
     {
         DemoteVRFormatForLiveCapture(app);
         app.capture.SetCaptureCursor(true);   // show the pointer on the captured display
-        if (!mon || !app.capture.StartMonitor(mon))
+        const bool started = mon && app.capture.StartMonitor(mon);
+        {
+            MONITORINFOEXA mi{}; mi.cbSize = sizeof(mi);
+            if (mon) GetMonitorInfoA(mon, &mi);
+            Log("UseDisplay: %s (%p, %ldx%ld at %ld,%ld), SR display %p: capture %s",
+                mon ? mi.szDevice : "(none)", (void*)mon, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+                mi.rcMonitor.left, mi.rcMonitor.top, (void*)SrMonitor(app), started ? "started" : "FAILED");
+        }
+        if (!started)
             return;
+        // (The fallback duplication of the display picked before -- it would go on showing that one.)
+        if (app.dxgiActive) { app.captureDxgi.Stop(); app.dxgiActive = false; }
+        app.wgcStuck = 0;
         app.sourceWindow = nullptr;
         app.source = SourceKind::CaptureMonitor;
         app.sourceMonitor = mon;
