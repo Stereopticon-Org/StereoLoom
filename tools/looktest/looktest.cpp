@@ -427,7 +427,7 @@ static int RunLive(const wchar_t* file)
     wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring dir = exe; const size_t cut = dir.find_last_of(L"/\\"); if (cut != std::wstring::npos) dir.resize(cut);
     if (!neural.Start(dir, _wgetenv(L"LOOKTEST_MODEL") ? _wgetenv(L"LOOKTEST_MODEL") : L"")) { fwprintf(stderr, L"no neural matcher beside the exe\n"); return 1; }
-    neural.SetLeftOnly(true); neural.SetAutoPaint(_wgetenv(L"LOOKTEST_NOPAINT") == nullptr); if (_wgetenv(L"LOOKTEST_PAINTGAP")) neural.SetPaintGap(_wtoi(_wgetenv(L"LOOKTEST_PAINTGAP")));
+    neural.SetLeftOnly(true); neural.SetAutoPaint(_wgetenv(L"LOOKTEST_NOPAINT") == nullptr); if (_wgetenv(L"LOOKTEST_STEADY")) neural.SetSteady(_wtoi(_wgetenv(L"LOOKTEST_STEADY")) != 0); if (_wgetenv(L"LOOKTEST_PAINTGAP")) neural.SetPaintGap(_wtoi(_wgetenv(L"LOOKTEST_PAINTGAP")));
     for (int k = 0; k < 6000 && !neural.Ready() && !neural.Failed(); ++k) Sleep(100);
     if (!neural.Ready()) { fwprintf(stderr, L"the model did not load\n"); return 1; }
     wprintf(L"runtime: %s\n", neural.OnTensorRT() ? L"TensorRT" : L"DirectML");
@@ -463,6 +463,21 @@ static int RunLive(const wchar_t* file)
         std::vector<uint16_t> res; int rw = 0, rh = 0; unsigned rs = 0; double rms = 0;
         if (neural.Take(res, rw, rh, rs, rms) && rw == mw && rh == mh)
         {
+            // (How much the depth moved from the answer before, on average over the left eye: on a picture that
+            // does not change, that is all wandering.)
+            {
+                static std::vector<float> last; static double moved = 0; static int count = 0, shown = 0;
+                std::vector<float> now((size_t)rw * rh);
+                for (int y = 0; y < rh; ++y) for (int x = 0; x < rw; ++x)
+                {
+                    const uint16_t hv = res[((size_t)y * rw * 2 + x) * 4];
+                    const uint32_t sgn = (hv & 0x8000u) << 16, ex = (hv >> 10) & 0x1f, mn = hv & 0x3ff;
+                    uint32_t f = ex == 0 ? sgn : (sgn | ((ex + 112u) << 23) | (mn << 13)); float fv; memcpy(&fv, &f, 4); now[(size_t)y * rw + x] = fv;
+                }
+                if (last.size() == now.size()) { double s2 = 0; for (size_t i = 0; i < now.size(); ++i) s2 += std::fabs(now[i] - last[i]); moved += s2 / (double)now.size(); ++count; }
+                last.swap(now);
+                if (count >= 40 && !shown) { shown = 1; wprintf(L"        depth wandering between answers on a still picture: %.4f texels on average\n", moved / count); }
+            }
             if (depthTex) depthTex->Release(); depthTex = nullptr;
             D3D11_TEXTURE2D_DESC nd{};
             nd.Width = (UINT)(rw * 2); nd.Height = (UINT)rh; nd.MipLevels = 1; nd.ArraySize = 1; nd.SampleDesc.Count = 1;

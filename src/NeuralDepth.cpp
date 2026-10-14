@@ -526,6 +526,24 @@ void NeuralDepth::Run()
                 else for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x)
                     disp[eye][(size_t)y * w + x] = d[(size_t)y * w + (w - 1 - x)] - fs;
             }
+            // (Steadied: the model answers each picture afresh, and where nothing has moved its answer still
+            // wanders by a fraction of a pixel from one to the next -- seen as depth that shimmers. A pixel whose
+            // answer is within half a pixel of the last is taken halfway towards it; one that has moved further --
+            // a thing moving, a cut to another scene -- is taken as it is, at once. Between, by degrees.)
+            if (m_steady.load())
+                for (int eye = 0; eye < eyes; ++eye)
+                {
+                    std::vector<float>& prev = m_prevDisp[eye];
+                    if (prev.size() == disp[eye].size() && m_prevW == w && m_prevH == h)
+                        for (size_t i = 0; i < prev.size(); ++i)
+                        {
+                            const float cur = disp[eye][i], dv = std::fabs(cur - prev[i]);
+                            const float take = dv <= 0.5f ? 0.5f : dv >= 1.5f ? 1.0f : 0.5f + 0.5f * (dv - 0.5f);
+                            disp[eye][i] = prev[i] + (cur - prev[i]) * take;
+                        }
+                    prev = disp[eye];
+                }
+            m_prevW = w; m_prevH = h;
             // To the map: bilinear, and from the model's pixels to the map's texels.
             std::vector<uint16_t> res((size_t)job.mapW * 2 * job.mapH * 4, 0);
             const float k = (float)job.mapW / (float)w;

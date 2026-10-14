@@ -47,6 +47,7 @@ namespace srw
         void Shutdown();
         bool Ready() const { return m_ready.load(); }      // the model is loaded
         bool Busy() const { return m_busy.load(); }        // a picture is being worked on
+        void SetSteady(bool on) { m_steady = on; }          // small wanderings of the depth from one answer to the next taken out
         void SetPaintGap(int ms) { m_paintGap = ms; }      // following a moving picture, a background no more often than this
         double Remaining();                                // ms until it is free for another (0: now), as far as can be told
         bool Failed() const { return m_failed.load(); }
@@ -117,6 +118,8 @@ namespace srw
         std::atomic<int> m_fixW{ 0 }, m_fixH{ 0 };
         std::atomic<bool> m_leftOnly{ false };
         std::atomic<int> m_paintGap{ 200 };
+        std::atomic<bool> m_steady{ true };                  // (each answer steadied against the last: Run)
+        std::vector<float> m_prevDisp[2]; int m_prevW = 0, m_prevH = 0;
         std::chrono::steady_clock::time_point m_began; bool m_running = false;   // (the answer being worked on: Remaining)
         double m_tPrep = 0.0, m_tRun = 0.0, m_tAll = 0.0;   // (smoothed, ms: making the inputs, the model, all of it)
     };
