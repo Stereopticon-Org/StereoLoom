@@ -3192,8 +3192,12 @@ namespace
             h.push_back(std::move(cur));
             while (h.size() > 2 && h[1].t < now100 - 5'000'000) h.pop_front();   // keep ~0.5 s
         };
+        // (Weaving another display: its picture never holds the SR display's windows, so a window is cut
+        // where it is now only -- where it was when that display last changed, which may be long ago on a
+        // still desktop, is not in the picture.)
+        const bool capHasSrWindows = !(app.source == SourceKind::CaptureMonitor && app.foreignDisplay);
         auto atCapture = [&](const std::deque<TimedCuts>& h) -> const TimedCuts* {
-            if (h.empty()) return nullptr;
+            if (h.empty() || !capHasSrWindows) return nullptr;
             if (capT <= 0) return h.size() >= 2 ? &h[h.size() - 2] : &h.back();   // unknown: one frame back
             const TimedCuts* best = &h.front();
             for (const TimedCuts& e : h) { if (e.t <= capT) best = &e; else break; }
