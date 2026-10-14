@@ -2257,6 +2257,192 @@ bool Gui::Render(GuiState& state)
             }
         }
 
+        // GAUSSIAN SPLATS section: the look-around (the two eyes' views redrawn from where the head is),
+        // its depth and how it draws -- its own section beside head tracking, which it follows.
+        SectionGap(m_dpiScale);
+        if (CollapsibleHeader("GAUSSIAN SPLATS", m_splatSectionOpen, m_dpiScale, "##splathdr"))
+        {
+            auto pairToggle2 = [&](const char* label, bool on, float colW) -> bool {
+                const float startX = ImGui::GetCursorPosX();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(label);
+                ImGui::SameLine();
+                const float togW = ImGui::GetFrameHeight() * 1.8f;
+                ImGui::SetCursorPosX(startX + colW - togW);
+                return ToggleSwitch(label, on);
+            };
+            const float halfW = (ImGui::GetContentRegionAvail().x
+                                 - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            auto tip = [&](const char* text) {
+                if (!ImGui::IsItemHovered()) return;
+                const float maxW = 320.0f * m_dpiScale;
+                ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(maxW, FLT_MAX));
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(maxW - 14.0f * m_dpiScale);
+                ImGui::TextUnformatted(text);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            };
+            // Gaussian Splats on or off (Settings LookAround: the look-around).
+            if (pairToggle2("Gaussian Splats", m_lookOn, halfW))
+            {
+                m_lookOn = !m_lookOn;
+                Settings::WriteLookAround(m_lookOn);
+            }
+            tip("Experimental. Moving your head looks round things in any 3D picture or game: the two eyes' views "
+                "are redrawn from where your head is. Direct3D 11 weaver only for now. Applies straight away.");
+            // Under it, while it is on: where its depth is from, and the trained matcher's model.
+            if (m_lookOn)
+            {
+                static const char* kDepth[3] = { "Depth: Built-in", "Depth: Neural + Built-in", "Depth: Neural" };
+                if (m_lookDepth < 0 || m_lookDepth > 2) m_lookDepth = 2;
+                ImGui::SetNextItemWidth(halfW);
+                if (ImGui::BeginCombo("##lookdepth", kDepth[m_lookDepth]))
+                {
+                    for (int k = 0; k < 3; ++k)
+                        if (ImGui::Selectable(kDepth[k], m_lookDepth == k)) { m_lookDepth = k; Settings::WriteLookDepth(k); }
+                    ImGui::EndCombo();
+                }
+                tip("Where Gaussian Splats gets its depth. Built-in: SR Loom's own fast matcher, on everything. Neural: a trained "
+                    "stereo network with far cleaner outlines (see Live Depth for when it is used). "
+                    "Neural + Built-in takes whichever fits better "
+                    "at each point. The neural options need the network's files beside SR Loom. Applies straight away.");
+                // The model and the size it is run at. A file in the neural folder is "<model> <W>x<H>.onnx":
+                // the model list has each model once, the resolution list the sizes that model is there at.
+                // (A file with no size in its name is a model that takes any size: it has the one entry.)
+                auto listModels = [&] {
+                    m_lookModels.clear();
+                    WIN32_FIND_DATAA fd{};
+                    const HANDLE fh = FindFirstFileA(ExePath("neural\\*.onnx").c_str(), &fd);
+                    if (fh != INVALID_HANDLE_VALUE) { do { m_lookModels.push_back(fd.cFileName); } while (FindNextFileA(fh, &fd)); FindClose(fh); }
+                };
+                auto splitName = [](const std::string& file, std::string& family, int& w, int& h) {
+                    family = file; w = h = 0;
+                    if (family.size() > 5 && family.compare(family.size() - 5, 5, ".onnx") == 0) family.resize(family.size() - 5);
+                    const size_t sp = family.find_last_of(' ');
+                    if (sp == std::string::npos) return;
+                    int a = 0, b = 0; char x = 0, extra = 0;
+                    if (sscanf_s(family.c_str() + sp + 1, "%d%c%d%c", &a, &x, 1, &b, &extra, 1) == 3 && x == 'x' && a > 0 && b > 0) { w = a; h = b; family.resize(sp); }
+                };
+                if (m_lookModels.empty()) listModels();
+                const std::string curFile = m_lookModel.empty() ? std::string("Lite Any Stereo H 640x352.onnx") : m_lookModel;
+                std::string curFamily; int curW = 0, curH = 0; splitName(curFile, curFamily, curW, curH);
+                auto choose = [&](const std::string& file) { m_lookModel = file; Settings::WriteLookModel(std::wstring(file.begin(), file.end())); };
+                // (Which is quick and which is heavy, said beside the name: S, M and H do not say it themselves.)
+                auto modelLabel = [](const std::string& fam) {
+                    const size_t n = fam.size();
+                    const char last = n >= 2 && fam[n - 2] == ' ' ? fam[n - 1] : 0;
+                    // (Measured: S takes as long as M on the card and is less accurate; H is the most accurate.)
+                    if (last == 'S') return fam + " (least accurate)";
+                    if (last == 'M') return fam + " (fast)";
+                    if (last == 'H') return fam + " (most accurate)";
+                    if (fam.find("FoundationStereo") != std::string::npos) return fam + " (very slow)";
+                    return fam;
+                };
+                ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
+                ImGui::SetNextItemWidth(halfW);
+                if (ImGui::BeginCombo("##lookmodel", modelLabel(curFamily).c_str()))
+                {
+                    if (ImGui::IsWindowAppearing()) listModels();
+                    if (m_lookModels.empty()) ImGui::TextDisabled("No models found");
+                    std::vector<std::string> seen;
+                    for (const std::string& f : m_lookModels)
+                    {
+                        std::string fam; int w = 0, h = 0; splitName(f, fam, w, h);
+                        if (std::find(seen.begin(), seen.end(), fam) != seen.end()) continue;
+                        seen.push_back(fam);
+                        if (ImGui::Selectable(modelLabel(fam).c_str(), fam == curFamily) && fam != curFamily)
+                        {
+                            // (The same size as now where the model has it; else the nearest it has.)
+                            std::string best; int bestGap = 1 << 30;
+                            for (const std::string& g : m_lookModels)
+                            {
+                                std::string fam2; int w2 = 0, h2 = 0; splitName(g, fam2, w2, h2);
+                                if (fam2 != fam) continue;
+                                const int gap = std::abs(w2 - (curW > 0 ? curW : 512));
+                                if (gap < bestGap) { bestGap = gap; best = g; }
+                            }
+                            if (!best.empty()) choose(best);
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                tip("The neural network's model. Lite Any Stereo H is the most accurate and the default, at 640x352; M is quicker and less accurate; S takes as long as M and is the least accurate; "
+                    "Fast-FoundationStereo is the most accurate and takes a second or more a picture. Any model placed in the "
+                    "neural folder beside SR Loom is listed. Applies straight away (a model takes a few seconds to load).");
+                // Second row: the size it is run at; and whether every picture is given to it.
+                char resLabel[48];
+                if (curW > 0) snprintf(resLabel, sizeof(resLabel), "Resolution: %dx%d", curW, curH); else snprintf(resLabel, sizeof(resLabel), "Resolution: Any");
+                ImGui::SetNextItemWidth(halfW);
+                if (ImGui::BeginCombo("##lookres", resLabel))
+                {
+                    std::vector<std::pair<int, std::string>> sizes;
+                    for (const std::string& g : m_lookModels)
+                    {
+                        std::string fam2; int w2 = 0, h2 = 0; splitName(g, fam2, w2, h2);
+                        if (fam2 == curFamily) sizes.emplace_back(w2, g);
+                    }
+                    std::sort(sizes.begin(), sizes.end());
+                    for (const auto& s : sizes)
+                    {
+                        std::string fam2; int w2 = 0, h2 = 0; splitName(s.second, fam2, w2, h2);
+                        char item[48];
+                        const char* note = sizes.size() < 2 ? "" : &s == &sizes.front() ? " (fastest)" : &s == &sizes.back() ? " (heaviest)" : "";
+                        if (w2 > 0) snprintf(item, sizeof(item), "%dx%d%s", w2, h2, note); else snprintf(item, sizeof(item), "Any");
+                        if (ImGui::Selectable(item, s.second == curFile)) choose(s.second);
+                    }
+                    ImGui::EndCombo();
+                }
+                tip("The size the picture is given to the neural network at. Larger finds finer outlines and thin things, "
+                    "and takes longer: each answer comes later, so moving pictures lag more. The sizes listed are the ones "
+                    "this model is installed at. Applies straight away.");
+                ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
+                if (pairToggle2("Live Depth", m_lookLive, halfW))
+                {
+                    m_lookLive = !m_lookLive;
+                    Settings::WriteLookLive(m_lookLive);
+                }
+                tip("On: the neural network is given every picture it has time for, so moving pictures and games use its "
+                    "depth too (each answer arrives a little late, which can show at fast-moving edges). Off: it is used only "
+                    "once a picture has stopped changing, and SR Loom's own matcher while it moves. Applies straight away.");
+                // Third row: the painted background.
+                if (pairToggle2("Paint Background", m_lookPaint, halfW))
+                {
+                    m_lookPaint = !m_lookPaint;
+                    Settings::WriteLookPaint(m_lookPaint);
+                }
+                tip("A second network paints in what is hidden behind things, so looking round them shows a likely "
+                    "background rather than a blur. Needs the painter's file in the neural folder. Applies straight away.");
+                // ... and how the new views are drawn.
+                {
+                    static const char* kDraw[4] = { "Draw: Standard", "Draw: Gaussian Splats", "Draw: Gaussian Splats (Half)", "Draw: Gaussian Outlines" };
+                    if (m_lookGauss < 0 || m_lookGauss > 3) m_lookGauss = 0;
+                    ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
+                    ImGui::SetNextItemWidth(halfW);
+                    if (ImGui::BeginCombo("##lookgauss", kDraw[m_lookGauss]))
+                    {
+                        for (int k = 0; k < 4; ++k)
+                            if (ImGui::Selectable(kDraw[k], m_lookGauss == k)) { m_lookGauss = k; Settings::WriteLookGauss(k); }
+                        ImGui::EndCombo();
+                    }
+                    tip("Experimental. Standard: each pixel of the new view is looked up in the two eyes through the depth. "
+                        "Gaussian Splats: every pixel of each eye is thrown forward as a soft Gaussian spot and the spots are "
+                        "blended. Much heavier on the graphics card: expect a lower frame rate. Half uses one spot for "
+                        "every four pixels: quicker and softer. Gaussian Outlines draws the standard way and uses spots only "
+                        "along the outlines of things, where they matter: nearly as quick as Standard. Applies straight away.");
+                }
+                // Fourth row: what earlier pictures showed, kept.
+                if (pairToggle2("Remember Background", m_lookPlate, halfW))
+                {
+                    m_lookPlate = !m_lookPlate;
+                    Settings::WriteLookPlate(m_lookPlate);
+                }
+                tip("Experimental. Keeps what earlier pictures showed behind things, following the picture as the camera "
+                    "pans, so that looking round something shows the background that was really there a moment ago. "
+                    "Works with every Draw mode. Costs a little more of the graphics card. Applies straight away.");
+            }
+        }
+
         // PROFILES section -- per-game auto-apply (NTM AutoCP-Launcher style).
         // Collapsible header matching ACER SPATIALLABS / STARTUP visual.
         // Body: master toggle, "save current" button, scrollable list with
@@ -2839,164 +3025,6 @@ bool Gui::Render(GuiState& state)
                 "Windows' compositor so the 3D follows your head more closely, and switches back when the "
                 "taskbar, the pointer or a window needs to show. Turn it off if the screen flickers at "
                 "those moments. Applies straight away.");
-            // Fifth row: look-around (Settings LookAround).
-            if (pairToggle2("Look-Around", m_lookOn, halfW))
-            {
-                m_lookOn = !m_lookOn;
-                Settings::WriteLookAround(m_lookOn);
-            }
-            tip("Experimental. Moving your head looks round things in any 3D picture or game: the two eyes' views "
-                "are redrawn from where your head is. Direct3D 11 weaver only for now. Applies straight away.");
-            // Under it, while it is on: where its depth is from, and the trained matcher's model.
-            if (m_lookOn)
-            {
-                static const char* kDepth[3] = { "Depth: Built-in", "Depth: Neural + Built-in", "Depth: Neural" };
-                if (m_lookDepth < 0 || m_lookDepth > 2) m_lookDepth = 2;
-                ImGui::SetNextItemWidth(halfW);
-                if (ImGui::BeginCombo("##lookdepth", kDepth[m_lookDepth]))
-                {
-                    for (int k = 0; k < 3; ++k)
-                        if (ImGui::Selectable(kDepth[k], m_lookDepth == k)) { m_lookDepth = k; Settings::WriteLookDepth(k); }
-                    ImGui::EndCombo();
-                }
-                tip("Where Look-Around gets its depth. Built-in: SR Loom's own fast matcher, on everything. Neural: a trained "
-                    "stereo network with far cleaner outlines (see Live Depth for when it is used). "
-                    "Neural + Built-in takes whichever fits better "
-                    "at each point. The neural options need the network's files beside SR Loom. Applies straight away.");
-                // The model and the size it is run at. A file in the neural folder is "<model> <W>x<H>.onnx":
-                // the model list has each model once, the resolution list the sizes that model is there at.
-                // (A file with no size in its name is a model that takes any size: it has the one entry.)
-                auto listModels = [&] {
-                    m_lookModels.clear();
-                    WIN32_FIND_DATAA fd{};
-                    const HANDLE fh = FindFirstFileA(ExePath("neural\\*.onnx").c_str(), &fd);
-                    if (fh != INVALID_HANDLE_VALUE) { do { m_lookModels.push_back(fd.cFileName); } while (FindNextFileA(fh, &fd)); FindClose(fh); }
-                };
-                auto splitName = [](const std::string& file, std::string& family, int& w, int& h) {
-                    family = file; w = h = 0;
-                    if (family.size() > 5 && family.compare(family.size() - 5, 5, ".onnx") == 0) family.resize(family.size() - 5);
-                    const size_t sp = family.find_last_of(' ');
-                    if (sp == std::string::npos) return;
-                    int a = 0, b = 0; char x = 0, extra = 0;
-                    if (sscanf_s(family.c_str() + sp + 1, "%d%c%d%c", &a, &x, 1, &b, &extra, 1) == 3 && x == 'x' && a > 0 && b > 0) { w = a; h = b; family.resize(sp); }
-                };
-                if (m_lookModels.empty()) listModels();
-                const std::string curFile = m_lookModel.empty() ? std::string("Lite Any Stereo H 640x352.onnx") : m_lookModel;
-                std::string curFamily; int curW = 0, curH = 0; splitName(curFile, curFamily, curW, curH);
-                auto choose = [&](const std::string& file) { m_lookModel = file; Settings::WriteLookModel(std::wstring(file.begin(), file.end())); };
-                // (Which is quick and which is heavy, said beside the name: S, M and H do not say it themselves.)
-                auto modelLabel = [](const std::string& fam) {
-                    const size_t n = fam.size();
-                    const char last = n >= 2 && fam[n - 2] == ' ' ? fam[n - 1] : 0;
-                    // (Measured: S takes as long as M on the card and is less accurate; H is the most accurate.)
-                    if (last == 'S') return fam + " (least accurate)";
-                    if (last == 'M') return fam + " (fast)";
-                    if (last == 'H') return fam + " (most accurate)";
-                    if (fam.find("FoundationStereo") != std::string::npos) return fam + " (very slow)";
-                    return fam;
-                };
-                ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
-                ImGui::SetNextItemWidth(halfW);
-                if (ImGui::BeginCombo("##lookmodel", modelLabel(curFamily).c_str()))
-                {
-                    if (ImGui::IsWindowAppearing()) listModels();
-                    if (m_lookModels.empty()) ImGui::TextDisabled("No models found");
-                    std::vector<std::string> seen;
-                    for (const std::string& f : m_lookModels)
-                    {
-                        std::string fam; int w = 0, h = 0; splitName(f, fam, w, h);
-                        if (std::find(seen.begin(), seen.end(), fam) != seen.end()) continue;
-                        seen.push_back(fam);
-                        if (ImGui::Selectable(modelLabel(fam).c_str(), fam == curFamily) && fam != curFamily)
-                        {
-                            // (The same size as now where the model has it; else the nearest it has.)
-                            std::string best; int bestGap = 1 << 30;
-                            for (const std::string& g : m_lookModels)
-                            {
-                                std::string fam2; int w2 = 0, h2 = 0; splitName(g, fam2, w2, h2);
-                                if (fam2 != fam) continue;
-                                const int gap = std::abs(w2 - (curW > 0 ? curW : 512));
-                                if (gap < bestGap) { bestGap = gap; best = g; }
-                            }
-                            if (!best.empty()) choose(best);
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-                tip("The neural network's model. Lite Any Stereo H is the most accurate and the default, at 640x352; M is quicker and less accurate; S takes as long as M and is the least accurate; "
-                    "Fast-FoundationStereo is the most accurate and takes a second or more a picture. Any model placed in the "
-                    "neural folder beside SR Loom is listed. Applies straight away (a model takes a few seconds to load).");
-                // Second row: the size it is run at; and whether every picture is given to it.
-                char resLabel[48];
-                if (curW > 0) snprintf(resLabel, sizeof(resLabel), "Resolution: %dx%d", curW, curH); else snprintf(resLabel, sizeof(resLabel), "Resolution: Any");
-                ImGui::SetNextItemWidth(halfW);
-                if (ImGui::BeginCombo("##lookres", resLabel))
-                {
-                    std::vector<std::pair<int, std::string>> sizes;
-                    for (const std::string& g : m_lookModels)
-                    {
-                        std::string fam2; int w2 = 0, h2 = 0; splitName(g, fam2, w2, h2);
-                        if (fam2 == curFamily) sizes.emplace_back(w2, g);
-                    }
-                    std::sort(sizes.begin(), sizes.end());
-                    for (const auto& s : sizes)
-                    {
-                        std::string fam2; int w2 = 0, h2 = 0; splitName(s.second, fam2, w2, h2);
-                        char item[48];
-                        const char* note = sizes.size() < 2 ? "" : &s == &sizes.front() ? " (fastest)" : &s == &sizes.back() ? " (heaviest)" : "";
-                        if (w2 > 0) snprintf(item, sizeof(item), "%dx%d%s", w2, h2, note); else snprintf(item, sizeof(item), "Any");
-                        if (ImGui::Selectable(item, s.second == curFile)) choose(s.second);
-                    }
-                    ImGui::EndCombo();
-                }
-                tip("The size the picture is given to the neural network at. Larger finds finer outlines and thin things, "
-                    "and takes longer: each answer comes later, so moving pictures lag more. The sizes listed are the ones "
-                    "this model is installed at. Applies straight away.");
-                ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
-                if (pairToggle2("Live Depth", m_lookLive, halfW))
-                {
-                    m_lookLive = !m_lookLive;
-                    Settings::WriteLookLive(m_lookLive);
-                }
-                tip("On: the neural network is given every picture it has time for, so moving pictures and games use its "
-                    "depth too (each answer arrives a little late, which can show at fast-moving edges). Off: it is used only "
-                    "once a picture has stopped changing, and SR Loom's own matcher while it moves. Applies straight away.");
-                // Third row: the painted background.
-                if (pairToggle2("Paint Background", m_lookPaint, halfW))
-                {
-                    m_lookPaint = !m_lookPaint;
-                    Settings::WriteLookPaint(m_lookPaint);
-                }
-                tip("A second network paints in what is hidden behind things, so looking round them shows a likely "
-                    "background rather than a blur. Needs the painter's file in the neural folder. Applies straight away.");
-                // ... and how the new views are drawn.
-                {
-                    static const char* kDraw[4] = { "Draw: Standard", "Draw: Gaussian Splats", "Draw: Gaussian Splats (Half)", "Draw: Gaussian Outlines" };
-                    if (m_lookGauss < 0 || m_lookGauss > 3) m_lookGauss = 0;
-                    ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
-                    ImGui::SetNextItemWidth(halfW);
-                    if (ImGui::BeginCombo("##lookgauss", kDraw[m_lookGauss]))
-                    {
-                        for (int k = 0; k < 4; ++k)
-                            if (ImGui::Selectable(kDraw[k], m_lookGauss == k)) { m_lookGauss = k; Settings::WriteLookGauss(k); }
-                        ImGui::EndCombo();
-                    }
-                    tip("Experimental. Standard: each pixel of the new view is looked up in the two eyes through the depth. "
-                        "Gaussian Splats: every pixel of each eye is thrown forward as a soft Gaussian spot and the spots are "
-                        "blended. Much heavier on the graphics card: expect a lower frame rate. Half uses one spot for "
-                        "every four pixels: quicker and softer. Gaussian Outlines draws the standard way and uses spots only "
-                        "along the outlines of things, where they matter: nearly as quick as Standard. Applies straight away.");
-                }
-                // Fourth row: what earlier pictures showed, kept.
-                if (pairToggle2("Remember Background", m_lookPlate, halfW))
-                {
-                    m_lookPlate = !m_lookPlate;
-                    Settings::WriteLookPlate(m_lookPlate);
-                }
-                tip("Experimental. Keeps what earlier pictures showed behind things, following the picture as the camera "
-                    "pans, so that looking round something shows the background that was really there a moment ago. "
-                    "Works with every Draw mode. Costs a little more of the graphics card. Applies straight away.");
-            }
         }
         }   // (SETTINGS)
     }

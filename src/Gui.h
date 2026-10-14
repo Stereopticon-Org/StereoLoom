@@ -207,6 +207,7 @@ namespace srw
         // hide behind a click on first launch. Collapsible so users who
         // never touch tracking can tidy it away.
         bool                     m_headTrackingSectionOpen = true;
+        bool                     m_splatSectionOpen = true;   // (the GAUSSIAN SPLATS section)
         // DISPLAY + STEREO 3D INPUT also collapsible (default expanded);
         // users who've set their format / display mode once may want to
         // tidy away those sections too once everything is dialled in.
