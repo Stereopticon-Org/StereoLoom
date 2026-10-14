@@ -690,6 +690,31 @@ int wmain(int argc, wchar_t** argv)
     if (const wchar_t* fr = _wgetenv(L"LOOKTEST_FUSEREACH")) look.SetFuseReach((float)_wtof(fr));
     if (const wchar_t* xd = _wgetenv(L"LOOKTEST_DILATE")) look.SetExternalDilate(_wtoi(xd));
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
+    // LOOKTEST_NEURAL: the trained matcher's depth for the pair, as SR Loom gets it (LOOKTEST_MODEL: which).
+    NeuralDepth neural; ID3D11Texture2D* neuralTex = nullptr;
+    if (_wgetenv(L"LOOKTEST_NEURAL"))
+    {
+        wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring ndir = exe; const size_t cut = ndir.find_last_of(L"/\134"); if (cut != std::wstring::npos) ndir.resize(cut);
+        if (!neural.Start(ndir, _wgetenv(L"LOOKTEST_MODEL") ? _wgetenv(L"LOOKTEST_MODEL") : L"")) { fwprintf(stderr, L"no neural matcher beside the exe\n"); return 1; }
+        neural.SetLeftOnly(true); look.SetExternalLeftOnly(true); neural.SetSteady(false);
+        for (int k = 0; k < 6000 && !neural.Ready() && !neural.Failed(); ++k) Sleep(100);
+        if (!neural.Ready()) { fwprintf(stderr, L"the model did not load\n"); return 1; }
+        int mw = 0, mh = 0; look.MapSize(ew, eh, mw, mh);
+        neural.Submit(sbs.data(), ew * 2 * 4, ew, eh, (float)ew / (float)eh, 736, mw, mh, 1u);
+        std::vector<uint16_t> res; int rw = 0, rh = 0; unsigned rs = 0; double ms = 0;
+        while (!neural.Take(res, rw, rh, rs, ms)) { if (neural.Failed()) { fwprintf(stderr, L"the model failed\n"); return 1; } Sleep(20); }
+        D3D11_TEXTURE2D_DESC nd{};
+        nd.Width = (UINT)(rw * 2); nd.Height = (UINT)rh; nd.MipLevels = 1; nd.ArraySize = 1; nd.SampleDesc.Count = 1;
+        nd.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; nd.Usage = D3D11_USAGE_DEFAULT; nd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA init{ res.data(), (UINT)(rw * 2 * 8), 0 };
+        dev->CreateTexture2D(&nd, &init, &neuralTex);
+        look.SetExternalDisparity(neuralTex);
+        if (!_wgetenv(L"LOOKTEST_EXTSTAGE")) look.SetExternalStage(2);
+        if (const wchar_t* sn = _wgetenv(L"LOOKTEST_SNAP")) look.SetExternalSnap(_wtoi(sn));
+        if (const wchar_t* so = _wgetenv(L"LOOKTEST_SOFT")) look.SetExternalSoft((float)_wtof(so));
+        wprintf(L"neural matcher: map %dx%d\n", rw, rh);
+    }
 
     // A moving picture, for the plate: LOOKTEST_SEQ=n,m gives n earlier pictures first, the camera m views
     // further left for each one back -- so what the views to the left of the eyes need was in sight
