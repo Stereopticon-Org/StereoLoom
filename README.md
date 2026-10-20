@@ -227,10 +227,15 @@ cmake --build build/x64 --config Release
   [3D Slicer → SR Loom bridge](https://github.com/markleoryan79/3D-Slicer-Stereoscopic-Display-Extension/tree/SRLoomBridge),
   which sends stereo views of medical scans into SR Loom over Katanga. His work
   shaped SR Loom's Katanga receiver and auto-receive support.
+- **[AlonBorodAHub](https://github.com/AlonBorodAHub)**: their
+  [Odyssey Stereo Controls](https://github.com/AlonBorodAHub/Odyssey-Stereo-Controls)
+  (MIT) worked out how to ask Samsung Odyssey 3D Hub to turn off its fullscreen
+  "convert to 3D" popup and to put the preference back. SR Loom's Samsung 3D Popup
+  switch (Settings, Startup) works the same way.
 
 ## Licence
 
 MIT (see `LICENSE`). Third-party parts (Dear ImGui, NPClient, the 1 Euro
-Filter, the **Inter** font, stb_image) are listed with their licences in
+Filter, the **Inter** font, stb_image, Odyssey Stereo Controls) are listed with their licences in
 `THIRD_PARTY_NOTICES.txt`. Links against Leia's **SR SDK** (MIT); the SR
 Platform runtime must be installed separately.

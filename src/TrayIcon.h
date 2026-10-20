@@ -55,6 +55,10 @@ namespace srw
     // WPARAM = 0 for Automatic Detection, else StereoFormatIndex + 1.
     constexpr UINT WM_APP_PIN_INPUT = WM_APP + 11;
 
+    // GUI -> main window: Samsung Odyssey 3D Hub's fullscreen popup off
+    // (WPARAM 0) or its saved preference put back (WPARAM 1). See SamsungHub.h.
+    constexpr UINT WM_APP_SAMSUNG_POPUP = WM_APP + 12;
+
     // Menu command IDs (also reused as WM_COMMAND ids from the popup menu).
     enum TrayCommand : UINT
     {

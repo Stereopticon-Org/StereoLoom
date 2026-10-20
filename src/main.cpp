@@ -29,6 +29,7 @@
 #include "Detector.h"
 #include "Gui.h"
 #include "Settings.h"
+#include "SamsungHub.h"
 #include "Profiles.h"
 #include "MediaProfiles.h"
 #include "VideoSource.h"
@@ -8835,6 +8836,25 @@ namespace
             if (app) UseDisplay(*app, reinterpret_cast<HMONITOR>(lParam));
             return 0;
 
+        case WM_APP_SAMSUNG_POPUP:   // panel: Samsung Hub's fullscreen popup off (0) or back as it was (1)
+        {
+            // (Off the window's thread: Hub is waited for, and Windows may ask for administrator approval.)
+            static std::atomic<bool> s_busy{ false };
+            if (s_busy.exchange(true)) return 0;
+            const bool restore = wParam != 0;
+            std::thread([hwnd, restore]() {
+                std::string msg;
+                const bool ok = SamsungHub::SetPopup(restore, msg);
+                NOTIFYICONDATAA nid{ sizeof(nid) };
+                nid.hWnd = hwnd; nid.uID = 1; nid.uFlags = NIF_INFO; nid.dwInfoFlags = ok ? NIIF_INFO : NIIF_WARNING;
+                _snprintf_s(nid.szInfoTitle, _TRUNCATE, "Samsung 3D popup");
+                _snprintf_s(nid.szInfo, _TRUNCATE, "%s", msg.c_str());
+                Shell_NotifyIconA(NIM_MODIFY, &nid);
+                s_busy = false;
+            }).detach();
+            return 0;
+        }
+
         case WM_APP_PIN_INPUT:   // panel pin: this Stereo 3D Input is the default from now on
             if (app)
             {
@@ -10231,6 +10251,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // Install the crash handler first so any later init failure that
     // segfaults / access-violates leaves a useful trail in srweaver.log.
     SetUnhandledExceptionFilter(SrLoomCrashHandler);
+    // SR Loom run again as administrator for one Samsung Hub change (SamsungHub::SetPopup): that alone, then out.
+    if (const int hub = SamsungHub::RunElevatedPart(lpCmdLine); hub >= 0) return hub;
     // No IME / Text Services on SR Loom's threads: its hooks run inside every
     // PeekMessage and talk to other processes, a known source of message-pump
     // stalls in games. (Must come before any window is created.)

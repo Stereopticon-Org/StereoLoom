@@ -209,6 +209,7 @@ add_executable(SRLoom WIN32
     src/Gui.cpp
     src/AcerSpatialLabs.cpp
     src/Settings.cpp
+    src/SamsungHub.cpp
     src/Profiles.cpp
     src/Profiles.h
     src/MediaProfiles.cpp
