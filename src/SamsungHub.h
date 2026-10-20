@@ -8,7 +8,8 @@
 // https://github.com/AlonBorodAHub/Odyssey-Stereo-Controls
 // It is undocumented and was worked out against Hub 1.5.1; a later Hub may
 // need changes. Nothing of Samsung's is included or changed beyond the
-// preferences Hub itself is asked to save.
+// preferences Hub itself is asked to save. (The games' side-by-side switch is
+// Samsung's own setting in its game launcher's per-game config, not from there.)
 #pragma once
 #include <string>
 
@@ -26,6 +27,17 @@ namespace SamsungHub
     // administrator: on "access denied" SR Loom runs itself once elevated to
     // do just this (Windows asks the user). msg: what happened, for the user.
     bool SetPopup(bool restore, std::string& msg);
+
+    // Hub's Unreal Engine games (run through Samsung's UEVR-based launcher, one
+    // %APPDATA%\3DGameLauncher\<game>\config.txt each): side-by-side output
+    // instead of Samsung's own weave, so SR Loom weaves them. Only games whose
+    // config already has Odyssey3D_ShowSBS are touched; turning it on also turns
+    // off VR_DesktopRecordingFix_V2 there (it draws a flat copy into the same
+    // window). Each file's own values are saved beside it first
+    // (config.txt.srloom) and put back when turned off. A game reads its config
+    // when it starts. State: -1 no such games, 0 off (in some or all), 1 on in all.
+    int  GamesSbsState(int* games = nullptr);
+    bool SetGamesSbs(bool on, std::string& msg);
 
     // The elevated run's side: SRLoom.exe --hub-popup disable|restore <user SID>.
     // Returns the process's exit code; -1 when the command line is not this.

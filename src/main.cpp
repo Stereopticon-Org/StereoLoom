@@ -8836,18 +8836,18 @@ namespace
             if (app) UseDisplay(*app, reinterpret_cast<HMONITOR>(lParam));
             return 0;
 
-        case WM_APP_SAMSUNG_POPUP:   // panel: Samsung Hub's fullscreen popup off (0) or back as it was (1)
+        case WM_APP_SAMSUNG_POPUP:   // panel: Samsung Hub's fullscreen popup off (0) or back as it was (1); its games side by side off (2) or on (3)
         {
             // (Off the window's thread: Hub is waited for, and Windows may ask for administrator approval.)
             static std::atomic<bool> s_busy{ false };
             if (s_busy.exchange(true)) return 0;
-            const bool restore = wParam != 0;
-            std::thread([hwnd, restore]() {
+            const UINT what = (UINT)wParam;   // (0 popup off, 1 popup back, 2 games' side by side off, 3 on)
+            std::thread([hwnd, what]() {
                 std::string msg;
-                const bool ok = SamsungHub::SetPopup(restore, msg);
+                const bool ok = what >= 2 ? SamsungHub::SetGamesSbs(what == 3, msg) : SamsungHub::SetPopup(what == 1, msg);
                 NOTIFYICONDATAA nid{ sizeof(nid) };
                 nid.hWnd = hwnd; nid.uID = 1; nid.uFlags = NIF_INFO; nid.dwInfoFlags = ok ? NIIF_INFO : NIIF_WARNING;
-                _snprintf_s(nid.szInfoTitle, _TRUNCATE, "Samsung 3D popup");
+                _snprintf_s(nid.szInfoTitle, _TRUNCATE, what >= 2 ? "Samsung 3D games" : "Samsung 3D popup");
                 _snprintf_s(nid.szInfo, _TRUNCATE, "%s", msg.c_str());
                 Shell_NotifyIconA(NIM_MODIFY, &nid);
                 s_busy = false;

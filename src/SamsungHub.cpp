@@ -222,6 +222,64 @@ namespace
 
 using srw::Log;
 
+namespace
+{
+    // ---- Hub's games' configs (UEVR's key=value lines) ----
+    std::vector<std::wstring> GameConfigs()
+    {
+        std::vector<std::wstring> out;
+        wchar_t* app = nullptr;
+        if (FAILED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &app)) || !app) { CoTaskMemFree(app); return out; }
+        std::wstring root = std::wstring(app) + L"\\3DGameLauncher";
+        CoTaskMemFree(app);
+        if (const wchar_t* t = _wgetenv(L"SRLOOM_HUB_GAMES")) root = t;   // (a test: stand-in games)
+        WIN32_FIND_DATAW fd{};
+        HANDLE f = FindFirstFileW((root + L"\\*").c_str(), &fd);
+        if (f == INVALID_HANDLE_VALUE) return out;
+        do
+        {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == L'.') continue;
+            const std::wstring c = root + L"\\" + fd.cFileName + L"\\config.txt";
+            if (GetFileAttributesW(c.c_str()) != INVALID_FILE_ATTRIBUTES) out.push_back(c);
+        } while (FindNextFileW(f, &fd));
+        FindClose(f);
+        return out;
+    }
+
+    // The file's lines, each with its own ending kept.
+    bool ReadLines(const std::wstring& path, std::vector<std::string>& lines)
+    {
+        std::string all;
+        if (!ReadFile(path, all)) return false;
+        lines.clear();
+        size_t a = 0;
+        while (a < all.size()) { size_t e = all.find('\n', a); e = e == std::string::npos ? all.size() : e + 1; lines.push_back(all.substr(a, e - a)); a = e; }
+        return true;
+    }
+    bool WriteAll(const std::wstring& path, const std::vector<std::string>& lines)
+    {
+        const std::wstring tmp = path + L".srloom-new";
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, tmp.c_str(), L"wb") || !f) return false;
+        bool ok = true;
+        for (const std::string& l : lines) ok = ok && fwrite(l.data(), 1, l.size(), f) == l.size();
+        ok = (fclose(f) == 0) && ok;
+        if (!ok) { DeleteFileW(tmp.c_str()); return false; }
+        return MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+    }
+    // A line's key, and its value without the line ending ("" when it is not key=value).
+    std::string KeyOf(const std::string& l, std::string* val = nullptr)
+    {
+        const size_t eq = l.find('=');
+        if (eq == std::string::npos) return "";
+        if (val) { *val = l.substr(eq + 1); while (!val->empty() && (val->back() == '\n' || val->back() == '\r')) val->pop_back(); }
+        return l.substr(0, eq);
+    }
+    std::string Ending(const std::string& l) { return l.size() >= 2 && l[l.size() - 2] == '\r' ? "\r\n" : (!l.empty() && l.back() == '\n') ? "\n" : ""; }
+    const char* kSbsKey = "Odyssey3D_ShowSBS";
+    const char* kRecKey = "VR_DesktopRecordingFix_V2";
+}
+
 namespace SamsungHub
 {
     bool Installed()
@@ -262,6 +320,73 @@ namespace SamsungHub
         if (msg.empty()) msg = code == 0 ? "Done." : "The administrator step did not finish.";
         Log("Samsung Hub popup %s (as administrator): %s", restore ? "restore" : "off", msg.c_str());
         return code == 0;
+    }
+
+    int GamesSbsState(int* games)
+    {
+        int n = 0, on = 0;
+        for (const std::wstring& c : GameConfigs())
+        {
+            std::vector<std::string> lines;
+            if (!ReadLines(c, lines)) continue;
+            for (const std::string& l : lines)
+            {
+                std::string v;
+                if (KeyOf(l, &v) != kSbsKey) continue;
+                ++n; on += (v == "true" || v == "1") ? 1 : 0;
+                break;
+            }
+        }
+        if (games) *games = n;
+        return n == 0 ? -1 : (on == n ? 1 : 0);
+    }
+
+    bool SetGamesSbs(bool on, std::string& msg)
+    {
+        int changed = 0, failed = 0, games = 0;
+        for (const std::wstring& c : GameConfigs())
+        {
+            std::vector<std::string> lines;
+            if (!ReadLines(c, lines)) { ++failed; continue; }
+            bool has = false;
+            for (const std::string& l : lines) if (KeyOf(l) == kSbsKey) has = true;
+            if (!has) continue;   // (not one of Samsung's 3D games: left alone)
+            ++games;
+            const std::wstring bak = c + L".srloom";
+            std::vector<std::string> saved;
+            const bool haveBak = ReadLines(bak, saved);
+            if (on && !haveBak)
+            {
+                // (The game's own two values, kept to put back.)
+                std::vector<std::string> keep;
+                for (const std::string& l : lines) { const std::string k = KeyOf(l); if (k == kSbsKey || k == kRecKey) keep.push_back(l); }
+                if (!WriteAll(bak, keep)) { ++failed; continue; }
+            }
+            std::map<std::string, std::string> want;
+            if (on) { want[kSbsKey] = "true"; want[kRecKey] = "false"; }
+            else if (haveBak) { for (const std::string& l : saved) { std::string v; const std::string k = KeyOf(l, &v); if (!k.empty()) want[k] = v; } }
+            else want[kSbsKey] = "false";
+            bool diff = false;
+            for (std::string& l : lines)
+            {
+                std::string v; const std::string k = KeyOf(l, &v);
+                auto it = want.find(k);
+                if (it == want.end() || it->second == v) continue;
+                // (Only turned off, never added: the recording fix is left as it is where it is not on.)
+                if (on && k == kRecKey && v != "true") continue;
+                l = k + "=" + it->second + Ending(l);
+                diff = true;
+            }
+            if (diff && !WriteAll(c, lines)) { ++failed; continue; }
+            if (!on && haveBak) DeleteFileW(bak.c_str());
+            changed += diff ? 1 : 0;
+        }
+        if (games == 0) msg = "No Samsung 3D games were found (Hub's game launcher keeps a settings file for each game once it has run).";
+        else if (failed) msg = "Some games' settings could not be changed (" + std::to_string(failed) + "). Close those games and try again.";
+        else msg = on ? "Samsung's 3D games will show side by side for SR Loom the next time each starts (" + std::to_string(games) + " found)."
+                      : "Samsung's 3D games are back to their own settings from the next time each starts.";
+        Log("Samsung Hub games side by side %s: %d games, %d changed, %d failed", on ? "on" : "off", games, changed, failed);
+        return games > 0 && failed == 0;
     }
 
     int RunElevatedPart(const char* cmdLine)

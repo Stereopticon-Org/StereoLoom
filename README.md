@@ -231,7 +231,7 @@ cmake --build build/x64 --config Release
   [Odyssey Stereo Controls](https://github.com/AlonBorodAHub/Odyssey-Stereo-Controls)
   (MIT) worked out how to ask Samsung Odyssey 3D Hub to turn off its fullscreen
   "convert to 3D" popup and to put the preference back. SR Loom's Samsung 3D Popup
-  switch (Settings, Startup) works the same way.
+  switch (Settings, Samsung Odyssey 3D) works the same way.
 
 ## Licence
 

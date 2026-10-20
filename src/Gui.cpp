@@ -2779,7 +2779,74 @@ bool Gui::Render(GuiState& state)
             }
         }
 
-        subHeader("Startup", !AcerSpatialLabs::Available());
+        // Samsung Odyssey 3D: shown only where Samsung's Odyssey 3D Hub is installed (as the
+        // SpatialLabs one is where Acer's software is). Hub's files read every 2 s, not every frame.
+        static int s_hubPopup = -2, s_hubGames = -1, s_hubGameCount = 0; static DWORD s_hubNext = 0;
+        if ((LONG)(GetTickCount() - s_hubNext) >= 0)
+        {
+            s_hubPopup = SamsungHub::Installed() ? SamsungHub::PopupState() : -2;
+            s_hubGames = s_hubPopup != -2 ? SamsungHub::GamesSbsState(&s_hubGameCount) : -1;
+            s_hubNext = GetTickCount() + (s_hubPopup == -2 ? 10000 : 2000);   // (not installed: look again in 10 s)
+        }
+        const bool samsung = s_hubPopup != -2;
+        if (samsung)
+        {
+            subHeader("Samsung Odyssey 3D", !AcerSpatialLabs::Available());
+            auto pairToggle2 = [&](const char* label, bool on, float colW) -> bool {
+                const float startX = ImGui::GetCursorPosX();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(label);
+                ImGui::SameLine();
+                const float togW = ImGui::GetFrameHeight() * 1.8f;
+                ImGui::SetCursorPosX(startX + colW - togW);
+                return ToggleSwitch(label, on);
+            };
+            const float halfW = (ImGui::GetContentRegionAvail().x
+                                 - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            auto tip = [&](const char* text) {
+                if (!ImGui::IsItemHovered()) return;
+                const float maxW = 320.0f * m_dpiScale;
+                ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(maxW, FLT_MAX));
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(maxW - 14.0f * m_dpiScale);
+                ImGui::TextUnformatted(text);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            };
+            // The fullscreen "convert to 3D?" popup (the way of asking Hub is from Odyssey
+            // Stereo Controls by AlonBorodAHub, MIT).
+            const bool popupOn = s_hubPopup != 0;
+            if (pairToggle2("3D Popup", popupOn, halfW))
+            {
+                PostMessageA(m_mainHwnd, WM_APP_SAMSUNG_POPUP, popupOn ? 0 : 1, 0);
+                s_hubNext = GetTickCount() + 1000;   // (read again soon after)
+            }
+            tip("Samsung Odyssey 3D Hub's popup that offers to convert fullscreen video and games to 3D. "
+                "Turn it off so it does not cover what SR Loom is weaving; turning it back on restores "
+                "Hub's preferences as they were before SR Loom changed them. Hub must be running, and "
+                "Windows may ask for administrator approval. Thanks to Odyssey Stereo Controls by "
+                "AlonBorodAHub for working out how.");
+            // Hub's own 3D games (Unreal Engine games through Samsung's launcher): side by side for SR Loom.
+            ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
+            const bool gamesOn = s_hubGames == 1;
+            if (s_hubGames < 0) ImGui::BeginDisabled();
+            if (pairToggle2("Games In SBS", gamesOn, halfW))
+            {
+                PostMessageA(m_mainHwnd, WM_APP_SAMSUNG_POPUP, gamesOn ? 2 : 3, 0);
+                s_hubNext = GetTickCount() + 1000;
+            }
+            if (s_hubGames < 0) ImGui::EndDisabled();
+            tip(s_hubGames < 0
+                ? "No Samsung 3D games found yet. Hub's game launcher keeps a settings file for each game once it "
+                  "has run; play one through Hub once, then come back."
+                : "Samsung's own 3D games (the Unreal Engine games Hub launches) show side by side instead of "
+                  "being woven by Samsung, so SR Loom can weave them, with its head tracking, look-around and "
+                  "settings. Changes each game's own Samsung settings (only the side-by-side setting, and the "
+                  "desktop recording fix, which fights it); turning it off puts back what each game had. "
+                  "Applies the next time each game starts.");
+        }
+
+        subHeader("Startup", !AcerSpatialLabs::Available() && !samsung);
         {
             // Both are tiny HKCU registry settings; run-at-startup just adds/removes
             // our exe from the Run key (no elevation needed), and start-in-tray
@@ -2852,41 +2919,6 @@ bool Gui::Render(GuiState& state)
                     "back when the sender stops.");
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
-            }
-            // Third row, only where Samsung Odyssey 3D Hub is installed: its fullscreen
-            // "convert to 3D?" popup (SamsungHub; the way of asking Hub is from Odyssey
-            // Stereo Controls by AlonBorodAHub, MIT). Hub's file read every 2 s, not every frame.
-            {
-                static int s_hubState = -2; static DWORD s_hubNext = 0;
-                if ((LONG)(GetTickCount() - s_hubNext) >= 0)
-                {
-                    s_hubState = SamsungHub::Installed() ? SamsungHub::PopupState() : -2;
-                    s_hubNext = GetTickCount() + (s_hubState == -2 ? 10000 : 2000);   // (not installed: look again in 10 s)
-                }
-                if (s_hubState != -2)
-                {
-                    const bool popupOn = s_hubState != 0;
-                    if (pairToggle2("Samsung 3D Popup", popupOn, halfW))
-                    {
-                        PostMessageA(m_mainHwnd, WM_APP_SAMSUNG_POPUP, popupOn ? 0 : 1, 0);
-                        s_hubNext = GetTickCount() + 1000;   // (read again soon after)
-                    }
-                    if (ImGui::IsItemHovered())
-                    {
-                        const float maxW = 320.0f * m_dpiScale;
-                        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(maxW, FLT_MAX));
-                        ImGui::BeginTooltip();
-                        ImGui::PushTextWrapPos(maxW - 14.0f * m_dpiScale);
-                        ImGui::TextUnformatted(
-                            "Samsung Odyssey 3D Hub's popup that offers to convert fullscreen video and games to 3D. "
-                            "Turn it off so it does not cover what SR Loom is weaving; turning it back on restores "
-                            "Hub's preferences as they were before SR Loom changed them. Hub must be running, and "
-                            "Windows may ask for administrator approval. Thanks to Odyssey Stereo Controls by "
-                            "AlonBorodAHub for working out how.");
-                        ImGui::PopTextWrapPos();
-                        ImGui::EndTooltip();
-                    }
-                }
             }
         }
 
