@@ -208,6 +208,7 @@ namespace srw
         // never touch tracking can tidy it away.
         bool                     m_headTrackingSectionOpen = true;
         bool                     m_splatSectionOpen = true;   // (the GAUSSIAN SPLATS section)
+        unsigned long            m_panelOpenSaved = 0xFFFFFFFFul;   // (the sections' open or closed as last saved: Settings PanelOpen)
         // DISPLAY + STEREO 3D INPUT also collapsible (default expanded);
         // users who've set their format / display mode once may want to
         // tidy away those sections too once everything is dialled in.

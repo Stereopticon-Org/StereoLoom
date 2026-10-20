@@ -253,5 +253,9 @@ namespace srw::Settings
     // The panel's theme: 0 Auto (as Windows, the default), 1 Light, 2 Dark.
     // HKCU\Software\SRLoom\ThemeMode.
     int  ReadThemeMode();
+    // The panel's sections, open or closed as last left: one bit each (Gui::kSection*);
+    // 0xFFFFFFFF when never saved (each section then opens as it always has). PanelOpen.
+    DWORD ReadPanelOpen();
+    void  WritePanelOpen(DWORD bits);
     void WriteThemeMode(int mode);
 }

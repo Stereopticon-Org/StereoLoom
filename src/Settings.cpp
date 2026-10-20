@@ -418,6 +418,8 @@ namespace srw::Settings
         const DWORD v = ReadDword(kSettingsKey, L"ThemeMode", 0);
         return v <= 2 ? (int)v : 0;
     }
+    DWORD ReadPanelOpen() { return ReadDword(kSettingsKey, L"PanelOpen", 0xFFFFFFFFu); }
+    void  WritePanelOpen(DWORD bits) { WriteDword(kSettingsKey, L"PanelOpen", bits); }
     void WriteThemeMode(int mode) { WriteDword(kSettingsKey, L"ThemeMode", (DWORD)(mode >= 0 && mode <= 2 ? mode : 0)); }
 
     bool ReadSystemUsesLightTheme()

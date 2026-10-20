@@ -70,10 +70,11 @@ namespace
         s.FrameRounding        = 7.0f;
         s.GrabRounding         = 7.0f;
         s.PopupRounding        = 8.0f;
+        // (A little tighter than it was -- frames 12 x 8, rows 7 apart: the panel had grown tall.)
         s.WindowPadding        = ImVec2(12, 9);
-        s.FramePadding         = ImVec2(12, 8);
-        s.ItemSpacing          = ImVec2(8, 7);
-        s.ItemInnerSpacing     = ImVec2(8, 6);
+        s.FramePadding         = ImVec2(10, 5);
+        s.ItemSpacing          = ImVec2(8, 5);
+        s.ItemInnerSpacing     = ImVec2(7, 5);
         s.ScrollbarRounding    = 9.0f;
         s.ScrollbarSize        = 11.0f;
         s.GrabMinSize          = 18.0f;
@@ -215,13 +216,19 @@ namespace
 
     // An iOS-style sliding toggle. `heightScale` makes the hero (weaving) one big.
     // Returns true when clicked. Width is 1.8x its height.
-    bool ToggleSwitch(const char* id, bool on, float heightScale = 1.0f)
+    // A row's switch (the default) is a little smaller than the row's frames and
+    // sits in the middle of the row's height, so it lines up with the label.
+    constexpr float kRowToggle = 0.8f;
+    inline float RowToggleW() { return ImGui::GetFrameHeight() * kRowToggle * 1.8f; }
+    bool ToggleSwitch(const char* id, bool on, float heightScale = kRowToggle)
     {
         const float h = ImGui::GetFrameHeight() * heightScale;
         const float w = h * 1.8f;
         const float r = h * 0.5f;
-        const ImVec2 p = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton(id, ImVec2(w, h));
+        const bool row = heightScale == kRowToggle;
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton(id, ImVec2(w, row ? ImGui::GetFrameHeight() : h));
+        if (row) p.y += (ImGui::GetFrameHeight() - h) * 0.5f;
         const bool clicked = ImGui::IsItemClicked();
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h),
@@ -237,7 +244,7 @@ namespace
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(label);
         ImGui::SameLine();
-        const float w = ImGui::GetFrameHeight() * 1.8f;
+        const float w = RowToggleW();
         ImGui::SetCursorPosX(ImGui::GetWindowWidth() - w - ImGui::GetStyle().WindowPadding.x);
         return ToggleSwitch(label, on);
     }
@@ -488,6 +495,17 @@ bool Gui::Init(HWND mainHwnd, ID3D11Device* device, ID3D11DeviceContext* context
     m_systemLightMode = Settings::ReadSystemUsesLightTheme();
     // (... unless Light or Dark was chosen from the theme button: Settings ThemeMode.)
     m_themeMode       = Settings::ReadThemeMode();
+    // (The sections open or closed as they were last left.)
+    {
+        const DWORD b = Settings::ReadPanelOpen();
+        if (b != 0xFFFFFFFFu)
+        {
+            bool* open[] = { &m_displaySectionOpen, &m_stereoInputSectionOpen, &m_headTrackingSectionOpen, &m_splatSectionOpen,
+                             &m_profilesSectionOpen, &m_settingsOpen, &m_openTrackSectionOpen };
+            for (int i = 0; i < (int)(sizeof(open) / sizeof(open[0])); ++i) *open[i] = (b >> i) & 1u;
+        }
+        m_panelOpenSaved = b;
+    }
     m_lightMode       = m_themeMode == 1 ? true : m_themeMode == 2 ? false : m_systemLightMode;
 
     // The GUI renders on its OWN D3D11 device, never the weaver's. The SR runtime
@@ -2268,7 +2286,7 @@ bool Gui::Render(GuiState& state)
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(label);
                 ImGui::SameLine();
-                const float togW = ImGui::GetFrameHeight() * 1.8f;
+                const float togW = RowToggleW();
                 ImGui::SetCursorPosX(startX + colW - togW);
                 return ToggleSwitch(label, on);
             };
@@ -2484,7 +2502,7 @@ bool Gui::Render(GuiState& state)
             const float availTop = ImGui::GetContentRegionAvail().x;
             const float gapTop   = ImGui::GetStyle().ItemSpacing.x;
             const float halfTop  = (availTop - gapTop) * 0.5f;
-            const float togW     = ImGui::GetFrameHeight() * 1.8f;
+            const float togW     = RowToggleW();
             const float startXTop= ImGui::GetCursorPosX();
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Enable Profiles");
@@ -2730,7 +2748,7 @@ bool Gui::Render(GuiState& state)
                     ImGui::EndTooltip();
                 }
                 ImGui::SameLine();
-                const float togW = ImGui::GetFrameHeight() * 1.8f;
+                const float togW = RowToggleW();
                 ImGui::SetCursorPosX(startX + colW - togW);
                 return ToggleSwitch(label, on);
             };
@@ -2797,7 +2815,7 @@ bool Gui::Render(GuiState& state)
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(label);
                 ImGui::SameLine();
-                const float togW = ImGui::GetFrameHeight() * 1.8f;
+                const float togW = RowToggleW();
                 ImGui::SetCursorPosX(startX + colW - togW);
                 return ToggleSwitch(label, on);
             };
@@ -2856,7 +2874,7 @@ bool Gui::Render(GuiState& state)
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(label);
                 ImGui::SameLine();
-                const float togW = ImGui::GetFrameHeight() * 1.8f;
+                const float togW = RowToggleW();
                 ImGui::SetCursorPosX(startX + colW - togW);
                 return ToggleSwitch(label, on);
             };
@@ -2930,7 +2948,7 @@ bool Gui::Render(GuiState& state)
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(label);
                 ImGui::SameLine();
-                const float togW = ImGui::GetFrameHeight() * 1.8f;
+                const float togW = RowToggleW();
                 ImGui::SetCursorPosX(startX + colW - togW);
                 return ToggleSwitch(label, on);
             };
@@ -3133,6 +3151,15 @@ bool Gui::Render(GuiState& state)
     const float contentH = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y;
 
     ImGui::End();
+
+    // (The sections' open or closed, saved when one changes: the panel opens as it was left.)
+    {
+        const bool open[] = { m_displaySectionOpen, m_stereoInputSectionOpen, m_headTrackingSectionOpen, m_splatSectionOpen,
+                              m_profilesSectionOpen, m_settingsOpen, m_openTrackSectionOpen };
+        DWORD b = 0;
+        for (int i = 0; i < (int)(sizeof(open) / sizeof(open[0])); ++i) b |= open[i] ? (1u << i) : 0u;
+        if (b != m_panelOpenSaved) { m_panelOpenSaved = b; Settings::WritePanelOpen(b); }
+    }
 
     ImGui::Render();
     m_lastState = state;     // so a window drag can repaint with the latest values
