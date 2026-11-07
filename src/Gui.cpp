@@ -889,6 +889,15 @@ bool Gui::Render(GuiState& state)
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                  ImGuiWindowFlags_NoBringToFrontOnFocus);
+    // The compact panel keeps the roomier spacing it always had (the expanded one was
+    // tightened to fit its many rows; the compact one has room and looked squashed).
+    const bool roomy = !m_expanded;
+    if (roomy)
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(12.0f * m_dpiScale, 8.0f * m_dpiScale));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(8.0f * m_dpiScale, 7.0f * m_dpiScale));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8.0f * m_dpiScale, 6.0f * m_dpiScale));
+    }
 
     // Title bar (custom, since the window is borderless): min/max/close are flush to
     // the very top-right corner; the "i" info button + light/dark toggle sit on the
@@ -3150,6 +3159,7 @@ bool Gui::Render(GuiState& state)
     // Height the content actually used (for auto-fitting the window below).
     const float contentH = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y;
 
+    if (roomy) ImGui::PopStyleVar(3);
     ImGui::End();
 
     // (The sections' open or closed, saved when one changes: the panel opens as it was left.)
