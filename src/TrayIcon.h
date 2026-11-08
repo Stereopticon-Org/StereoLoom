@@ -63,7 +63,7 @@ namespace srw
     // Menu command IDs (also reused as WM_COMMAND ids from the popup menu).
     enum TrayCommand : UINT
     {
-        ID_TRAY_OPEN_PANEL   = 40000,   // "Open SR Loom" -- shows the GUI (same as left-click)
+        ID_TRAY_OPEN_PANEL   = 40000,   // "Open Stereo Loom" -- shows the GUI (same as left-click)
         ID_TRAY_TOGGLE_WEAVE = 40001,
         ID_TRAY_MODE_FULLSCREEN,
         ID_TRAY_MODE_WINDOWED,

@@ -17,7 +17,7 @@
 // background's own depth carried across -- what the look-around then shows
 // where neither eye sees (LookAround::SetLayer).
 //
-// The models are not part of SR Loom: ONNX files in <SRLoom.exe's folder>\neural
+// The models are not part of Stereo Loom: ONNX files in <StereoLoom.exe's folder>\neural
 // -- a matcher with two inputs (1 x 3 x H x W, RGB, ImageNet-normalised) and one
 // output (1 x 1 x H x W, the first picture's disparity in pixels, never
 // negative); and neural\inpaint\lama.onnx (image 1 x 3 x 512 x 512 in 0..1 and

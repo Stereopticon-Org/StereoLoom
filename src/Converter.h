@@ -110,7 +110,7 @@ namespace srw
         // a third of the reads. Off: in one.
         void SetQuiltTwoPass(bool on) { m_quiltTwoPass = on; }
         // Light field (an experiment): a Quilt's views interlaced across the lens by
-        // SR Loom itself, every view at once -- no eye tracking: move your head to
+        // Stereo Loom itself, every view at once -- no eye tracking: move your head to
         // look around. pitchPx: the lens' pitch in pixels (0 = off); slant: its
         // slant; panelW / H: the display's size (the output is made pixel for
         // pixel). The phase offset rides in the Quilt's left blend (SetQuilt).

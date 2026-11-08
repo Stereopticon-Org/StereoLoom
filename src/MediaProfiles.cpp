@@ -166,7 +166,7 @@ namespace srw::MediaProfiles
 
         std::ofstream f(iniPath, std::ios::trunc);
         if (!f.is_open()) { Log("MediaProfiles::SaveFor: open failed"); return; }
-        f << "# SR Loom media profiles. Each [path] section remembers the\n"
+        f << "# Stereo Loom media profiles. Each [path] section remembers the\n"
              "# stereo settings last used for that image / video. Updated\n"
              "# automatically when the file is the current source and you\n"
              "# change format / swap eyes / convergence / anaglyph fields.\n"

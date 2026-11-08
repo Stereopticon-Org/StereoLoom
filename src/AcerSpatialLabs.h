@@ -1,9 +1,9 @@
 // AcerSpatialLabs.h — surface the handful of HKLM registry switches that are
-// most useful to tweak alongside SR Loom on an Acer SpatialLabs display.
+// most useful to tweak alongside Stereo Loom on an Acer SpatialLabs display.
 //
 // Focus Detection is Acer's own auto-detect (HKLM\SOFTWARE\Acer\SpatialLabs)
 // -- when on, Acer's runtime turns weaving off whenever the user looks away,
-// which fights SR Loom; the toggle lets the user disable it from our panel.
+// which fights Stereo Loom; the toggle lets the user disable it from our panel.
 //
 // CameraPopup is the Windows-level "Your camera is in use" notification that
 // fires every time the SR display's eye-tracking camera engages. SR displays

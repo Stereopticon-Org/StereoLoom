@@ -1,7 +1,7 @@
 // copybench: does a big texture copy on Direct3D 12's COPY queue run at the same
 // time as shader work on the main queue -- and how fast is it there?
 //
-// SR Loom's Direct3D 12 presenter copies each finished 7680x2160 picture into
+// Stereo Loom's Direct3D 12 presenter copies each finished 7680x2160 picture into
 // the weave's own texture, in the weave's command list, ahead of the weave. The
 // question is whether that copy could go to a copy queue instead, off the
 // weave's path. Measured here, with a compute shader standing in for the

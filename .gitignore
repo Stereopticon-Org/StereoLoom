@@ -80,3 +80,6 @@ tools/dx12bench/search/
 
 # Run-time logs (SR Loom writes srweaver.log beside the exe)
 *.log
+
+# Zondision: Stereo Loom's own app key for ZimoAdapter.dll (adapters/zimo). Never committed.
+/adapters/zimo/ZimoKey.private.h

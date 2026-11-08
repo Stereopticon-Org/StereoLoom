@@ -30,7 +30,7 @@ TrayIcon::~TrayIcon()
 // land as garbled multi-byte glyphs. Convert through the W form instead.
 static void Utf8ToWide(const char* in, wchar_t* out, int outChars)
 {
-    const char* src = in ? in : "SR Loom";
+    const char* src = in ? in : "Stereo Loom";
     int n = MultiByteToWideChar(CP_UTF8, 0, src, -1, out, outChars);
     if (n == 0)
     {
@@ -136,12 +136,12 @@ UINT TrayIcon::ShowContextMenu(HWND hwnd, const MenuState& s, bool returnCmd)
     HMENU menu = CreatePopupMenu();
     if (!menu) return 0;
 
-    // Explicit "Open SR Loom" entry at the top. Left-click on the tray
+    // Explicit "Open Stereo Loom" entry at the top. Left-click on the tray
     // icon also opens the panel, but that's non-obvious from the right-
     // click menu alone (Reddit feedback, 2026-06-28: user spent time
     // hunting for the head-tracking UI via right-click before realising).
     // Bold to hint it's the primary action.
-    AppendMenuA(menu, MF_STRING, ID_TRAY_OPEN_PANEL, "Open SR Loom");
+    AppendMenuA(menu, MF_STRING, ID_TRAY_OPEN_PANEL, "Open Stereo Loom");
     SetMenuDefaultItem(menu, ID_TRAY_OPEN_PANEL, FALSE);
     // Persistent "update available" entry (the launch balloon is easy to
     // miss and disappears). Opens the release page.

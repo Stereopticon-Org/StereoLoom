@@ -18,13 +18,13 @@ cmake_minimum_required(VERSION 3.21)
 # in any C++ runtime so games loading it don't end up with a second MSVC CRT
 # in their process. Listing both languages here tells CMake to enable the C
 # toolchain so it can pick a linker language for the C-only DLL target.
-project(SRLoom CXX C)
+project(StereoLoom CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Static-link the MSVC runtime so the shipped exe needs no VC++ redistributable —
-# the release is then a single self-contained SRLoom.exe (the SR Platform runtime,
+# the release is then a single self-contained StereoLoom.exe (the SR Platform runtime,
 # which the user already has for the display, is the only external dependency).
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -85,7 +85,7 @@ set(IMGUI_SOURCES
 # head-pose data. Source vendored from OpenTrack's contrib/npclient (MIT,
 # originally from the Linuxtrack project). Built as a free-standing Windows
 # DLL; the built artifact is copied into assets/npclient/ so the resource
-# compiler can embed it as RCDATA in SRLoom.exe. SR Loom extracts the bytes
+# compiler can embed it as RCDATA in StereoLoom.exe. Stereo Loom extracts the bytes
 # back to %LOCALAPPDATA%\SRLoom\NPClient\ on first launch and points the
 # NaturalPoint registry key at that path, so TrackIR games "just work"
 # without users installing OpenTrack themselves.
@@ -123,7 +123,7 @@ add_custom_command(TARGET NPClient64 POST_BUILD
 
 # Converter shaders, compiled at BUILD time: fxc (from the Windows SDK) turns
 # each entry point into a header of bytecode (g_Converter_<entry>) that the exe
-# embeds. Compiling them when SR Loom started took ~17 s the first time after
+# embeds. Compiling them when Stereo Loom started took ~17 s the first time after
 # every change (the main shader alone is that slow to optimise).
 find_program(FXC_EXE fxc
     HINTS "C:/Program Files (x86)/Windows Kits/10/bin/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/x64"
@@ -182,7 +182,7 @@ foreach(E ${LOOK_ENTRIES})
 endforeach()
 set_source_files_properties("${LOOK_HLSL}" PROPERTIES VS_TOOL_OVERRIDE "None")
 
-add_executable(SRLoom WIN32
+add_executable(StereoLoom WIN32
     ${CONVERTER_SHADER_HEADERS}
     ${LOOK_SHADER_HEADERS}
     src/shaders/Converter.hlsl
@@ -190,6 +190,10 @@ add_executable(SRLoom WIN32
     src/Renderer.cpp
     src/Present12.cpp
     src/SRWeaver.cpp
+    src/OutputEncoder.cpp
+    src/OutputEncoder.h
+    src/Zondision.cpp
+    src/Zondision.h
     src/TrayIcon.cpp
     src/Capture.cpp
     src/CaptureDXGI.cpp
@@ -243,16 +247,16 @@ add_executable(SRLoom WIN32
 )
 
 # Release PDB, kept locally (not shipped, *.pdb is gitignored). The crash
-# handler logs "SRLoom.exe +0x<RVA>"; keep the PDB that matches each
+# handler logs "StereoLoom.exe +0x<RVA>"; keep the PDB that matches each
 # released exe so a user's log can be resolved to a function/line.
 # /DEBUG turns /OPT:REF + /OPT:ICF off by default -- re-enable them so the
 # exe stays as lean as before (it only gains a small PDB-path record).
 if(MSVC)
-    target_compile_options(SRLoom PRIVATE $<$<CONFIG:Release>:/Zi>)
-    target_link_options(SRLoom PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
+    target_compile_options(StereoLoom PRIVATE $<$<CONFIG:Release>:/Zi>)
+    target_link_options(StereoLoom PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
 endif()
 
-target_include_directories(SRLoom PRIVATE
+target_include_directories(StereoLoom PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${SHADER_OUT_DIR}          # (the build-time compiled shader headers)
     ${CMAKE_SOURCE_DIR}/third_party
@@ -261,13 +265,13 @@ target_include_directories(SRLoom PRIVATE
     ${SR_INCLUDE_DIRS}
 )
 
-target_compile_definitions(SRLoom PRIVATE
+target_compile_definitions(StereoLoom PRIVATE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
     _CRT_SECURE_NO_WARNINGS
 )
 
-target_link_libraries(SRLoom PRIVATE
+target_link_libraries(StereoLoom PRIVATE
     ${SR_IMPORT_LIBS}
     ${SR_THIRD_PARTY_LIBS}
     d3d11
@@ -282,27 +286,61 @@ target_link_libraries(SRLoom PRIVATE
     windowsapp    # Windows.Graphics.Capture (WinRT)
 )
 
-# SRLoom embeds NPClient64.dll as RCDATA, which only resolves at RC compile
+# StereoLoom embeds NPClient64.dll as RCDATA, which only resolves at RC compile
 # time if the DLL is already on disk. Building NPClient64 first guarantees
-# the POST_BUILD copy to assets/npclient/ has run by the time SRLoom starts.
-add_dependencies(SRLoom NPClient64)
+# the POST_BUILD copy to assets/npclient/ has run by the time StereoLoom starts.
+add_dependencies(StereoLoom NPClient64)
+
+# The SR runtime's DLLs (installed with the SR Platform) are delay-loaded, so
+# Stereo Loom starts on a PC without them and offers its other display outputs
+# (anaglyph, side by side, Zondision ...). SRWeaver::RuntimePresent checks they
+# are there before anything of the SR SDK is called.
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    target_link_libraries(StereoLoom PRIVATE delayimp)
+    foreach(SRDLL SimulatedRealityCore SimulatedRealityDirectX SimulatedRealityDisplays SimulatedRealityFaceTrackers simulatedreality DimencoWeaving)
+        target_link_options(StereoLoom PRIVATE /DELAYLOAD:${SRDLL}.dll)
+    endforeach()
+endif()
+
+# ZimoAdapter.dll: Stereo Loom's link to a Zondision display (adapters/zimo). Built
+# where Zondision's 3DS SDK has been unpacked into lib/Zondision (it is not
+# redistributed in this repository). The adapter holds the app key (see
+# ZimoAdapter.cpp); it and the SDK's 3DS_SDK.dll + jsoncpp.dll go beside the exe.
+file(GLOB ZIMO_SDK_DIRS LIST_DIRECTORIES true "${CMAKE_SOURCE_DIR}/lib/Zondision/3DS_CSDK_V*")
+list(SORT ZIMO_SDK_DIRS)
+list(REVERSE ZIMO_SDK_DIRS)
+list(LENGTH ZIMO_SDK_DIRS ZIMO_SDK_N)
+if(ZIMO_SDK_N GREATER 0 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    list(GET ZIMO_SDK_DIRS 0 ZIMO_SDK_DIR)
+    message(STATUS "Stereo Loom: Zondision SDK at ${ZIMO_SDK_DIR}")
+    add_library(ZimoAdapter SHARED adapters/zimo/ZimoAdapter.cpp adapters/zimo/ZimoAdapter.h)
+    target_include_directories(ZimoAdapter PRIVATE "${ZIMO_SDK_DIR}/inc" "${CMAKE_SOURCE_DIR}/adapters/zimo")
+    target_compile_definitions(ZimoAdapter PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    set_target_properties(ZimoAdapter PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>")   # (beside the exe)
+    add_dependencies(StereoLoom ZimoAdapter)
+    add_custom_command(TARGET ZimoAdapter POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ZIMO_SDK_DIR}/libs/release/x64/3DS_SDK.dll"
+            "${ZIMO_SDK_DIR}/libs/release/x64/jsoncpp.dll"
+            "$<TARGET_FILE_DIR:StereoLoom>")
+endif()
 
 # The neural stereo matcher for still pictures (an experiment, src/NeuralDepth):
 # only where ONNX Runtime and DirectML have been unpacked into lib/onnxruntime
 # (the NuGet packages Microsoft.ML.OnnxRuntime.DirectML and Microsoft.AI.DirectML).
-# The DLL is delay-loaded, so SR Loom starts the same where it is missing.
+# The DLL is delay-loaded, so Stereo Loom starts the same where it is missing.
 set(ORT_DIR "${CMAKE_SOURCE_DIR}/lib/onnxruntime")
 if(EXISTS "${ORT_DIR}/ort/build/native/include/onnxruntime_cxx_api.h" AND EXISTS "${ORT_DIR}/dml/bin/x64-win/DirectML.dll")
-    target_compile_definitions(SRLoom PRIVATE SRLOOM_NEURAL)
-    target_include_directories(SRLoom PRIVATE "${ORT_DIR}/ort/build/native/include")
-    target_link_libraries(SRLoom PRIVATE "${ORT_DIR}/ort/runtimes/win-x64/native/onnxruntime.lib" delayimp)
-    target_link_options(SRLoom PRIVATE /DELAYLOAD:onnxruntime.dll)
-    add_custom_command(TARGET SRLoom POST_BUILD
+    target_compile_definitions(StereoLoom PRIVATE SRLOOM_NEURAL)
+    target_include_directories(StereoLoom PRIVATE "${ORT_DIR}/ort/build/native/include")
+    target_link_libraries(StereoLoom PRIVATE "${ORT_DIR}/ort/runtimes/win-x64/native/onnxruntime.lib" delayimp)
+    target_link_options(StereoLoom PRIVATE /DELAYLOAD:onnxruntime.dll)
+    add_custom_command(TARGET StereoLoom POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${ORT_DIR}/ort/runtimes/win-x64/native/onnxruntime.dll"
             "${ORT_DIR}/ort/runtimes/win-x64/native/onnxruntime_providers_shared.dll"
             "${ORT_DIR}/dml/bin/x64-win/DirectML.dll"
-            "$<TARGET_FILE_DIR:SRLoom>")
+            "$<TARGET_FILE_DIR:StereoLoom>")
 endif()
 
 # Nothing to copy beside the exe: the UI fonts are embedded as resources (app.rc) and
@@ -326,7 +364,7 @@ endif()
 # captest: zero-copy capture against the real Windows capture (its own test
 # window + the monitor it's on; prints numbers only). Built only on request:
 # cmake --build ... --target captest. Output in its own folder so its log
-# lines don't land in SR Loom's srweaver.log.
+# lines don't land in Stereo Loom's srweaver.log.
 add_executable(captest EXCLUDE_FROM_ALL tools/captest/captest.cpp src/Capture.cpp src/Converter.cpp ${CONVERTER_SHADER_HEADERS})
 target_include_directories(captest PRIVATE ${CMAKE_SOURCE_DIR}/src ${SHADER_OUT_DIR})
 target_compile_definitions(captest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
@@ -376,6 +414,14 @@ add_executable(splatlab EXCLUDE_FROM_ALL tools/splatlab/splatlab.cpp)
 target_compile_definitions(splatlab PRIVATE NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
 target_link_libraries(splatlab PRIVATE windowscodecs ole32)
 
+
+# outtest: Stereo Loom's own display outputs (anaglyph, side by side, interleaved
+# ...) drawn off the screen and checked. Not part of the app:
+#   cmake --build build/x64 --config Release --target outtest
+add_executable(outtest EXCLUDE_FROM_ALL tools/outtest/outtest.cpp src/OutputEncoder.cpp)
+target_include_directories(outtest PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(outtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+target_link_libraries(outtest PRIVATE d3d11 dxgi d3dcompiler)
 
 # looktest: look-around on the GPU, off the screen, scored against a quilt's own
 # views (as tools/splatlab scores the CPU version). Not part of the app:

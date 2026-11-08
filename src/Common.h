@@ -24,7 +24,7 @@
 
 namespace srw
 {
-    // Current SR Loom version. Compared (after stripping any leading 'v') to
+    // Current Stereo Loom version. Compared (after stripping any leading 'v') to
     // the GitHub Releases latest-tag by the update checker. Bump in lockstep
     // with the git tag for new releases.
     constexpr const char* kAppVersion = "3.1";
@@ -40,6 +40,32 @@ namespace srw
         WindowOverlay,  // borderless click-through overlay tracking a source window
         LookingGlass    // movable see-through loupe weaving the screen beneath it
     };
+
+    // What the two eyes become on the display (Settings DisplayOutput). SR: the Leia
+    // SR weave (Samsung Odyssey 3D, Acer SpatialLabs and the rest). Zondision: side by
+    // side on a Zondision display (the Zimo M1), which weaves it itself once its SDK
+    // has switched it to 3D. The others are drawn by Stereo Loom (OutputEncoder) on any
+    // display, for glasses or a 3D TV. (Stored as numbers: keep the order.)
+    enum class DisplayOutput
+    {
+        SR = 0,
+        Zondision,
+        Anaglyph,
+        SideBySide,         // left | right, each eye squeezed to half the width (a 3D TV's "SBS")
+        TopAndBottom,       // left over right, each eye half the height
+        RowInterleaved,     // alternate rows (passive / polarised 3D displays)
+        ColumnInterleaved,  // alternate columns
+        Checkerboard,       // alternate pixels (DLP 3D)
+        Count
+    };
+    inline const char* DisplayOutputName(DisplayOutput o)
+    {
+        static const char* const names[] = {
+            "Leia SR", "Zondision", "Anaglyph", "Side-by-Side", "Top-and-Bottom",
+            "Row Interleaved", "Column Interleaved", "Checkerboard" };
+        const int i = (int)o;
+        return i >= 0 && i < (int)DisplayOutput::Count ? names[i] : "?";
+    }
 
     // What the weaver is currently weaving. Katanga used to live here as a
     // 4th source kind; it moved to StereoFormat (an "external stereo input"
@@ -276,7 +302,7 @@ namespace srw
         if (ms <= 15.0) return;
         const char* from = (sendFlags & ISMEX_SEND)   ? "sent by another thread or program"
                          : (sendFlags & ISMEX_NOTIFY) ? "notification from another thread"
-                         : "from SR Loom's own thread";
+                         : "from Stereo Loom's own thread";
         Log("Hitch: %s window message 0x%04X (wParam 0x%llX), %s, took %.1f ms",
             window, msg, (unsigned long long)wp, from, ms);
     }
@@ -423,7 +449,7 @@ namespace srw
     // Show a modal error box (used for unrecoverable startup failures).
     inline void ShowError(const char* msg)
     {
-        ::MessageBoxA(nullptr, msg, "SR Loom", MB_ICONERROR | MB_OK);
+        ::MessageBoxA(nullptr, msg, "Stereo Loom", MB_ICONERROR | MB_OK);
 #ifdef _DEBUG
         ::OutputDebugStringA(msg);
         ::OutputDebugStringA("\n");

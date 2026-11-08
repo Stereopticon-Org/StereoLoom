@@ -5,6 +5,8 @@
 #include <algorithm>
 #include "Settings.h"
 #include "SamsungHub.h"   // run-at-startup / start-in-tray persistence
+#include "SRWeaver.h"     // (Display Output: is the SR Platform here)
+#include "Zondision.h"
 #include "resource.h"   // IDI_TRAY (app icon)
 
 #include "imgui.h"
@@ -885,7 +887,7 @@ bool Gui::Render(GuiState& state)
     // Full-window panel.
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-    ImGui::Begin("SR Loom", nullptr,
+    ImGui::Begin("Stereo Loom", nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                  ImGuiWindowFlags_NoBringToFrontOnFocus);
@@ -931,7 +933,7 @@ bool Gui::Render(GuiState& state)
                 const ImVec2 ip = ImGui::GetCursorScreenPos();
                 ImGui::InvisibleButton("##info", ImVec2(h, h));
                 const bool hov = ImGui::IsItemHovered();
-                if (hov) ImGui::SetTooltip("About SR Loom");
+                if (hov) ImGui::SetTooltip("About Stereo Loom");
                 if (ImGui::IsItemClicked()) ImGui::OpenPopup("About");
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 const ImVec2 ic(ip.x + h * 0.5f, ip.y + h * 0.5f);
@@ -945,7 +947,7 @@ bool Gui::Render(GuiState& state)
                 if (ImGui::BeginPopup("About"))
                 {
                     ImGui::PushFont(m_fontLarge);
-                    ImGui::TextUnformatted("SR Loom");
+                    ImGui::TextUnformatted("Stereo Loom");
                     ImGui::PopFont();
                     const float nameBottom = ImGui::GetItemRectMax().y;
                     ImGui::SameLine();
@@ -1085,7 +1087,7 @@ bool Gui::Render(GuiState& state)
         ImGui::SetCursorPos(ImVec2(0.0f, headerH + 4.0f * m_dpiScale - py));
     }
 
-    // Update banner: a newer SR Loom release is on GitHub. Full-width accent
+    // Update banner: a newer Stereo Loom release is on GitHub. Full-width accent
     // button above the hero, in both compact and expanded layouts; opens the
     // release page. Hidden when up to date.
     if (!state.updateTag.empty())
@@ -1102,7 +1104,7 @@ bool Gui::Render(GuiState& state)
             post(ID_TRAY_OPEN_UPDATE);
         ImGui::PopStyleColor(4);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Open the SR Loom %s release page on GitHub", state.updateTag.c_str());
+            ImGui::SetTooltip("Open the Stereo Loom %s release page on GitHub", state.updateTag.c_str());
         ImGui::Dummy(ImVec2(0, 2.0f * m_dpiScale));
     }
 
@@ -2125,7 +2127,7 @@ bool Gui::Render(GuiState& state)
                     if (ImGui::Checkbox("FreeTrack 2.0", &state.freeTrackEnabled))
                         state.openTrackChanged = true;
                     // TrackIR row. The NPClient DLL is now embedded in
-                    // SRLoom.exe and extracted at first launch, so this
+                    // StereoLoom.exe and extracted at first launch, so this
                     // checkbox is always live -- no install hint needed.
                     if (ImGui::Checkbox("TrackIR", &state.trackIREnabled))
                         state.openTrackChanged = true;
@@ -2331,10 +2333,10 @@ bool Gui::Render(GuiState& state)
                         if (ImGui::Selectable(kDepth[k], m_lookDepth == k)) { m_lookDepth = k; Settings::WriteLookDepth(k); }
                     ImGui::EndCombo();
                 }
-                tip("Where Gaussian Splats gets its depth. Built-in: SR Loom's own fast matcher, on everything. Neural: a trained "
+                tip("Where Gaussian Splats gets its depth. Built-in: Stereo Loom's own fast matcher, on everything. Neural: a trained "
                     "stereo network with far cleaner outlines (see Live Depth for when it is used). "
                     "Neural + Built-in takes whichever fits better "
-                    "at each point. The neural options need the network's files beside SR Loom. Applies straight away.");
+                    "at each point. The neural options need the network's files beside Stereo Loom. Applies straight away.");
                 // The model and the size it is run at. A file in the neural folder is "<model> <W>x<H>.onnx":
                 // the model list has each model once, the resolution list the sizes that model is there at.
                 // (A file with no size in its name is a model that takes any size: it has the one entry.)
@@ -2397,7 +2399,7 @@ bool Gui::Render(GuiState& state)
                 }
                 tip("The neural network's model. Lite Any Stereo H is the most accurate and the default, at 640x352; M is quicker and less accurate; S takes as long as M and is the least accurate; "
                     "Fast-FoundationStereo is the most accurate and takes a second or more a picture. Any model placed in the "
-                    "neural folder beside SR Loom is listed. Applies straight away (a model takes a few seconds to load).");
+                    "neural folder beside Stereo Loom is listed. Applies straight away (a model takes a few seconds to load).");
                 // Second row: the size it is run at; and whether every picture is given to it.
                 char resLabel[48];
                 if (curW > 0) snprintf(resLabel, sizeof(resLabel), "Resolution: %dx%d", curW, curH); else snprintf(resLabel, sizeof(resLabel), "Resolution: Any");
@@ -2432,7 +2434,7 @@ bool Gui::Render(GuiState& state)
                 }
                 tip("On: the neural network is given every picture it has time for, so moving pictures and games use its "
                     "depth too (each answer arrives a little late, which can show at fast-moving edges). Off: it is used only "
-                    "once a picture has stopped changing, and SR Loom's own matcher while it moves. Applies straight away.");
+                    "once a picture has stopped changing, and Stereo Loom's own matcher while it moves. Applies straight away.");
                 // Third row: the painted background.
                 if (pairToggle2("Paint Background", m_lookPaint, halfW))
                 {
@@ -2668,7 +2670,7 @@ bool Gui::Render(GuiState& state)
                     ImGui::BeginTooltip();
                     ImGui::PushTextWrapPos(maxW - 14.0f * m_dpiScale);
                     ImGui::TextUnformatted(visFmt
-                        ? "Automatic Detection: SR Loom looks at the picture itself for the layout (experimental). Click to go back to the profile's saved format."
+                        ? "Automatic Detection: Stereo Loom looks at the picture itself for the layout (experimental). Click to go back to the profile's saved format."
                         : autoFmt
                         ? "The stereo format is worked out from the window title (HSBS, HTAB, _2x1, MVC, anaglyph, etc.); the profile's saved format is the fallback when nothing is recognised. Click for Automatic Detection instead."
                         : "Always use the profile's saved format. Click to work the format out from the window title instead (recommended for media players / browsers where the file name carries the format).");
@@ -2730,14 +2732,137 @@ bool Gui::Render(GuiState& state)
 
         if (m_settingsOpen)
         {
+        // Display Output: what the two eyes become -- the Leia SR weave, a Zondision
+        // display's, or Stereo Loom's own for glasses and 3D TVs on any display
+        // (Settings DisplayOutput and the rest; main restarts the 3D on a change).
+        subHeader("Display Output", true);
+        {
+            auto otip = [&](const char* text) {
+                if (!ImGui::IsItemHovered()) return;
+                const float maxW = 320.0f * m_dpiScale;
+                ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(maxW, FLT_MAX));
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(maxW - 14.0f * m_dpiScale);
+                ImGui::TextUnformatted(text);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            };
+            // (Read now and then -- the registry is not to be asked every frame -- and at once on a change here.)
+            static int s_out = 0, s_colours = 0, s_style = 0, s_age = 0;
+            static bool s_swap = false;
+            static std::wstring s_dev;
+            if (s_age-- <= 0)
+            {
+                s_out = Settings::ReadDisplayOutput(); s_colours = Settings::ReadOutputAnaColours();
+                s_style = Settings::ReadOutputAnaStyle(); s_swap = Settings::ReadOutputSwapEyes();
+                s_dev = Settings::ReadOutputDisplay(); s_age = 60;
+            }
+            const float labelW = ImGui::CalcTextSize("Glasses").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+            auto row = [&](const char* label, const char* tipText) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(label);
+                if (tipText) otip(tipText);
+                ImGui::SameLine(labelW);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            };
+            static const char* const kOut[(int)DisplayOutput::Count] = {
+                "Leia SR (default)", "Zondision", "Anaglyph", "Side-by-Side", "Top-and-Bottom",
+                "Row Interleaved", "Column Interleaved", "Checkerboard" };
+            row("Output", "What the 3D is drawn as. Leia SR: an SR display (Samsung Odyssey 3D, Acer SpatialLabs and others). "
+                          "Zondision: a Zondision display such as the Zimo M1. Anaglyph: coloured glasses on any display. "
+                          "Side-by-Side and Top-and-Bottom: a 3D TV or projector in its 3D mode. Interleaved and Checkerboard: "
+                          "passive (polarised) and DLP 3D displays. Changing it restarts the 3D for a moment.");
+            const int cur = (s_out >= 0 && s_out < (int)DisplayOutput::Count) ? s_out : 0;
+            if (ImGui::BeginCombo("##dispout", kOut[cur]))
+            {
+                for (int k = 0; k < (int)DisplayOutput::Count; ++k)
+                    if (ImGui::Selectable(kOut[k], k == cur)) { s_out = k; Settings::WriteDisplayOutput(k); }
+                ImGui::EndCombo();
+            }
+            if (cur != (int)DisplayOutput::SR)
+            {
+                // (The displays, cached: QueryDisplayConfig behind the names is slow.)
+                static std::vector<MonEntry> s_outMons;
+                static DWORD s_outMonsAt = 0;
+                if (s_outMons.empty() || GetTickCount() - s_outMonsAt > 2000)
+                {
+                    s_outMons.clear();
+                    EnumDisplayMonitors(nullptr, nullptr, MonEnumProc, reinterpret_cast<LPARAM>(&s_outMons));
+                    ResolveDisplayNames(s_outMons);
+                    s_outMonsAt = GetTickCount();
+                }
+                char devA[64] = {};
+                WideCharToMultiByte(CP_UTF8, 0, s_dev.c_str(), -1, devA, sizeof(devA) - 1, nullptr, nullptr);
+                const char* devLabel = cur == (int)DisplayOutput::Zondision ? "Automatic (the Zondision display)" : "Automatic (primary)";
+                for (const MonEntry& m : s_outMons) if (devA[0] && _stricmp(m.gdi, devA) == 0) devLabel = m.label;
+                row("Display", "Which display the 3D goes to.");
+                if (ImGui::BeginCombo("##outdisp", devLabel))
+                {
+                    if (ImGui::Selectable(cur == (int)DisplayOutput::Zondision ? "Automatic (the Zondision display)" : "Automatic (primary)", !devA[0]))
+                    { s_dev.clear(); Settings::WriteOutputDisplay(s_dev); }
+                    for (int i = 0; i < (int)s_outMons.size(); ++i)
+                    {
+                        ImGui::PushID(i);
+                        if (ImGui::Selectable(s_outMons[i].label, devA[0] && _stricmp(s_outMons[i].gdi, devA) == 0))
+                        {
+                            wchar_t w[64] = {};
+                            MultiByteToWideChar(CP_UTF8, 0, s_outMons[i].gdi, -1, w, 63);
+                            s_dev = w; Settings::WriteOutputDisplay(s_dev);
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+            if (cur == (int)DisplayOutput::Anaglyph)
+            {
+                static const char* const kColours[3] = { "Red / Cyan", "Green / Magenta", "Amber / Blue" };
+                row("Glasses", "The colours of your glasses' lenses, left eye first. If the depth looks inside out, "
+                               "turn on Swap Eyes.");
+                if (ImGui::BeginCombo("##outanacol", kColours[s_colours]))
+                {
+                    for (int k = 0; k < 3; ++k)
+                        if (ImGui::Selectable(kColours[k], k == s_colours)) { s_colours = k; Settings::WriteOutputAnaColours(k); }
+                    ImGui::EndCombo();
+                }
+                static const char* const kStyles[4] = { "Optimised", "Colour", "Half Colour", "Grey" };
+                row("Colour", "Optimised: the least ghosting for red / cyan glasses (Dubois); for other glasses, Half Colour. "
+                              "Colour keeps the most colour but ghosts more; Grey ghosts least and has none.");
+                if (ImGui::BeginCombo("##outanastyle", kStyles[s_style]))
+                {
+                    for (int k = 0; k < 4; ++k)
+                        if (ImGui::Selectable(kStyles[k], k == s_style)) { s_style = k; Settings::WriteOutputAnaStyle(k); }
+                    ImGui::EndCombo();
+                }
+            }
+            if (cur != (int)DisplayOutput::SR)
+            {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted("Swap Eyes");
+                otip("Each eye gets the other's picture: for glasses or a display that starts with the right eye.");
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(ImGui::GetWindowWidth() - RowToggleW() - ImGui::GetStyle().WindowPadding.x);
+                if (ToggleSwitch("##outswap", s_swap)) { s_swap = !s_swap; Settings::WriteOutputSwapEyes(s_swap); }
+            }
+            if (cur == (int)DisplayOutput::Zondision)
+            {
+                static int s_zAge = 0; static bool s_zOk = false, s_zDisp = false;
+                if (s_zAge-- <= 0) { s_zOk = Zondision::Available(); RECT r{}; s_zDisp = s_zOk && Zondision::FindDisplay(r); s_zAge = 120; }
+                if (!s_zOk)        ImGui::TextDisabled("Zondision's software (3DS) or ZimoAdapter.dll not found.");
+                else if (!s_zDisp) ImGui::TextDisabled("No Zondision display found.");
+            }
+            else if (cur == (int)DisplayOutput::SR && !SRWeaver::RuntimePresent())
+                ImGui::TextDisabled("No SR Platform on this PC: Anaglyph (or a Zondision display) is used instead.");
+        }
+
         // Acer SpatialLabs: surface Acer's auto-detect registry toggles when an
-        // Acer display is present. Those auto-detects tend to fight SR Loom (auto-
+        // Acer display is present. Those auto-detects tend to fight Stereo Loom (auto-
         // switching 2D/3D by focus, or auto-engaging on fullscreen apps), so giving
         // the user a one-click off here removes a common class of flicker reports.
         // Writes go to HKLM and need admin; if denied, offer a Restart-as-admin link.
         if (AcerSpatialLabs::Available())
         {
-            subHeader("SpatialLabs", true);
+            subHeader("SpatialLabs", false);
 
             // Label + right-aligned toggle inside a given column width. Used for
             // the side-by-side two-toggles-per-row layout in both Acer and Startup.
@@ -2792,8 +2917,8 @@ bool Gui::Render(GuiState& state)
                     ImGui::TextWrapped("Changing these writes to HKLM and needs admin.");
                     ImGui::PopStyleColor();
                     ImGui::PushStyleColor(ImGuiCol_Text, g_accent);
-                    if (ImGui::Selectable("Restart SR Loom as administrator", false, 0,
-                                          ImGui::CalcTextSize("Restart SR Loom as administrator")))
+                    if (ImGui::Selectable("Restart Stereo Loom as administrator", false, 0,
+                                          ImGui::CalcTextSize("Restart Stereo Loom as administrator")))
                     {
                         char exe[MAX_PATH] = {};
                         GetModuleFileNameA(nullptr, exe, (DWORD)sizeof(exe));
@@ -2818,7 +2943,7 @@ bool Gui::Render(GuiState& state)
         const bool samsung = s_hubPopup != -2;
         if (samsung)
         {
-            subHeader("Samsung Odyssey 3D", !AcerSpatialLabs::Available());
+            subHeader("Samsung Odyssey 3D", false);
             auto pairToggle2 = [&](const char* label, bool on, float colW) -> bool {
                 const float startX = ImGui::GetCursorPosX();
                 ImGui::AlignTextToFramePadding();
@@ -2849,11 +2974,11 @@ bool Gui::Render(GuiState& state)
                 s_hubNext = GetTickCount() + 1000;   // (read again soon after)
             }
             tip("Samsung Odyssey 3D Hub's popup that offers to convert fullscreen video and games to 3D. "
-                "Turn it off so it does not cover what SR Loom is weaving; turning it back on restores "
-                "Hub's preferences as they were before SR Loom changed them. Hub must be running, and "
+                "Turn it off so it does not cover what Stereo Loom is weaving; turning it back on restores "
+                "Hub's preferences as they were before Stereo Loom changed them. Hub must be running, and "
                 "Windows may ask for administrator approval. Thanks to Odyssey Stereo Controls by "
                 "AlonBorodAHub for working out how.");
-            // Hub's own 3D games (Unreal Engine games through Samsung's launcher): side by side for SR Loom.
+            // Hub's own 3D games (Unreal Engine games through Samsung's launcher): side by side for Stereo Loom.
             ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
             const bool gamesOn = s_hubGames == 1;
             if (s_hubGames < 0) ImGui::BeginDisabled();
@@ -2867,13 +2992,13 @@ bool Gui::Render(GuiState& state)
                 ? "No Samsung 3D games found yet. Hub's game launcher keeps a settings file for each game once it "
                   "has run; play one through Hub once, then come back."
                 : "Samsung's own 3D games (the Unreal Engine games Hub launches) show side by side instead of "
-                  "being woven by Samsung, so SR Loom can weave them, with its head tracking, look-around and "
+                  "being woven by Samsung, so Stereo Loom can weave them, with its head tracking, look-around and "
                   "settings. Changes each game's own Samsung settings (only the side-by-side setting, and the "
                   "desktop recording fix, which fights it); turning it off puts back what each game had. "
                   "Applies the next time each game starts.");
         }
 
-        subHeader("Startup", !AcerSpatialLabs::Available() && !samsung);
+        subHeader("Startup", false);
         {
             // Both are tiny HKCU registry settings; run-at-startup just adds/removes
             // our exe from the Run key (no elevation needed), and start-in-tray
@@ -2919,7 +3044,7 @@ bool Gui::Render(GuiState& state)
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(maxW - 14.0f * m_dpiScale);
                 ImGui::TextUnformatted(
-                    "When on (default), SR Loom turns on OpenTrack / FreeTrack / "
+                    "When on (default), Stereo Loom turns on OpenTrack / FreeTrack / "
                     "TrackIR head-tracking output at launch so games see head "
                     "movement immediately. Turn off to keep the SR camera idle "
                     "until you enable a protocol from the HEADTRACKING section.");
@@ -2939,7 +3064,7 @@ bool Gui::Render(GuiState& state)
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(maxW - 14.0f * m_dpiScale);
                 ImGui::TextUnformatted(
-                    "When on (default), SR Loom automatically shows anything sent to it "
+                    "When on (default), Stereo Loom automatically shows anything sent to it "
                     "over Katanga in 3D -- games using Katanga, or bridges like the "
                     "3D Slicer extension. Fullscreen games fill the SR display; windowed "
                     "ones get the 3D right over their window. Your previous setup comes "
@@ -3054,10 +3179,10 @@ bool Gui::Render(GuiState& state)
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(maxW - 14.0f * m_dpiScale);
                 ImGui::TextUnformatted(
-                    "When on (default), SR Loom shows the 3D through DirectComposition: "
+                    "When on (default), Stereo Loom shows the 3D through DirectComposition: "
                     "lower latency, and the taskbar / 2D windows / Auto Stereo pictures "
                     "are cut out in the same frame as the picture. Turn off if the SR "
-                    "display flickers or blanks. Restart SR Loom to apply.");
+                    "display flickers or blanks. Restart Stereo Loom to apply.");
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }
@@ -3106,17 +3231,17 @@ bool Gui::Render(GuiState& state)
                 m_gpuRealtime = !m_gpuRealtime;
                 Settings::WriteGpuRealtime(m_gpuRealtime);
             }
-            tip("Experimental. Asks Windows to run SR Loom's graphics work ahead of everything else, "
+            tip("Experimental. Asks Windows to run Stereo Loom's graphics work ahead of everything else, "
                 "which can keep the 3D smooth while a game uses the whole GPU. Windows only allows it "
-                "when SR Loom is run as administrator; otherwise SR Loom keeps its usual high priority. "
-                "Applies the next time SR Loom starts.");
+                "when Stereo Loom is run as administrator; otherwise Stereo Loom keeps its usual high priority. "
+                "Applies the next time Stereo Loom starts.");
             ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
             if (pairToggle2("Straight to Display", m_autoPlaneOn, halfW))
             {
                 m_autoPlaneOn = !m_autoPlaneOn;
                 Settings::WriteAutoPlane(m_autoPlaneOn);
             }
-            tip("While the 3D covers the whole screen with nothing showing through it, SR Loom bypasses "
+            tip("While the 3D covers the whole screen with nothing showing through it, Stereo Loom bypasses "
                 "Windows' compositor so the 3D follows your head more closely, and switches back when the "
                 "taskbar, the pointer or a window needs to show. Turn it off if the screen flickers at "
                 "those moments. Applies straight away.");
@@ -3251,7 +3376,7 @@ LRESULT Gui::WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     // No typing into the panel: keys and characters don't reach ImGui (it
     // would otherwise turn Ctrl+click on a slider into a text box, etc.).
-    // SR Loom's shortcuts are global hotkeys, handled elsewhere; Windows'
+    // Stereo Loom's shortcuts are global hotkeys, handled elsewhere; Windows'
     // own keys (Alt+F4, ...) still work through DefWindowProc.
     const bool keyMsg = (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) || msg == WM_IME_CHAR;
     if (!keyMsg && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))

@@ -1,4 +1,4 @@
-// looktest: SR Loom's look-around (src/LookAround, shaders/Look.hlsl) run on
+// looktest: Stereo Loom's look-around (src/LookAround, shaders/Look.hlsl) run on
 // the GPU, off the screen, and scored the way tools/splatlab scores its CPU
 // version: two views of a Looking Glass quilt are the "two eyes"; every view
 // between them and to either side is made and compared with the quilt's own.
@@ -99,7 +99,7 @@ static int RunSbs(const wchar_t* file, const std::wstring& outdir)
     if (const wchar_t* fe = _wgetenv(L"LOOKTEST_FUSEEDGE")) look.SetFuseEdge(_wtoi(fe) != 0);
     if (const wchar_t* fr = _wgetenv(L"LOOKTEST_FUSEREACH")) look.SetFuseReach((float)_wtof(fr));
     if (const wchar_t* xd = _wgetenv(L"LOOKTEST_DILATE")) look.SetExternalDilate(_wtoi(xd));
-    // LOOKTEST_NEURAL: the trained matcher as SR Loom runs it (src/NeuralDepth: ONNX Runtime, the model
+    // LOOKTEST_NEURAL: the trained matcher as Stereo Loom runs it (src/NeuralDepth: ONNX Runtime, the model
     // beside the exe), on this picture -- its depth in place of the look-around's own.
     NeuralDepth neural; ID3D11Texture2D* neuralTex = nullptr;
     if (_wgetenv(L"LOOKTEST_NEURAL"))
@@ -357,7 +357,7 @@ static int RunMb(const std::wstring& dir)
     if (const wchar_t* fr = _wgetenv(L"LOOKTEST_FUSEREACH")) look.SetFuseReach((float)_wtof(fr));
     if (const wchar_t* xd = _wgetenv(L"LOOKTEST_DILATE")) look.SetExternalDilate(_wtoi(xd));
     if (const wchar_t* dp = _wgetenv(L"LOOKTEST_DUMPPAIR")) { SavePNG(std::wstring(dp) + L"/left.png", a, (UINT)ew, (UINT)eh); SavePNG(std::wstring(dp) + L"/right.png", b, (UINT)ew, (UINT)eh); }
-    // LOOKTEST_NEURAL: the trained matcher's depth, as SR Loom gets it (LOOKTEST_MODEL: which).
+    // LOOKTEST_NEURAL: the trained matcher's depth, as Stereo Loom gets it (LOOKTEST_MODEL: which).
     NeuralDepth neural; ID3D11Texture2D* neuralTex = nullptr;
     if (_wgetenv(L"LOOKTEST_NEURAL"))
     {
@@ -449,7 +449,7 @@ static int RunMb(const std::wstring& dir)
     return 0;
 }
 
-// The live path as SR Loom's loop runs it, without SR Loom: the picture made small and read back without
+// The live path as Stereo Loom's loop runs it, without Stereo Loom: the picture made small and read back without
 // waiting, handed to the trained matcher, each answer and each painted background taken as it comes, a
 // new view drawn every loop -- for some seconds, with the head swaying. Prints how many answers and
 // backgrounds came, how long each took, and how bright the output is (a black or broken output shows as
@@ -500,7 +500,7 @@ static int RunLive(const wchar_t* file)
         bool fresh = true;
         if (videoFps > 0.0) { const double ts = (double)(GetTickCount64() - t0) / 1000.0; fresh = ts >= nextPicture; if (fresh) nextPicture = ts + 1.0 / videoFps; }
         if (fresh) ++serial;
-        static unsigned submitted = 0;   // (as SR Loom: a picture is handed over once)
+        static unsigned submitted = 0;   // (as Stereo Loom: a picture is handed over once)
         if (!copying && neural.Remaining() <= 14.0 && submitted != serial && ((submitted = serial), true))
         {
             neural.NetSize(aspect, 736, nw, nh);
@@ -563,7 +563,7 @@ static int RunLive(const wchar_t* file)
         if (const wchar_t* rh = _wgetenv(L"LOOKTEST_RHO")) { v.rho = (float)_wtof(rh); v.screenW = 9.5f; v.screenH = 5.3f; v.ty = 0.2f; }
         look.Render(srv, ew, eh, v, fresh);
         ctx->Flush();
-        // (Paced as a display paces SR Loom -- LOOKTEST_HZ, 160 unless said; 0: as fast as it goes. Unpaced, the
+        // (Paced as a display paces Stereo Loom -- LOOKTEST_HZ, 160 unless said; 0: as fast as it goes. Unpaced, the
         // card's queue is always full and the picture read back waits behind it: no measure of the real thing.)
         {
             static const double hz = _wgetenv(L"LOOKTEST_HZ") ? _wtof(_wgetenv(L"LOOKTEST_HZ")) : 160.0;
@@ -690,7 +690,7 @@ int wmain(int argc, wchar_t** argv)
     if (const wchar_t* fr = _wgetenv(L"LOOKTEST_FUSEREACH")) look.SetFuseReach((float)_wtof(fr));
     if (const wchar_t* xd = _wgetenv(L"LOOKTEST_DILATE")) look.SetExternalDilate(_wtoi(xd));
     if (const wchar_t* op = _wgetenv(L"LOOKTEST_OPT")) { float o4[4] = {}; swscanf_s(op, L"%f,%f,%f,%f", &o4[0], &o4[1], &o4[2], &o4[3]); for (int q = 0; q < 4; ++q) look.SetOpt(q, o4[q]); }
-    // LOOKTEST_NEURAL: the trained matcher's depth for the pair, as SR Loom gets it (LOOKTEST_MODEL: which).
+    // LOOKTEST_NEURAL: the trained matcher's depth for the pair, as Stereo Loom gets it (LOOKTEST_MODEL: which).
     NeuralDepth neural; ID3D11Texture2D* neuralTex = nullptr;
     if (_wgetenv(L"LOOKTEST_NEURAL"))
     {

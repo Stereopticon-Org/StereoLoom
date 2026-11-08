@@ -1,6 +1,6 @@
 // Converter shaders: stereo layout conversion, anaglyph recovery.
 // Compiled at BUILD time (CMakeLists.txt, fxc) into headers the app embeds --
-// nothing is compiled when SR Loom starts.
+// nothing is compiled when Stereo Loom starts.
 
 Texture2D    srcTex  : register(t0);   // current source frame
 Texture2D    srcPrev : register(t1);   // delayed source frame (Pulfrich time delay)

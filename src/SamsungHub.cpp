@@ -180,7 +180,7 @@ namespace
         {
             auto it = want.find(f);
             if (it == want.end()) { msg = std::string("This version of Samsung Hub is not supported (no ") + f + " setting)."; return 1; }
-            if (it->second.find_first_of("/\r\n\x01") != std::string::npos) { msg = "Samsung Hub's settings are in a form SR Loom does not know."; return 1; }
+            if (it->second.find_first_of("/\r\n\x01") != std::string::npos) { msg = "Samsung Hub's settings are in a form Stereo Loom does not know."; return 1; }
             line += "/" + it->second;
         }
         line += "\r\n";
@@ -300,7 +300,7 @@ namespace SamsungHub
     {
         const int r = Apply(restore, msg);
         if (r != 2) { Log("Samsung Hub popup %s: %s", restore ? "restore" : "off", msg.c_str()); return r == 0; }
-        // Hub's pipe takes only an administrator: SR Loom once more, elevated, for just this.
+        // Hub's pipe takes only an administrator: Stereo Loom once more, elevated, for just this.
         wchar_t exe[MAX_PATH] = {};
         GetModuleFileNameW(nullptr, exe, MAX_PATH);
         const std::wstring args = std::wstring(L"--hub-popup ") + (restore ? L"restore " : L"disable ") + UserSid();
@@ -383,7 +383,7 @@ namespace SamsungHub
         }
         if (games == 0) msg = "No Samsung 3D games were found (Hub's game launcher keeps a settings file for each game once it has run).";
         else if (failed) msg = "Some games' settings could not be changed (" + std::to_string(failed) + "). Close those games and try again.";
-        else msg = on ? "Samsung's 3D games will show side by side for SR Loom the next time each starts (" + std::to_string(games) + " found)."
+        else msg = on ? "Samsung's 3D games will show side by side for Stereo Loom the next time each starts (" + std::to_string(games) + " found)."
                       : "Samsung's 3D games are back to their own settings from the next time each starts.";
         Log("Samsung Hub games side by side %s: %d games, %d changed, %d failed", on ? "on" : "off", games, changed, failed);
         return games > 0 && failed == 0;
@@ -397,7 +397,7 @@ namespace SamsungHub
         std::string msg;
         int r = 1;
         // (The same Windows account must approve: its settings are the ones to change.)
-        if (Narrow(UserSid()) != sid) msg = "Approve with the same Windows account that runs SR Loom.";
+        if (Narrow(UserSid()) != sid) msg = "Approve with the same Windows account that runs Stereo Loom.";
         else
         {
             r = Apply(strcmp(what, "restore") == 0, msg);

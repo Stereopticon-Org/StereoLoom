@@ -1,5 +1,5 @@
 // splatlab: the look-around experiment, offline (see lib\"Real-time Gaussian
-// splats from stereo for SR Loom.md", Phase 0). Two views of a scene go in;
+// splats from stereo for Stereo Loom.md", Phase 0). Two views of a scene go in;
 // views from other places come out, by three methods, and each is scored
 // against the real picture from that place.
 //
@@ -89,7 +89,7 @@ static inline float MapAt(const Map& m, float x, float y)
 }
 
 // ---- Disparity between two full-colour views --------------------------------
-// Coarse to fine, as SR Loom's own anaglyph matcher goes: the pictures halved
+// Coarse to fine, as Stereo Loom's own anaglyph matcher goes: the pictures halved
 // three times; at the smallest every disparity in range is tried, and each
 // larger size only looks a little either side of what the size below found --
 // and of what its neighbours found, so a thin thing lost below can be picked up
@@ -524,7 +524,7 @@ static void Put(std::vector<uint8_t>& sheet, int sw, const Img& im, int ox, int 
 
 // ---- An ordinary stereo pair ------------------------------------------------
 // Two real views and nothing else (a game's side-by-side frame, a photo pair):
-// what SR Loom's converter hands on for every two-view format. There is no
+// what Stereo Loom's converter hands on for every two-view format. There is no
 // third view to score against, so each eye is predicted from the OTHER eye
 // alone and compared with the real one -- a whole eye spacing's move, from one
 // view: harder than anything look-around asks. Then views from beside and

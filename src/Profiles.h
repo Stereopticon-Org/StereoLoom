@@ -1,6 +1,6 @@
 // Profiles.h -- per-game auto-apply profile list.
 //
-// A Profile binds {foreground-window match condition} to {SR Loom settings
+// A Profile binds {foreground-window match condition} to {Stereo Loom settings
 // to apply when that window comes forward}. The match condition is:
 //   - exe basename substring (case-insensitive), and
 //   - window title matched as a regex (ECMAScript, case-insensitive). Plain
@@ -42,7 +42,7 @@ namespace srw
         // in the same viewer/player.
         StereoFormat format         = StereoFormat::HalfSBS;
         bool         useAutoFormat  = false;
-        // format=detect: SR Loom's Automatic Detection (it looks at the picture
+        // format=detect: Stereo Loom's Automatic Detection (it looks at the picture
         // itself for the layout) instead of a fixed format or the title.
         bool         useVisualAuto  = false;
         StereoFormat defaultFormat  = StereoFormat::HalfSBS;
@@ -65,7 +65,7 @@ namespace srw
         int          quiltRightIdx  = -1;
 
         // The display's settings, where the profile gives them (-1: left as
-        // they are). They are SR Loom's own settings, the ones the panel
+        // they are). They are Stereo Loom's own settings, the ones the panel
         // shows: a profile that sets one changes it until something else does.
         int          antiCrosstalk   = -1;  // Anti-Crosstalk strength, % (0-300)
         int          crosstalkMethod = -1;  // 0 the display's default, 1 off, 2 static, 3 dynamic
@@ -94,7 +94,7 @@ namespace srw
         // Returns empty vector if the file doesn't exist or fails to parse.
         std::vector<Profile> Load();
         // When profiles.ini was last written (0: no file): for reading it again
-        // when it is edited outside SR Loom.
+        // when it is edited outside Stereo Loom.
         unsigned long long FileStamp();
 
         // Persist the list back to disk. Overwrites the file. Creates the

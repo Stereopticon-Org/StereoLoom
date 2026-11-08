@@ -8,12 +8,13 @@
 
 namespace srw::Settings
 {
-    // Whether SR Loom is registered to launch on user login (a value in
+    // Whether Stereo Loom is registered to launch on user login (a value in
     // HKCU\Software\Microsoft\Windows\CurrentVersion\Run named SRLoom).
     bool ReadRunAtStartup();
     void WriteRunAtStartup(bool enable);
+    void RepairRunAtStartup();   // (the entry's exe gone -- e.g. SRLoom.exe renamed: this exe instead)
 
-    // Whether SR Loom should start with the control panel hidden (just the
+    // Whether Stereo Loom should start with the control panel hidden (just the
     // tray icon). Default true -- the natural behaviour for a tray-resident
     // utility. When false, the control panel opens on launch.
     bool ReadStartInTray();
@@ -26,17 +27,17 @@ namespace srw::Settings
     bool ReadAutoApplyProfiles();
     void WriteAutoApplyProfiles(bool enable);
 
-    // Whether SR Loom should turn on head-tracking output (OpenTrack UDP +
+    // Whether Stereo Loom should turn on head-tracking output (OpenTrack UDP +
     // FreeTrack + TrackIR) automatically at launch. Default ON so the
     // common case ("I want head tracking in games") works out of the box.
     // Users who don't use head tracking can flip it off in STARTUP and
-    // avoid the SR camera engaging just because SR Loom is running.
+    // avoid the SR camera engaging just because Stereo Loom is running.
     // Stored as DWORD under HKCU\Software\SRLoom\HeadTrackingOnStartup.
     bool ReadHeadTrackingOnStartup();
     void WriteHeadTrackingOnStartup(bool enable);
 
     // Katanga auto-receive: when a game (or bridge, e.g. the 3D Slicer
-    // extension) starts publishing frames over Katanga, SR Loom switches to
+    // extension) starts publishing frames over Katanga, Stereo Loom switches to
     // receiving them automatically, and restores the previous setup when it
     // stops. Default ON. HKCU\Software\SRLoom\KatangaAutoReceive.
     // Present the weave through DirectComposition (default ON): no bit-blt
@@ -76,7 +77,7 @@ namespace srw::Settings
     // conversion, as with DX11. HKCU\Software\SRLoom\AsyncConvert. Read at start-up.
     bool ReadAsyncConvert();
     // The weaver's pipeline latency (how far ahead it predicts the eyes): 0 the
-    // SDK's own figure (default), 1 what SR Loom measures from the weave call to
+    // SDK's own figure (default), 1 what Stereo Loom measures from the weave call to
     // the picture reaching the display (needs the Perf Log on: it is measured
     // there). HKCU\Software\SRLoom\WeaverLatency. Read at start-up.
     int  ReadWeaverLatency();
@@ -104,7 +105,7 @@ namespace srw::Settings
     void WriteAutoPlane(bool on);   // (the panel's toggle: 1 / 0)
     bool ReadAutoPlaneDX12();   // (AutoPlane = 2: not with the Direct3D 12 presenter -- it hung the GPU there once, Renderer::UpdateAutoPlane)
     bool ReadAutoPlaneHold();   // (AutoPlane = 3: an experiment -- straight to the display kept whatever comes up over it)
-    // 1: ask for the GPU scheduler's realtime class (needs SR Loom run as administrator; else High as usual). Default 0. HKCU\Software\SRLoom\GpuRealtime.
+    // 1: ask for the GPU scheduler's realtime class (needs Stereo Loom run as administrator; else High as usual). Default 0. HKCU\Software\SRLoom\GpuRealtime.
     bool ReadGpuRealtime();
     void WriteGpuRealtime(bool on);
     // 1: with the Direct3D 11 weaver, a Half SBS capture (no Convergence, no swap) goes to the weaver as it is -- no conversion pass. An experiment: default 0. WeaveRaw.
@@ -163,11 +164,32 @@ namespace srw::Settings
     // the SR session is next made. HKCU\Software\SRLoom\WeaverChoice.
     int  ReadWeaverChoice();
     void WriteWeaverChoice(int choice);
+    // Display Output: what the two eyes are turned into for the display (DisplayOutput,
+    // Common.h: 0 the Leia SR weave, the rest Stereo Loom's own -- anaglyph, side by
+    // side and so on, or a Zondision display's). DisplayOutput.
+    int  ReadDisplayOutput();
+    void WriteDisplayOutput(int output);
+    // Which display a non-SR output goes to: its Windows device name ("\\.\DISPLAY2");
+    // empty: chosen automatically (a Zondision display where there is one, else the
+    // primary). OutputDisplay.
+    std::wstring ReadOutputDisplay();
+    void WriteOutputDisplay(const std::wstring& device);
+    // Anaglyph output: the glasses' colours (0 red / cyan, 1 green / magenta, 2 amber /
+    // blue) and how colour is kept (0 Optimised, 1 Colour, 2 Half Colour, 3 Grey).
+    // OutputAnaColours, OutputAnaStyle.
+    int  ReadOutputAnaColours();
+    void WriteOutputAnaColours(int v);
+    int  ReadOutputAnaStyle();
+    void WriteOutputAnaStyle(int v);
+    // The eyes the other way round in a non-SR output (glasses or a display that
+    // starts with the other eye). OutputSwapEyes.
+    bool ReadOutputSwapEyes();
+    void WriteOutputSwapEyes(bool on);
     // Anti-crosstalk through the runtime's weaver settings: 0 the display's default,
     // 1 off, 2 static, 3 dynamic; and its strength, % of the display's own amount
     // (0-300). HKCUSoftwareSRLoomWeaverAct / WeaverActStrength.
     // Light field (an experiment; Quilt sources): the Quilt's views interlaced
-    // across the lens by SR Loom, all at once, with no eye tracking -- move the
+    // across the lens by Stereo Loom, all at once, with no eye tracking -- move the
     // head to look around. The lens pitch (pixels) and slant come from the SR
     // runtime unless set here, and the offset slides the views under the lens.
     // HKCU\Software\SRLoom\LightField, LfPitch, LfSlant, LfOffset.

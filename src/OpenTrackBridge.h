@@ -9,7 +9,7 @@
 // Ported from the standalone Simulated Reality OpenTrack Bridge
 // (https://github.com/effcol/leia-track-app-XYZ, MIT). The standalone app
 // was a console-only tuner; this is the in-app version that lives behind
-// a GUI toggle and reuses the SR context SR Loom already has.
+// a GUI toggle and reuses the SR context Stereo Loom already has.
 #pragma once
 
 #include "../third_party/opentrack_pipeline.h"

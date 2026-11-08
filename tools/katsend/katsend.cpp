@@ -1,6 +1,6 @@
 // katsend: a Katanga test sender. Publishes a shared side-by-side texture the
 // way a game with geo-11 (direct_mode = katanga_vr) or the original Katanga
-// does, so SR Loom's receiver can be tried without a game.
+// does, so Stereo Loom's receiver can be tried without a game.
 //
 //   katsend [seconds] [texW texH] [fillW fillH]
 //

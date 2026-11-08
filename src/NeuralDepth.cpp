@@ -10,7 +10,7 @@
 
 #ifdef SRLOOM_NEURAL
 // (onnxruntime.dll is delay-loaded: its API is fetched only once the DLL is
-// known to be there, so SR Loom starts the same without it.)
+// known to be there, so Stereo Loom starts the same without it.)
 #define ORT_API_MANUAL_INIT
 #include <onnxruntime_cxx_api.h>
 #include <dml_provider_factory.h>
@@ -40,7 +40,7 @@ namespace
         static const float mean[3] = { 0.485f, 0.456f, 0.406f }, dev[3] = { 0.229f, 0.224f, 0.225f };
         out.resize((size_t)3 * w * h);
         const size_t pitch = (size_t)eyeW * 2 * 4;
-        // (Already the model's size -- as SR Loom hands it over: a pixel for a pixel, by a table.)
+        // (Already the model's size -- as Stereo Loom hands it over: a pixel for a pixel, by a table.)
         if (eyeW == w && eyeH == h)
         {
             static float lut[3][256]; static bool made = false;
@@ -309,7 +309,7 @@ bool NeuralDepth::Start(const std::wstring& exeDir, const std::wstring& modelFil
     // CUDA libraries, that runtime is the one loaded -- about half as long again as quick as DirectML with
     // the half-precision models, with the card to itself. One runtime to a process: decided the first time.
     // ONLY where asked for (SetAllowTensorRT, or SRLOOM_TRT=1): beside a Direct3D program drawing on the same
-    // card -- which is what SR Loom is -- its answers came SLOWER than DirectML's, 85 to 190 ms against 25,
+    // card -- which is what Stereo Loom is -- its answers came SLOWER than DirectML's, 85 to 190 ms against 25,
     // the two taking turns at the card; and the first weave with it in the process showed a black screen.)
     m_trtDir = exeDir + L"\\neural\\trt";
     {
