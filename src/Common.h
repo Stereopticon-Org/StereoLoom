@@ -30,7 +30,7 @@ namespace srw
     constexpr const char* kAppVersion = "3.1";
 
     // GitHub repo path for the update checker + "About" links.
-    constexpr const char* kRepoSlug = "effcol/SR-Loom";
+    constexpr const char* kRepoSlug = "Stereopticon-Org/SR-Loom";
 
     // How the woven output window is presented.
     enum class OutputMode

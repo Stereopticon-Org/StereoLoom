@@ -47,7 +47,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 namespace
 {
     constexpr char kGuiClass[] = "SRWeaverGuiWindow";
-    constexpr char kGithubUrl[] = "https://github.com/effcol/SR-Loom";
+    constexpr char kGithubUrl[] = "https://github.com/Stereopticon-Org/SR-Loom";
     Gui* g_gui = nullptr;   // single instance, for the static WndProc
 
     // DWMWINDOWATTRIBUTE values (Win11 22000+) — used by number to avoid depending
