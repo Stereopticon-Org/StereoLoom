@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<title>Stereo Loom</title>
+<rect x="0" y="0" width="1024" height="1024" rx="225.3" fill="#F5EFE6"/>
+<g>
+<rect x="298" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#1F1C19"/>
+<rect x="666.6" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#1F1C19"/>
+<path d="M203.6 512 A385.8 385.8 0 0 1 779.5 512 A385.8 385.8 0 0 1 203.6 512 Z" fill="#F5EFE6"/>
+<rect x="727" y="469" width="200.7" height="86" rx="30.7" fill="#F5EFE6"/>
+<path d="M235.5 512 A371.2 371.2 0 0 1 747.5 512 A371.2 371.2 0 0 1 235.5 512 Z" fill="#A55D23"/>
+<rect x="727" y="495.6" width="174.1" height="32.8" rx="16.4" fill="#A55D23"/>
+<rect x="455.7" y="383" width="112.6" height="258" rx="0" fill="#F5EFE6"/>
+<rect x="482.3" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#1F1C19"/>
+</g>
+</svg>

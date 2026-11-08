@@ -1,6 +1,6 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/stereo_loom_dark.png">
-  <img src="assets/stereo_loom_light.png" width="96" alt="Stereo Loom logo">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo/stereo_loom_dark_256.png">
+  <img src="assets/logo/stereo_loom_light_256.png" width="96" alt="Stereo Loom logo">
 </picture>
 
 # Stereo Loom
