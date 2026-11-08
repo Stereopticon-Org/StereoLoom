@@ -19,8 +19,19 @@ can output anaglyph, side by side, top and bottom, interleaved, HDMI frame-packe
 floating "looking glass", pick the stereo format your content is in, and it
 converts and shows it in 3D.
 
+## Download
+
+Get `StereoLoom.exe` from the
+[latest release](https://github.com/Stereopticon-Org/StereoLoom/releases/latest).
+It is a single file: no installer, nothing to unpack. Run it and it sits in the
+tray.
+
 > **Stereo Loom was called SR Loom** (and `SRLoom.exe`) up to v3.1. It was
-> renamed when it learnt to drive displays other than Leia SR ones. Nothing is
+> renamed when it learnt to drive displays other than Leia SR ones, and its home
+> moved from `effcol/SR-Loom` to
+> [Stereopticon-Org/StereoLoom](https://github.com/Stereopticon-Org/StereoLoom)
+> (the old links still lead here, and SR Loom's update check still finds new
+> releases). Nothing is
 > lost in the move: settings, profiles and the log are kept where SR Loom kept
 > them (`HKCU\Software\SRLoom`, `%LOCALAPPDATA%\SRLoom` and `srweaver.log` beside
 > the exe), so an existing setup carries straight over.
@@ -204,9 +215,15 @@ Auto (follows Windows), Light or Dark, and remembers your choice.
 
 - **64-bit Windows 10 (1903+) or Windows 11.** Older builds lack the
   screen-capture APIs Stereo Loom relies on.
-- A Simulated Reality display and a **current SR Platform runtime** installed
+- For a **Simulated Reality** display: a **current SR Platform runtime** installed
   (the SR Service must be running: it provides the `SimulatedReality*.dll`s and
   the eye tracking). An out-of-date runtime can be missing the modern weaver API.
+- For a **Zondision** display: Zondision's own software installed and running.
+- For **3D Vision**: an NVIDIA card with the 3D Vision driver restored
+  (Vision Restoration), and the emitter and glasses.
+- For **Katanga**: Katanga running before the output is chosen.
+- The other outputs (anaglyph, side by side, top and bottom, interleaved,
+  checkerboard, HDMI frame packing) need nothing else: any display will do.
 
 **Note on primary monitor:** Samsung and Acer both tell users to make the SR
 display Windows-primary. That guidance exists because their *launchers*
