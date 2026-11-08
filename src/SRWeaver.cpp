@@ -980,6 +980,29 @@ void SRWeaver::Weave()
         MONITORINFO mi{ sizeof(mi) };
         if (GetMonitorInfoW(MonitorFromPoint(o, MONITOR_DEFAULTTONEAREST), &mi)) { o.x -= mi.rcMonitor.left; o.y -= mi.rcMonitor.top; }
         m_encoder.Draw((int)o.x, (int)o.y);
+        // (3D Vision: the same side by side drawn again at the display's size per
+        // eye into the library's texture, and handed over; the window's own copy
+        // is what shows if the glasses' fullscreen ever drops.)
+        if (m_vision.IsUp() && m_vision.Target())
+        {
+            ID3D11RenderTargetView* prevRtv = nullptr; ID3D11DepthStencilView* prevDsv = nullptr;
+            m_immediate->OMGetRenderTargets(1, &prevRtv, &prevDsv);
+            D3D11_VIEWPORT prevVp{}; UINT nvp = 1;
+            m_immediate->RSGetViewports(&nvp, &prevVp);
+            ID3D11RasterizerState* prevRs = nullptr;
+            m_immediate->RSGetState(&prevRs);
+            ID3D11RenderTargetView* rtv = m_vision.Target();
+            m_immediate->OMSetRenderTargets(1, &rtv, nullptr);
+            const D3D11_VIEWPORT vp{ 0, 0, (float)(m_vision.Width() * 2), (float)m_vision.Height(), 0, 1 };
+            m_immediate->RSSetViewports(1, &vp);
+            m_immediate->RSSetState(nullptr);   // (no scissor: the whole picture)
+            m_encoder.Draw(0, 0);
+            m_immediate->OMSetRenderTargets(1, &prevRtv, prevDsv);
+            if (nvp) m_immediate->RSSetViewports(1, &prevVp);
+            m_immediate->RSSetState(prevRs);
+            SAFE_RELEASE(prevRtv); SAFE_RELEASE(prevDsv); SAFE_RELEASE(prevRs);
+            m_vision.Present();
+        }
         if (m_output == DisplayOutput::Zondision)
         {
             static ULONGLONG s_poll = 0;
@@ -1096,6 +1119,51 @@ bool SRWeaver::PlainDisplayRect(RECT& out)
     return true;
 }
 
+// HDMI frame packing: the display set to 1920 x 2205 (or 1280 x 1470) -- the size a
+// TV takes as frame-packed 3D -- with only the size given, so the refresh is the
+// driver's (24 Hz at 1080p on most). Temporary (CDS_FULLSCREEN): Windows puts the
+// mode back if Stereo Loom ends; off puts it back now. The display must offer the
+// size: a TV's EDID lists it as a 3D mode, or it is added as a custom resolution.
+void SRWeaver::ForceFramePackMode(bool on)
+{
+    if (!on)
+    {
+        if (!m_modeForced) return;
+        const LONG r = ChangeDisplaySettingsExW(m_forcedDevice.c_str(), nullptr, nullptr, 0, nullptr);
+        Log("Frame packing: %ls back to its own mode (%ld)", m_forcedDevice.c_str(), r);
+        m_modeForced = false;
+        return;
+    }
+    std::wstring dev = m_outputDevice;
+    if (dev.empty())
+    {
+        RECT rc{};
+        if (!PlainDisplayRect(rc)) return;
+        MONITORINFOEXW mi{}; mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(MonitorFromPoint(POINT{ (rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2 }, MONITOR_DEFAULTTOPRIMARY), &mi)) return;
+        dev = mi.szDevice;
+    }
+    const DWORD w = m_framePack == 1 ? 1280 : 1920, h = m_framePack == 1 ? 1470 : 2205;
+    DEVMODEW dm{}; dm.dmSize = sizeof(dm);
+    if (EnumDisplaySettingsW(dev.c_str(), ENUM_CURRENT_SETTINGS, &dm) && dm.dmPelsWidth == w && dm.dmPelsHeight == h)
+    {
+        Log("Frame packing: %ls is already %lux%lu", dev.c_str(), w, h);
+        return;
+    }
+    DEVMODEW want{}; want.dmSize = sizeof(want);
+    want.dmPelsWidth = w; want.dmPelsHeight = h;
+    want.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;   // (no refresh rate: the driver's for that size)
+    const LONG r = ChangeDisplaySettingsExW(dev.c_str(), &want, nullptr, CDS_FULLSCREEN, nullptr);
+    if (r == DISP_CHANGE_SUCCESSFUL)
+    {
+        m_modeForced = true; m_forcedDevice = dev;
+        Log("Frame packing: %ls set to %lux%lu (was %lux%lu)", dev.c_str(), w, h, dm.dmPelsWidth, dm.dmPelsHeight);
+    }
+    else
+        Log("Frame packing: %ls does not offer %lux%lu (%ld) -- drawn at its own size; for the TV to see 3D, add %lux%lu as a custom "
+            "resolution (NVIDIA Control Panel, AMD Software or CRU)", dev.c_str(), w, h, r, w, h);
+}
+
 bool SRWeaver::StartPlain(ID3D11DeviceContext* immediateContext, HWND window)
 {
     if (m_plainUp) return true;
@@ -1108,6 +1176,19 @@ bool SRWeaver::StartPlain(ID3D11DeviceContext* immediateContext, HWND window)
     m_immediate = immediateContext;
     m_plainHwnd = window;
     m_choice = 0;
+    if (m_output == DisplayOutput::FramePacking) ForceFramePackMode(true);
+    if (m_output == DisplayOutput::Vision3D)
+    {
+        RECT rc{};
+        PlainDisplayRect(rc);
+        ID3D11Device* dev = nullptr;
+        immediateContext->GetDevice(&dev);
+        std::string msg;
+        const bool ok = m_vision.Start(dev, MonitorFromPoint(POINT{ (rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2 }, MONITOR_DEFAULTTOPRIMARY), msg);
+        SAFE_RELEASE(dev);
+        Log("3D Vision: %s", msg.c_str());
+        if (!ok) return false;
+    }
     if (m_output == DisplayOutput::Zondision)
     {
         std::string msg;
@@ -1125,6 +1206,8 @@ void SRWeaver::StopPlain()
 {
     if (!m_plainUp) return;
     if (m_output == DisplayOutput::Zondision || Zondision::IsStarted()) Zondision::Stop();
+    ForceFramePackMode(false);
+    m_vision.Stop();
     m_plainUp = false;
     m_plain3D = false;
     m_plainHwnd = nullptr;

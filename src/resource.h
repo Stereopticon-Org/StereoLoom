@@ -2,6 +2,7 @@
 #pragma once
 
 #define IDI_TRAY 101
+#define IDI_TRAY_LIGHT 102   // (the tray's icon on a light taskbar)
 
 // Embedded UI fonts (Inter, SIL OFL) so the release is a single self-contained exe.
 #define IDR_FONT_REGULAR  201

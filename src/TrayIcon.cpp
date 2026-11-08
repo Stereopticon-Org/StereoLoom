@@ -8,12 +8,16 @@ using namespace srw;
 
 static constexpr UINT kIconId = 1;
 
-// Load the embedded Dimenco logo icon at the system's small-icon size,
-// falling back to the default application icon if it is unavailable.
+// Load Stereo Loom's icon at the system's small-icon size -- the light tile on a
+// light taskbar, the dark one otherwise -- falling back to the default
+// application icon if it is unavailable.
 static HICON LoadTrayIcon()
 {
+    DWORD light = 0, sz = sizeof(light);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                 L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &sz);
     HICON icon = (HICON)LoadImageA(
-        GetModuleHandle(nullptr), MAKEINTRESOURCEA(IDI_TRAY), IMAGE_ICON,
+        GetModuleHandle(nullptr), MAKEINTRESOURCEA(light ? IDI_TRAY_LIGHT : IDI_TRAY), IMAGE_ICON,
         GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
         LR_DEFAULTCOLOR);
     return icon ? icon : LoadIcon(nullptr, IDI_APPLICATION);

@@ -358,15 +358,17 @@ namespace srw::Settings
         WriteDword(kSettingsKey, L"WeaverChoice", (DWORD)(choice >= 0 && choice <= 6 ? choice : 0));
     }
 
-    int  ReadDisplayOutput() { const DWORD v = ReadDword(kSettingsKey, L"DisplayOutput", 0); return v < 8 ? (int)v : 0; }
-    void WriteDisplayOutput(int output) { WriteDword(kSettingsKey, L"DisplayOutput", (DWORD)(output >= 0 && output < 8 ? output : 0)); }
+    int  ReadDisplayOutput() { const DWORD v = ReadDword(kSettingsKey, L"DisplayOutput", 0); return v < 10 ? (int)v : 0; }
+    void WriteDisplayOutput(int output) { WriteDword(kSettingsKey, L"DisplayOutput", (DWORD)(output >= 0 && output < 10 ? output : 0)); }
     std::wstring ReadOutputDisplay() { return ReadText(kSettingsKey, L"OutputDisplay"); }
     void WriteOutputDisplay(const std::wstring& device) { WriteText(kSettingsKey, L"OutputDisplay", device); }
     int  ReadOutputAnaColours() { const DWORD v = ReadDword(kSettingsKey, L"OutputAnaColours", 0); return v < 3 ? (int)v : 0; }
     void WriteOutputAnaColours(int v) { WriteDword(kSettingsKey, L"OutputAnaColours", (DWORD)(v >= 0 && v < 3 ? v : 0)); }
     int  ReadOutputAnaStyle() { const DWORD v = ReadDword(kSettingsKey, L"OutputAnaStyle", 0); return v < 4 ? (int)v : 0; }
     void WriteOutputAnaStyle(int v) { WriteDword(kSettingsKey, L"OutputAnaStyle", (DWORD)(v >= 0 && v < 4 ? v : 0)); }
-    bool ReadOutputSwapEyes() { return ReadDword(kSettingsKey, L"OutputSwapEyes", 0) != 0; }
+    int  ReadOutputFramePacking() { return ReadDword(kSettingsKey, L"OutputFramePacking", 0) == 1 ? 1 : 0; }
+    void WriteOutputFramePacking(int v) { WriteDword(kSettingsKey, L"OutputFramePacking", v == 1 ? 1u : 0u); }
+    bool ReadOutputSwapEyes(){ return ReadDword(kSettingsKey, L"OutputSwapEyes", 0) != 0; }
     void WriteOutputSwapEyes(bool on) { WriteDword(kSettingsKey, L"OutputSwapEyes", on ? 1u : 0u); }
 
     void WriteDiagSkipWeave(bool enable)

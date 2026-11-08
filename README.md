@@ -1,11 +1,20 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/stereo_loom_dark.png">
+  <img src="assets/stereo_loom_light.png" width="96" alt="Stereo Loom logo">
+</picture>
+
 # Stereo Loom
+
+Part of [Stereopticon](https://stereopticon.org): open-source stereoscopic 3D,
+for every display.
 
 <img width="210" height="276" alt="image" src="https://github.com/user-attachments/assets/9c5132f2-5673-4d70-82b9-5ea284c76aad" /> <img width="210" height="276" alt="image" src="https://github.com/user-attachments/assets/d8dcd576-908e-433a-bbd5-f5998231f833" />
 
 A lightweight Windows tray app that shows stereo 3D on 3D displays: it weaves
 for **Simulated Reality** displays (Samsung Odyssey 3D, Acer SpatialLabs, and
 other LeiaSR / Dimenco panels), drives **Zondision** displays (the Zimo M1), and
-can output anaglyph, side by side, top and bottom or interleaved 3D for glasses,
+can output anaglyph, side by side, top and bottom, interleaved, HDMI frame-packed or
+3D Vision 3D for glasses,
 3D TVs and projectors on any display. Point it at your screen, a window, or a
 floating "looking glass", pick the stereo format your content is in, and it
 converts and shows it in 3D.
@@ -61,7 +70,7 @@ capture (screen / window)  ->  convert any stereo format to SBS  ->  weave  ->  
 - **Looking Glass**: a floating, draggable and resizable 3D viewport.
 
 ### Display outputs
-Chosen in Settings, Display Output. Everything before the output (the capture,
+Chosen in the Display Output section, below Stereo 3D Input. Everything before the output (the capture,
 the stereo format, Gaussian Splats) works the same whichever is chosen.
 - **Leia SR** (the default): the SR weave, eye tracked, for SR displays.
 - **Zondision**: side by side on a Zondision display (the Zimo M1), which weaves
@@ -75,6 +84,17 @@ the stereo format, Gaussian Splats) works the same whichever is chosen.
   mode, or for VR viewers that take a side by side picture.
 - **Row Interleaved**, **Column Interleaved** and **Checkerboard**: for passive
   (polarised) and DLP 3D displays.
+- **HDMI Frame Packing**: for 3D TVs and projectors that take frame-packed 3D.
+  Stereo Loom switches the display to 1920 x 2205 (or 1280 x 1470 for 720p)
+  while the 3D is on, leaving the refresh rate to the driver, and puts it back
+  after. If the display does not offer that size, add it as a custom resolution
+  (NVIDIA Control Panel, AMD Software or CRU).
+- **3D Vision**: NVIDIA's shutter glasses, through
+  [NV3D-Lib](https://github.com/oneup03/NV3D-Lib) as wiz3D does it. Needs the 3D
+  Vision glasses, emitter and a 120 Hz panel, an NVIDIA driver with 3D Vision
+  (R425 or older, or a newer one with
+  [Vision Restoration](https://github.com/oscardelatorre/VisionRestoration)), and
+  "Set up stereoscopic 3D" on in the NVIDIA Control Panel.
 
 Each non-SR output can go to any display (automatic: the Zondision display, or
 the primary), and **Swap Eyes** turns the eyes round for glasses or a display
@@ -252,6 +272,10 @@ Requires Visual Studio 2022/2026 (Desktop C++) and CMake ≥ 3.21. The build is
 > it from `adapters/zimo/ZimoKey.private.h` (see `ZimoKey.example.h`), which is
 > never committed. Zondision ask that app keys are kept inside the binary rather
 > than published as text.
+> For the 3D Vision output, put [NV3D-Lib](https://github.com/oneup03/NV3D-Lib)'s
+> `include/NV3D.hpp`, `lib/x64/Release-MT/NV3DLib-mt.lib` and
+> `external/nvapi/amd64/nvapi64.lib` in `lib/NV3D-Lib`; without them the build
+> leaves 3D Vision out.
 
 ```powershell
 cmake -B build/x64 -A x64
@@ -271,11 +295,16 @@ cmake --build build/x64 --config Release
   (MIT) worked out how to ask Samsung Odyssey 3D Hub to turn off its fullscreen
   "convert to 3D" popup and to put the preference back. Stereo Loom's Samsung 3D Popup
   switch (Settings, Samsung Odyssey 3D) works the same way.
+- **[oneup03](https://github.com/oneup03)**: [NV3D-Lib](https://github.com/oneup03/NV3D-Lib)
+  (LGPL 2.1) drives the 3D Vision output.
+- **[oscardelatorre](https://github.com/oscardelatorre)**:
+  [Vision Restoration](https://github.com/oscardelatorre/VisionRestoration) brings
+  3D Vision back on current NVIDIA drivers.
 
 ## Licence
 
 MIT (see `LICENSE`). Third-party parts (Dear ImGui, NPClient, the 1 Euro
-Filter, the **Inter** font, stb_image, Odyssey Stereo Controls) are listed with their licences in
+Filter, the **Inter** font, stb_image, Odyssey Stereo Controls, NV3D-Lib, NVAPI) are listed with their licences in
 `THIRD_PARTY_NOTICES.txt`. Links against Leia's **SR SDK** (MIT); the SR
 Platform runtime must be installed separately. Zondision display support uses
 Zondision's 3DS SDK, redistributed under the Zondision SDK and API Licence

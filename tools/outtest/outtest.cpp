@@ -79,6 +79,10 @@ int main()
     expect("Checkerboard: (0,0) is L", 0, 0, 200, 50, 50);
     expect("Checkerboard: (1,0) is R", 1, 0, 50, 50, 200);
     expect("Checkerboard: (1,1) is L", 1, 1, 200, 50, 50);
+    run(DisplayOutput::FramePacking, 0, 0, false, 0, 0);
+    // (8 rows: the left eye rows 0-3 (to 3.92), the gap row 3.92-4.08, the right eye from 4.08.)
+    expect("Frame packing: top is L", 4, 1, 200, 50, 50);
+    expect("Frame packing: bottom is R", 4, 6, 50, 50, 200);
     run(DisplayOutput::Anaglyph, 0, 1, false, 0, 0);
     expect("Anaglyph red/cyan Colour", 4, 4, 200, 50, 200);
     run(DisplayOutput::Anaglyph, 0, 3, false, 0, 0);

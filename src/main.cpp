@@ -3904,6 +3904,7 @@ namespace
         const DisplayOutput o = WantedOutput(app);
         app.weaver.SetOutput(o, o == DisplayOutput::SR ? std::wstring() : Settings::ReadOutputDisplay());
         app.weaver.SetOutputOptions(Settings::ReadOutputAnaColours(), Settings::ReadOutputAnaStyle(), Settings::ReadOutputSwapEyes());
+        app.weaver.SetFramePacking(Settings::ReadOutputFramePacking());
     }
 
     bool StartSRSession(AppState& app)
@@ -10128,7 +10129,9 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                 // Weaver choice (panel): a different weaver needs a new SR session.
                 const int wantWeaver = Settings::ReadWeaverChoice();
                 // ... and so does another Display Output, or its display.
-                const int wantOutput = (int)WantedOutput(app);
+                // (Frame packing's size in the next byte up: another size, another session.)
+                const int wantOutput = (int)WantedOutput(app) |
+                    (WantedOutput(app) == DisplayOutput::FramePacking ? Settings::ReadOutputFramePacking() << 8 : 0);
                 const std::wstring wantDevice = wantOutput == (int)DisplayOutput::SR ? std::wstring() : Settings::ReadOutputDisplay();
                 // (Anaglyph colours, the eyes swapped: as they are, no restart.)
                 app.weaver.SetOutputOptions(Settings::ReadOutputAnaColours(), Settings::ReadOutputAnaStyle(), Settings::ReadOutputSwapEyes());
@@ -10145,7 +10148,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     if (app.weaver.HasWeaver())
                     {
                         Log("Weaver choice %d, Display Output %s, HDR chain %s: restarting the session", wantWeaver,
-                            DisplayOutputName((DisplayOutput)wantOutput), HdrWanted(app, app.hdrDisplay) ? "on" : "off");
+                            DisplayOutputName((DisplayOutput)(wantOutput & 0xFF)), HdrWanted(app, app.hdrDisplay) ? "on" : "off");
                         app.weaver.StopSR();
                         app.srStopAtMs = 0;
                         if (app.weavingEnabled)

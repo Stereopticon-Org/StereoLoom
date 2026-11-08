@@ -183,6 +183,9 @@ namespace srw::Settings
     void WriteOutputAnaStyle(int v);
     // The eyes the other way round in a non-SR output (glasses or a display that
     // starts with the other eye). OutputSwapEyes.
+    // HDMI frame packing: 0 1080p (1920 x 2205), 1 720p (1280 x 1470). OutputFramePacking.
+    int  ReadOutputFramePacking();
+    void WriteOutputFramePacking(int v);
     bool ReadOutputSwapEyes();
     void WriteOutputSwapEyes(bool on);
     // Anti-crosstalk through the runtime's weaver settings: 0 the display's default,

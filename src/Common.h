@@ -56,13 +56,15 @@ namespace srw
         RowInterleaved,     // alternate rows (passive / polarised 3D displays)
         ColumnInterleaved,  // alternate columns
         Checkerboard,       // alternate pixels (DLP 3D)
+        FramePacking,       // HDMI 1.4 frame packing: left eye, 45 blank rows, right eye (1920 x 2205 / 1280 x 1470)
+        Vision3D,           // NVIDIA 3D Vision shutter glasses (NVAPI stereo; on new drivers with 3D Vision restored)
         Count
     };
     inline const char* DisplayOutputName(DisplayOutput o)
     {
         static const char* const names[] = {
             "Leia SR", "Zondision", "Anaglyph", "Side-by-Side", "Top-and-Bottom",
-            "Row Interleaved", "Column Interleaved", "Checkerboard" };
+            "Row Interleaved", "Column Interleaved", "Checkerboard", "HDMI Frame Packing", "3D Vision" };
         const int i = (int)o;
         return i >= 0 && i < (int)DisplayOutput::Count ? names[i] : "?";
     }

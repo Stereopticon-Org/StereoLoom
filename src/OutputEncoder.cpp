@@ -9,7 +9,7 @@ namespace srw
 namespace
 {
     // One triangle over the viewport; uv 0..1 across it. Mode: 0 anaglyph, 1 side by
-    // side, 2 top and bottom, 3 rows, 4 columns, 5 checkerboard. Each eye is looked up
+    // side, 2 top and bottom, 3 rows, 4 columns, 5 checkerboard, 6 HDMI frame packing. Each eye is looked up
     // at uv * scale + offset (its half of the side-by-side picture).
     const char kHLSL[] = R"(
 cbuffer C : register(b0)
@@ -47,6 +47,15 @@ float4 PSMain(V i) : SV_Target
     }
     if (mode == 1) return float4(Eye(i.uv.x >= 0.5, float2(frac(i.uv.x * 2), i.uv.y)).rgb, 1);
     if (mode == 2) return float4(Eye(i.uv.y >= 0.5, float2(i.uv.x, frac(i.uv.y * 2))).rgb, 1);
+    if (mode == 6)
+    {
+        // HDMI 1.4 frame packing: the left eye in the top 1080 of 2205 rows (720 of
+        // 1470), 45 (30) blank, the right eye below -- the same shares at either size.
+        const float eye = 1080.0 / 2205.0, gap = 45.0 / 2205.0;
+        if (i.uv.y < eye)       return float4(Eye(false, float2(i.uv.x, i.uv.y / eye)).rgb, 1);
+        if (i.uv.y < eye + gap) return float4(0, 0, 0, 1);
+        return float4(Eye(true, float2(i.uv.x, (i.uv.y - eye - gap) / eye)).rgb, 1);
+    }
     const int odd = mode == 3 ? (p.y & 1) : mode == 4 ? (p.x & 1) : ((p.x + p.y) & 1);
     return float4(Eye(odd != 0, i.uv).rgb, 1);
 }
@@ -188,6 +197,8 @@ void OutputEncoder::Fill()
     case DisplayOutput::RowInterleaved:    mode = 3; break;
     case DisplayOutput::ColumnInterleaved: mode = 4; break;
     case DisplayOutput::Checkerboard:      mode = 5; break;
+    case DisplayOutput::FramePacking:      mode = 6; break;
+    case DisplayOutput::Vision3D:          mode = 1; break;   // (3D Vision: side by side, handed to the driver per eye)
     default:                               mode = 0; break;
     }
     c[32] = (float)mode;

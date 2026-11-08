@@ -7,6 +7,7 @@
 #include "SamsungHub.h"   // run-at-startup / start-in-tray persistence
 #include "SRWeaver.h"     // (Display Output: is the SR Platform here)
 #include "Zondision.h"
+#include "Vision3D.h"
 #include "resource.h"   // IDI_TRAY (app icon)
 
 #include "imgui.h"
@@ -505,6 +506,7 @@ bool Gui::Init(HWND mainHwnd, ID3D11Device* device, ID3D11DeviceContext* context
             bool* open[] = { &m_displaySectionOpen, &m_stereoInputSectionOpen, &m_headTrackingSectionOpen, &m_splatSectionOpen,
                              &m_profilesSectionOpen, &m_settingsOpen, &m_openTrackSectionOpen };
             for (int i = 0; i < (int)(sizeof(open) / sizeof(open[0])); ++i) *open[i] = (b >> i) & 1u;
+            m_outputSectionOpen = ((b >> 7) & 1u) == 0;   // (1: closed -- see below)
         }
         m_panelOpenSaved = b;
     }
@@ -2063,6 +2065,164 @@ bool Gui::Render(GuiState& state)
             }
         }
 
+        // DISPLAY OUTPUT: the Leia SR weave, a Zondision display, or Stereo Loom's own
+        // output for glasses, 3D TVs, 3D Vision and frame packing on any display
+        // (Settings DisplayOutput and the rest; main restarts the 3D on a change).
+        if (CollapsibleHeader("DISPLAY OUTPUT", m_outputSectionOpen, m_dpiScale, "##outputhdr"))
+        {
+                // What the two eyes become -- the Leia SR weave, a Zondision
+            // display's, or Stereo Loom's own for glasses and 3D TVs on any display
+            // (Settings DisplayOutput and the rest; main restarts the 3D on a change).
+            {
+                auto otip = [&](const char* text) {
+                    if (!ImGui::IsItemHovered()) return;
+                    const float maxW = 320.0f * m_dpiScale;
+                    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(maxW, FLT_MAX));
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(maxW - 14.0f * m_dpiScale);
+                    ImGui::TextUnformatted(text);
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                };
+                // (Read now and then -- the registry is not to be asked every frame -- and at once on a change here.)
+                static int s_out = 0, s_colours = 0, s_style = 0, s_age = 0;
+                static bool s_swap = false;
+                static std::wstring s_dev;
+                if (s_age-- <= 0)
+                {
+                    s_out = Settings::ReadDisplayOutput(); s_colours = Settings::ReadOutputAnaColours();
+                    s_style = Settings::ReadOutputAnaStyle(); s_swap = Settings::ReadOutputSwapEyes();
+                    s_dev = Settings::ReadOutputDisplay(); s_age = 60;
+                }
+                const float labelW = ImGui::CalcTextSize("Glasses").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+                auto row = [&](const char* label, const char* tipText) {
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted(label);
+                    if (tipText) otip(tipText);
+                    ImGui::SameLine(labelW);
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                };
+                static const char* const kOut[(int)DisplayOutput::Count] = {
+                    "Leia SR (default)", "Zondision", "Anaglyph", "Side-by-Side", "Top-and-Bottom",
+                    "Row Interleaved", "Column Interleaved", "Checkerboard", "HDMI Frame Packing", "3D Vision" };
+                row("Output", "What the 3D is drawn as. Leia SR: an SR display (Samsung Odyssey 3D, Acer SpatialLabs and others). "
+                              "Zondision: a Zondision display such as the Zimo M1. Anaglyph: coloured glasses on any display. "
+                              "Side-by-Side and Top-and-Bottom: a 3D TV or projector in its 3D mode. Interleaved and Checkerboard: "
+                              "passive (polarised) and DLP 3D displays. HDMI Frame Packing: a 3D TV or projector that takes "
+                              "frame-packed 3D (Stereo Loom switches the display to that size). 3D Vision: NVIDIA's shutter "
+                              "glasses. Changing it restarts the 3D for a moment.");
+                const int cur = (s_out >= 0 && s_out < (int)DisplayOutput::Count) ? s_out : 0;
+                if (ImGui::BeginCombo("##dispout", kOut[cur]))
+                {
+                    for (int k = 0; k < (int)DisplayOutput::Count; ++k)
+                        if (ImGui::Selectable(kOut[k], k == cur)) { s_out = k; Settings::WriteDisplayOutput(k); }
+                    ImGui::EndCombo();
+                }
+                if (cur != (int)DisplayOutput::SR)
+                {
+                    // (The displays, cached: QueryDisplayConfig behind the names is slow.)
+                    static std::vector<MonEntry> s_outMons;
+                    static DWORD s_outMonsAt = 0;
+                    if (s_outMons.empty() || GetTickCount() - s_outMonsAt > 2000)
+                    {
+                        s_outMons.clear();
+                        EnumDisplayMonitors(nullptr, nullptr, MonEnumProc, reinterpret_cast<LPARAM>(&s_outMons));
+                        ResolveDisplayNames(s_outMons);
+                        s_outMonsAt = GetTickCount();
+                    }
+                    char devA[64] = {};
+                    WideCharToMultiByte(CP_UTF8, 0, s_dev.c_str(), -1, devA, sizeof(devA) - 1, nullptr, nullptr);
+                    const char* devLabel = cur == (int)DisplayOutput::Zondision ? "Automatic (the Zondision display)" : "Automatic (primary)";
+                    for (const MonEntry& m : s_outMons) if (devA[0] && _stricmp(m.gdi, devA) == 0) devLabel = m.label;
+                    row("Display", "Which display the 3D goes to.");
+                    if (ImGui::BeginCombo("##outdisp", devLabel))
+                    {
+                        if (ImGui::Selectable(cur == (int)DisplayOutput::Zondision ? "Automatic (the Zondision display)" : "Automatic (primary)", !devA[0]))
+                        { s_dev.clear(); Settings::WriteOutputDisplay(s_dev); }
+                        for (int i = 0; i < (int)s_outMons.size(); ++i)
+                        {
+                            ImGui::PushID(i);
+                            if (ImGui::Selectable(s_outMons[i].label, devA[0] && _stricmp(s_outMons[i].gdi, devA) == 0))
+                            {
+                                wchar_t w[64] = {};
+                                MultiByteToWideChar(CP_UTF8, 0, s_outMons[i].gdi, -1, w, 63);
+                                s_dev = w; Settings::WriteOutputDisplay(s_dev);
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::EndCombo();
+                    }
+                }
+                if (cur == (int)DisplayOutput::Anaglyph)
+                {
+                    static const char* const kColours[3] = { "Red / Cyan", "Green / Magenta", "Amber / Blue" };
+                    row("Glasses", "The colours of your glasses' lenses, left eye first. If the depth looks inside out, "
+                                   "turn on Swap Eyes.");
+                    if (ImGui::BeginCombo("##outanacol", kColours[s_colours]))
+                    {
+                        for (int k = 0; k < 3; ++k)
+                            if (ImGui::Selectable(kColours[k], k == s_colours)) { s_colours = k; Settings::WriteOutputAnaColours(k); }
+                        ImGui::EndCombo();
+                    }
+                    static const char* const kStyles[4] = { "Optimised", "Colour", "Half Colour", "Grey" };
+                    row("Colour", "Optimised: the least ghosting for red / cyan glasses (Dubois); for other glasses, Half Colour. "
+                                  "Colour keeps the most colour but ghosts more; Grey ghosts least and has none.");
+                    if (ImGui::BeginCombo("##outanastyle", kStyles[s_style]))
+                    {
+                        for (int k = 0; k < 4; ++k)
+                            if (ImGui::Selectable(kStyles[k], k == s_style)) { s_style = k; Settings::WriteOutputAnaStyle(k); }
+                        ImGui::EndCombo();
+                    }
+                }
+                if (cur != (int)DisplayOutput::SR)
+                {
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted("Swap Eyes");
+                    otip("Each eye gets the other's picture: for glasses or a display that starts with the right eye.");
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - RowToggleW() - ImGui::GetStyle().WindowPadding.x);
+                    if (ToggleSwitch("##outswap", s_swap)) { s_swap = !s_swap; Settings::WriteOutputSwapEyes(s_swap); }
+                }
+                if (cur == (int)DisplayOutput::FramePacking)
+                {
+                    static int s_fp = -1;
+                    if (s_fp < 0 || s_age == 60) s_fp = Settings::ReadOutputFramePacking();
+                    static const char* const kFp[2] = { "1080p (1920 x 2205)", "720p (1280 x 1470)" };
+                    row("Size", "The display is switched to this size while the 3D is on (its refresh rate is left to the "
+                                "driver) and put back after. If it does not offer the size, add it as a custom resolution "
+                                "in the NVIDIA Control Panel, AMD Software or CRU.");
+                    if (ImGui::BeginCombo("##outfp", kFp[s_fp]))
+                    {
+                        for (int k = 0; k < 2; ++k)
+                            if (ImGui::Selectable(kFp[k], k == s_fp)) { s_fp = k; Settings::WriteOutputFramePacking(k); }
+                        ImGui::EndCombo();
+                    }
+                }
+                if (cur == (int)DisplayOutput::Vision3D)
+                {
+                    if (!Vision3D::Built())
+                        ImGui::TextDisabled("This build has no 3D Vision.");
+                    else
+                    {
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("Needs 3D Vision glasses, emitter and a 120 Hz panel, an NVIDIA driver with 3D Vision "
+                                            "(R425 or older, or Vision Restoration on newer ones) and \"Set up stereoscopic 3D\" on "
+                                            "in the NVIDIA Control Panel.");
+                        ImGui::PopTextWrapPos();
+                    }
+                }
+                if (cur == (int)DisplayOutput::Zondision)
+                {
+                    static int s_zAge = 0; static bool s_zOk = false, s_zDisp = false;
+                    if (s_zAge-- <= 0) { s_zOk = Zondision::Available(); RECT r{}; s_zDisp = s_zOk && Zondision::FindDisplay(r); s_zAge = 120; }
+                    if (!s_zOk)        ImGui::TextDisabled("Zondision's software (3DS) or ZimoAdapter.dll not found.");
+                    else if (!s_zDisp) ImGui::TextDisabled("No Zondision display found.");
+                }
+                else if (cur == (int)DisplayOutput::SR && !SRWeaver::RuntimePresent())
+                    ImGui::TextDisabled("No SR Platform on this PC: Anaglyph (or a Zondision display) is used instead.");
+            }
+        }
+
         // HEADTRACKING section -- now collapsible (default expanded).
         // Same chevron-header pattern as ACER SPATIALLABS / STARTUP /
         // PROFILES. OpenTrack UDP toggle + mode buttons + Calibrate +
@@ -2732,129 +2892,6 @@ bool Gui::Render(GuiState& state)
 
         if (m_settingsOpen)
         {
-        // Display Output: what the two eyes become -- the Leia SR weave, a Zondision
-        // display's, or Stereo Loom's own for glasses and 3D TVs on any display
-        // (Settings DisplayOutput and the rest; main restarts the 3D on a change).
-        subHeader("Display Output", true);
-        {
-            auto otip = [&](const char* text) {
-                if (!ImGui::IsItemHovered()) return;
-                const float maxW = 320.0f * m_dpiScale;
-                ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(maxW, FLT_MAX));
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(maxW - 14.0f * m_dpiScale);
-                ImGui::TextUnformatted(text);
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            };
-            // (Read now and then -- the registry is not to be asked every frame -- and at once on a change here.)
-            static int s_out = 0, s_colours = 0, s_style = 0, s_age = 0;
-            static bool s_swap = false;
-            static std::wstring s_dev;
-            if (s_age-- <= 0)
-            {
-                s_out = Settings::ReadDisplayOutput(); s_colours = Settings::ReadOutputAnaColours();
-                s_style = Settings::ReadOutputAnaStyle(); s_swap = Settings::ReadOutputSwapEyes();
-                s_dev = Settings::ReadOutputDisplay(); s_age = 60;
-            }
-            const float labelW = ImGui::CalcTextSize("Glasses").x + ImGui::GetStyle().ItemSpacing.x * 2.0f;
-            auto row = [&](const char* label, const char* tipText) {
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(label);
-                if (tipText) otip(tipText);
-                ImGui::SameLine(labelW);
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-            };
-            static const char* const kOut[(int)DisplayOutput::Count] = {
-                "Leia SR (default)", "Zondision", "Anaglyph", "Side-by-Side", "Top-and-Bottom",
-                "Row Interleaved", "Column Interleaved", "Checkerboard" };
-            row("Output", "What the 3D is drawn as. Leia SR: an SR display (Samsung Odyssey 3D, Acer SpatialLabs and others). "
-                          "Zondision: a Zondision display such as the Zimo M1. Anaglyph: coloured glasses on any display. "
-                          "Side-by-Side and Top-and-Bottom: a 3D TV or projector in its 3D mode. Interleaved and Checkerboard: "
-                          "passive (polarised) and DLP 3D displays. Changing it restarts the 3D for a moment.");
-            const int cur = (s_out >= 0 && s_out < (int)DisplayOutput::Count) ? s_out : 0;
-            if (ImGui::BeginCombo("##dispout", kOut[cur]))
-            {
-                for (int k = 0; k < (int)DisplayOutput::Count; ++k)
-                    if (ImGui::Selectable(kOut[k], k == cur)) { s_out = k; Settings::WriteDisplayOutput(k); }
-                ImGui::EndCombo();
-            }
-            if (cur != (int)DisplayOutput::SR)
-            {
-                // (The displays, cached: QueryDisplayConfig behind the names is slow.)
-                static std::vector<MonEntry> s_outMons;
-                static DWORD s_outMonsAt = 0;
-                if (s_outMons.empty() || GetTickCount() - s_outMonsAt > 2000)
-                {
-                    s_outMons.clear();
-                    EnumDisplayMonitors(nullptr, nullptr, MonEnumProc, reinterpret_cast<LPARAM>(&s_outMons));
-                    ResolveDisplayNames(s_outMons);
-                    s_outMonsAt = GetTickCount();
-                }
-                char devA[64] = {};
-                WideCharToMultiByte(CP_UTF8, 0, s_dev.c_str(), -1, devA, sizeof(devA) - 1, nullptr, nullptr);
-                const char* devLabel = cur == (int)DisplayOutput::Zondision ? "Automatic (the Zondision display)" : "Automatic (primary)";
-                for (const MonEntry& m : s_outMons) if (devA[0] && _stricmp(m.gdi, devA) == 0) devLabel = m.label;
-                row("Display", "Which display the 3D goes to.");
-                if (ImGui::BeginCombo("##outdisp", devLabel))
-                {
-                    if (ImGui::Selectable(cur == (int)DisplayOutput::Zondision ? "Automatic (the Zondision display)" : "Automatic (primary)", !devA[0]))
-                    { s_dev.clear(); Settings::WriteOutputDisplay(s_dev); }
-                    for (int i = 0; i < (int)s_outMons.size(); ++i)
-                    {
-                        ImGui::PushID(i);
-                        if (ImGui::Selectable(s_outMons[i].label, devA[0] && _stricmp(s_outMons[i].gdi, devA) == 0))
-                        {
-                            wchar_t w[64] = {};
-                            MultiByteToWideChar(CP_UTF8, 0, s_outMons[i].gdi, -1, w, 63);
-                            s_dev = w; Settings::WriteOutputDisplay(s_dev);
-                        }
-                        ImGui::PopID();
-                    }
-                    ImGui::EndCombo();
-                }
-            }
-            if (cur == (int)DisplayOutput::Anaglyph)
-            {
-                static const char* const kColours[3] = { "Red / Cyan", "Green / Magenta", "Amber / Blue" };
-                row("Glasses", "The colours of your glasses' lenses, left eye first. If the depth looks inside out, "
-                               "turn on Swap Eyes.");
-                if (ImGui::BeginCombo("##outanacol", kColours[s_colours]))
-                {
-                    for (int k = 0; k < 3; ++k)
-                        if (ImGui::Selectable(kColours[k], k == s_colours)) { s_colours = k; Settings::WriteOutputAnaColours(k); }
-                    ImGui::EndCombo();
-                }
-                static const char* const kStyles[4] = { "Optimised", "Colour", "Half Colour", "Grey" };
-                row("Colour", "Optimised: the least ghosting for red / cyan glasses (Dubois); for other glasses, Half Colour. "
-                              "Colour keeps the most colour but ghosts more; Grey ghosts least and has none.");
-                if (ImGui::BeginCombo("##outanastyle", kStyles[s_style]))
-                {
-                    for (int k = 0; k < 4; ++k)
-                        if (ImGui::Selectable(kStyles[k], k == s_style)) { s_style = k; Settings::WriteOutputAnaStyle(k); }
-                    ImGui::EndCombo();
-                }
-            }
-            if (cur != (int)DisplayOutput::SR)
-            {
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted("Swap Eyes");
-                otip("Each eye gets the other's picture: for glasses or a display that starts with the right eye.");
-                ImGui::SameLine();
-                ImGui::SetCursorPosX(ImGui::GetWindowWidth() - RowToggleW() - ImGui::GetStyle().WindowPadding.x);
-                if (ToggleSwitch("##outswap", s_swap)) { s_swap = !s_swap; Settings::WriteOutputSwapEyes(s_swap); }
-            }
-            if (cur == (int)DisplayOutput::Zondision)
-            {
-                static int s_zAge = 0; static bool s_zOk = false, s_zDisp = false;
-                if (s_zAge-- <= 0) { s_zOk = Zondision::Available(); RECT r{}; s_zDisp = s_zOk && Zondision::FindDisplay(r); s_zAge = 120; }
-                if (!s_zOk)        ImGui::TextDisabled("Zondision's software (3DS) or ZimoAdapter.dll not found.");
-                else if (!s_zDisp) ImGui::TextDisabled("No Zondision display found.");
-            }
-            else if (cur == (int)DisplayOutput::SR && !SRWeaver::RuntimePresent())
-                ImGui::TextDisabled("No SR Platform on this PC: Anaglyph (or a Zondision display) is used instead.");
-        }
-
         // Acer SpatialLabs: surface Acer's auto-detect registry toggles when an
         // Acer display is present. Those auto-detects tend to fight Stereo Loom (auto-
         // switching 2D/3D by focus, or auto-engaging on fullscreen apps), so giving
@@ -2862,7 +2899,7 @@ bool Gui::Render(GuiState& state)
         // Writes go to HKLM and need admin; if denied, offer a Restart-as-admin link.
         if (AcerSpatialLabs::Available())
         {
-            subHeader("SpatialLabs", false);
+            subHeader("SpatialLabs", true);
 
             // Label + right-aligned toggle inside a given column width. Used for
             // the side-by-side two-toggles-per-row layout in both Acer and Startup.
@@ -2943,7 +2980,7 @@ bool Gui::Render(GuiState& state)
         const bool samsung = s_hubPopup != -2;
         if (samsung)
         {
-            subHeader("Samsung Odyssey 3D", false);
+            subHeader("Samsung Odyssey 3D", !AcerSpatialLabs::Available());
             auto pairToggle2 = [&](const char* label, bool on, float colW) -> bool {
                 const float startX = ImGui::GetCursorPosX();
                 ImGui::AlignTextToFramePadding();
@@ -2998,7 +3035,7 @@ bool Gui::Render(GuiState& state)
                   "Applies the next time each game starts.");
         }
 
-        subHeader("Startup", false);
+        subHeader("Startup", !AcerSpatialLabs::Available() && !samsung);
         {
             // Both are tiny HKCU registry settings; run-at-startup just adds/removes
             // our exe from the Run key (no elevation needed), and start-in-tray
@@ -3293,6 +3330,7 @@ bool Gui::Render(GuiState& state)
                               m_profilesSectionOpen, m_settingsOpen, m_openTrackSectionOpen };
         DWORD b = 0;
         for (int i = 0; i < (int)(sizeof(open) / sizeof(open[0])); ++i) b |= open[i] ? (1u << i) : 0u;
+        if (!m_outputSectionOpen) b |= 1u << 7;   // (DISPLAY OUTPUT: 1 closed, so panels saved before it was added open it)
         if (b != m_panelOpenSaved) { m_panelOpenSaved = b; Settings::WritePanelOpen(b); }
     }
 

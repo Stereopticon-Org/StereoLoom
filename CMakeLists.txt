@@ -194,6 +194,8 @@ add_executable(StereoLoom WIN32
     src/OutputEncoder.h
     src/Zondision.cpp
     src/Zondision.h
+    src/Vision3D.cpp
+    src/Vision3D.h
     src/TrayIcon.cpp
     src/Capture.cpp
     src/CaptureDXGI.cpp
@@ -300,6 +302,23 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     foreach(SRDLL SimulatedRealityCore SimulatedRealityDirectX SimulatedRealityDisplays SimulatedRealityFaceTrackers simulatedreality DimencoWeaving)
         target_link_options(StereoLoom PRIVATE /DELAYLOAD:${SRDLL}.dll)
     endforeach()
+endif()
+
+# The 3D Vision output (src/Vision3D): NV3D-Lib (github.com/oneup03/NV3D-Lib,
+# LGPL 2.1 -- statically linked; Stereo Loom's source is open, so it can be relinked
+# against a changed NV3D-Lib) and NVIDIA's NVAPI static library (MIT). Built where
+# they have been put in lib/NV3D-Lib (include/NV3D.hpp, lib/x64/Release-MT,
+# external/nvapi/amd64). nvapi64.dll comes with NVIDIA's driver and is delay-loaded,
+# so the exe still starts on other GPUs.
+set(NV3D_DIR "${CMAKE_SOURCE_DIR}/lib/NV3D-Lib")
+if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND EXISTS "${NV3D_DIR}/include/NV3D.hpp" AND EXISTS "${NV3D_DIR}/lib/x64/Release-MT/NV3DLib-mt.lib")
+    message(STATUS "Stereo Loom: NV3D-Lib at ${NV3D_DIR} (3D Vision output)")
+    target_compile_definitions(StereoLoom PRIVATE SRLOOM_NV3D)
+    target_include_directories(StereoLoom PRIVATE "${NV3D_DIR}/include")
+    target_link_libraries(StereoLoom PRIVATE
+        "$<IF:$<CONFIG:Debug>,${NV3D_DIR}/lib/x64/Debug-MT/NV3DLib-mtd.lib,${NV3D_DIR}/lib/x64/Release-MT/NV3DLib-mt.lib>"
+        "${NV3D_DIR}/external/nvapi/amd64/nvapi64.lib"
+        d3d9)
 endif()
 
 # ZimoAdapter.dll: Stereo Loom's link to a Zondision display (adapters/zimo). Built

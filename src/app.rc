@@ -1,7 +1,9 @@
 #include "resource.h"
 
-// Tray / application icon: the white Dimenco logo mark on transparency.
-IDI_TRAY ICON "../assets/sr_weaver.ico"
+// Application icon: Stereo Loom's mark (the Stereopticon logo set), the dark tile;
+// the light one is the tray's on a light taskbar (TrayIcon.cpp).
+IDI_TRAY       ICON "../assets/stereo_loom.ico"
+IDI_TRAY_LIGHT ICON "../assets/stereo_loom_light.ico"
 
 // UI fonts embedded into the exe (Inter, SIL Open Font License) — loaded from these
 // resources at runtime so no font files need to ship beside the executable.

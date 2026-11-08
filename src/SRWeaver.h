@@ -4,6 +4,7 @@
 
 #include "Common.h"
 #include "OutputEncoder.h"
+#include "Vision3D.h"
 #include <d3d11.h>
 #include <memory>
 
@@ -149,6 +150,8 @@ namespace srw
         bool IsPlainUp() const { return m_plainUp; }
         // Anaglyph colours and style, and the eyes swapped (live).
         void SetOutputOptions(int anaColours, int anaStyle, bool swapEyes);
+        // HDMI frame packing's size: 0 1080p (1920 x 2205), 1 720p (1280 x 1470). At the next StartSR.
+        void SetFramePacking(int size) { m_framePack = size; }
 
         // Borrowed pointer to the SRContext. Used by the OpenTrack bridge
         // (and anything else that wants to attach its own SR::HeadPoseTracker
@@ -202,8 +205,13 @@ namespace srw
         bool                      m_plain3D = false;      // (Zondision: 3D asked for)
         HWND                      m_plainHwnd = nullptr;
         OutputEncoder             m_encoder;
+        Vision3D                  m_vision;               // (the 3D Vision output)
         int                       m_anaColours = 0, m_anaStyle = 0;
         bool                      m_swapEyes = false;
+        int                       m_framePack = 0;        // (SetFramePacking)
+        bool                      m_modeForced = false;   // (frame packing: the display's mode changed by us)
+        std::wstring              m_forcedDevice;
+        void ForceFramePackMode(bool on);
 
         SR::SRContext*            m_context = nullptr;
         SR::IDX11Weaver1*         m_weaver  = nullptr;
