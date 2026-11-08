@@ -969,6 +969,27 @@ void SRWeaver::StopSR()
     }
 }
 
+// The encoder's picture drawn into another render target (w x h), the bound
+// target, viewport and rasteriser state put back after.
+void SRWeaver::DrawInto(ID3D11RenderTargetView* rtv, int w, int h)
+{
+    ID3D11RenderTargetView* prevRtv = nullptr; ID3D11DepthStencilView* prevDsv = nullptr;
+    m_immediate->OMGetRenderTargets(1, &prevRtv, &prevDsv);
+    D3D11_VIEWPORT prevVp{}; UINT nvp = 1;
+    m_immediate->RSGetViewports(&nvp, &prevVp);
+    ID3D11RasterizerState* prevRs = nullptr;
+    m_immediate->RSGetState(&prevRs);
+    m_immediate->OMSetRenderTargets(1, &rtv, nullptr);
+    const D3D11_VIEWPORT vp{ 0, 0, (float)w, (float)h, 0, 1 };
+    m_immediate->RSSetViewports(1, &vp);
+    m_immediate->RSSetState(nullptr);   // (no scissor: the whole picture)
+    m_encoder.Draw(0, 0);
+    m_immediate->OMSetRenderTargets(1, &prevRtv, prevDsv);
+    if (nvp) m_immediate->RSSetViewports(1, &prevVp);
+    m_immediate->RSSetState(prevRs);
+    SAFE_RELEASE(prevRtv); SAFE_RELEASE(prevDsv); SAFE_RELEASE(prevRs);
+}
+
 void SRWeaver::Weave()
 {
     if (m_plainUp)
@@ -985,23 +1006,20 @@ void SRWeaver::Weave()
         // is what shows if the glasses' fullscreen ever drops.)
         if (m_vision.IsUp() && m_vision.Target())
         {
-            ID3D11RenderTargetView* prevRtv = nullptr; ID3D11DepthStencilView* prevDsv = nullptr;
-            m_immediate->OMGetRenderTargets(1, &prevRtv, &prevDsv);
-            D3D11_VIEWPORT prevVp{}; UINT nvp = 1;
-            m_immediate->RSGetViewports(&nvp, &prevVp);
-            ID3D11RasterizerState* prevRs = nullptr;
-            m_immediate->RSGetState(&prevRs);
-            ID3D11RenderTargetView* rtv = m_vision.Target();
-            m_immediate->OMSetRenderTargets(1, &rtv, nullptr);
-            const D3D11_VIEWPORT vp{ 0, 0, (float)(m_vision.Width() * 2), (float)m_vision.Height(), 0, 1 };
-            m_immediate->RSSetViewports(1, &vp);
-            m_immediate->RSSetState(nullptr);   // (no scissor: the whole picture)
-            m_encoder.Draw(0, 0);
-            m_immediate->OMSetRenderTargets(1, &prevRtv, prevDsv);
-            if (nvp) m_immediate->RSSetViewports(1, &prevVp);
-            m_immediate->RSSetState(prevRs);
-            SAFE_RELEASE(prevRtv); SAFE_RELEASE(prevDsv); SAFE_RELEASE(prevRs);
+            DrawInto(m_vision.Target(), m_vision.Width() * 2, m_vision.Height());
             m_vision.Present();
+        }
+        // (Katanga: the side by side at the eyes' own size, handed to Katanga.)
+        if (m_katanga.IsUp())
+        {
+            ID3D11Device* dev = nullptr;
+            m_immediate->GetDevice(&dev);
+            if (ID3D11RenderTargetView* rtv = m_katanga.Target(dev, m_encoder.EyeWidth(), m_encoder.EyeHeight()))
+            {
+                DrawInto(rtv, m_katanga.Width(), m_katanga.Height());
+                m_katanga.Publish(m_immediate);
+            }
+            SAFE_RELEASE(dev);
         }
         if (m_output == DisplayOutput::Zondision)
         {
@@ -1124,13 +1142,13 @@ bool SRWeaver::PlainDisplayRect(RECT& out)
 // driver's (24 Hz at 1080p on most). Temporary (CDS_FULLSCREEN): Windows puts the
 // mode back if Stereo Loom ends; off puts it back now. The display must offer the
 // size: a TV's EDID lists it as a 3D mode, or it is added as a custom resolution.
-void SRWeaver::ForceFramePackMode(bool on)
+void SRWeaver::ForceOutputMode(bool on)
 {
     if (!on)
     {
         if (!m_modeForced) return;
         const LONG r = ChangeDisplaySettingsExW(m_forcedDevice.c_str(), nullptr, nullptr, 0, nullptr);
-        Log("Frame packing: %ls back to its own mode (%ld)", m_forcedDevice.c_str(), r);
+        Log("Display Output: %ls back to its own mode (%ld)", m_forcedDevice.c_str(), r);
         m_modeForced = false;
         return;
     }
@@ -1143,11 +1161,20 @@ void SRWeaver::ForceFramePackMode(bool on)
         if (!GetMonitorInfoW(MonitorFromPoint(POINT{ (rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2 }, MONITOR_DEFAULTTOPRIMARY), &mi)) return;
         dev = mi.szDevice;
     }
-    const DWORD w = m_framePack == 1 ? 1280 : 1920, h = m_framePack == 1 ? 1470 : 2205;
     DEVMODEW dm{}; dm.dmSize = sizeof(dm);
-    if (EnumDisplaySettingsW(dev.c_str(), ENUM_CURRENT_SETTINGS, &dm) && dm.dmPelsWidth == w && dm.dmPelsHeight == h)
+    if (!EnumDisplaySettingsW(dev.c_str(), ENUM_CURRENT_SETTINGS, &dm)) return;
+    DWORD w = 0, h = 0;
+    if (m_output == DisplayOutput::FramePacking) { w = m_framePack == 1 ? 1280 : 1920; h = m_framePack == 1 ? 1470 : 2205; }
+    // (Full: each eye at the display's own size -- a mode twice as wide / tall. A
+    // display already in one -- AR glasses at 3840 x 1080 -- is left as it is.)
+    else if (m_output == DisplayOutput::FullSideBySide)
+    { if (dm.dmPelsWidth >= dm.dmPelsHeight * 3) return; w = dm.dmPelsWidth * 2; h = dm.dmPelsHeight; }
+    else if (m_output == DisplayOutput::FullTopAndBottom)
+    { if (dm.dmPelsHeight * 10 >= dm.dmPelsWidth * 9) return; w = dm.dmPelsWidth; h = dm.dmPelsHeight * 2; }
+    else return;
+    if (dm.dmPelsWidth == w && dm.dmPelsHeight == h)
     {
-        Log("Frame packing: %ls is already %lux%lu", dev.c_str(), w, h);
+        Log("Display Output: %ls is already %lux%lu", dev.c_str(), w, h);
         return;
     }
     DEVMODEW want{}; want.dmSize = sizeof(want);
@@ -1157,10 +1184,10 @@ void SRWeaver::ForceFramePackMode(bool on)
     if (r == DISP_CHANGE_SUCCESSFUL)
     {
         m_modeForced = true; m_forcedDevice = dev;
-        Log("Frame packing: %ls set to %lux%lu (was %lux%lu)", dev.c_str(), w, h, dm.dmPelsWidth, dm.dmPelsHeight);
+        Log("Display Output: %ls set to %lux%lu (was %lux%lu)", dev.c_str(), w, h, dm.dmPelsWidth, dm.dmPelsHeight);
     }
     else
-        Log("Frame packing: %ls does not offer %lux%lu (%ld) -- drawn at its own size; for the TV to see 3D, add %lux%lu as a custom "
+        Log("Display Output: %ls does not offer %lux%lu (%ld) -- drawn at its own size; for the full picture, add %lux%lu as a custom "
             "resolution (NVIDIA Control Panel, AMD Software or CRU)", dev.c_str(), w, h, r, w, h);
 }
 
@@ -1176,7 +1203,17 @@ bool SRWeaver::StartPlain(ID3D11DeviceContext* immediateContext, HWND window)
     m_immediate = immediateContext;
     m_plainHwnd = window;
     m_choice = 0;
-    if (m_output == DisplayOutput::FramePacking) ForceFramePackMode(true);
+    if (m_output == DisplayOutput::FramePacking || m_output == DisplayOutput::FullSideBySide || m_output == DisplayOutput::FullTopAndBottom)
+        ForceOutputMode(true);
+    if (m_output == DisplayOutput::Katanga)
+    {
+        if (!m_katanga.Start())
+        {
+            Log("Katanga output: Katanga is not running (start Katanga first)");
+            return false;
+        }
+        Log("Katanga output: connected to Katanga");
+    }
     if (m_output == DisplayOutput::Vision3D)
     {
         RECT rc{};
@@ -1206,8 +1243,9 @@ void SRWeaver::StopPlain()
 {
     if (!m_plainUp) return;
     if (m_output == DisplayOutput::Zondision || Zondision::IsStarted()) Zondision::Stop();
-    ForceFramePackMode(false);
+    ForceOutputMode(false);
     m_vision.Stop();
+    m_katanga.Stop();
     m_plainUp = false;
     m_plain3D = false;
     m_plainHwnd = nullptr;

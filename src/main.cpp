@@ -5590,6 +5590,8 @@ namespace
         const DWORD now = GetTickCount();
         if (now - app.katangaAutoLastPollMs < 500) return;
         app.katangaAutoLastPollMs = now;
+        // (The Katanga output is on: the handle in Katanga's file is Stereo Loom's own.)
+        if (app.weaver.Output() == DisplayOutput::Katanga) return;
 
         // katangaAutoBlocked: set when an auto session ends while a handle is
         // still published (sender stopped but left a stale value, or an idle
@@ -9599,6 +9601,10 @@ namespace
             // native title bar (Looking Glass / Windowed). Cheap, idempotent.
             if (app && (GetWindowLongPtr(hwnd, GWL_STYLE) & WS_CAPTION))
                 ApplyCaptionTheme(hwnd);
+            // ... and the taskbar's: the tray icon in its colours.
+            // (An ANSI window: the setting's name comes as ANSI text.)
+            if (app && lParam && lstrcmpiA(reinterpret_cast<LPCSTR>(lParam), "ImmersiveColorSet") == 0)
+                app->tray.RefreshIcon();
             break;
 
         case WM_CLOSE:

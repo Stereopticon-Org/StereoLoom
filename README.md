@@ -72,7 +72,10 @@ capture (screen / window)  ->  convert any stereo format to SBS  ->  weave  ->  
 ### Display outputs
 Chosen in the Display Output section, below Stereo 3D Input. Everything before the output (the capture,
 the stereo format, Gaussian Splats) works the same whichever is chosen.
-- **Leia SR** (the default): the SR weave, eye tracked, for SR displays.
+- **Leia SR** (the default): the SR weave, eye tracked, for SR displays. Its own
+  settings sit under it: the weaver (Direct3D 11 or 12), the anti-crosstalk
+  method and strength, contrast, and, where the display maker's software is
+  installed, the Acer SpatialLabs and Samsung Odyssey 3D switches.
 - **Zondision**: side by side on a Zondision display (the Zimo M1), which weaves
   it with its own chip; Stereo Loom switches the display's 3D on and off through
   Zondision's SDK, and its eye tracker drives Gaussian Splats. Needs Zondision's
@@ -80,8 +83,15 @@ the stereo format, Gaussian Splats) works the same whichever is chosen.
 - **Anaglyph**: red / cyan, green / magenta or amber / blue glasses, on any
   display. Optimised (Dubois' matrices, least ghosting with red / cyan), Colour,
   Half Colour or Grey.
-- **Side-by-Side** and **Top-and-Bottom**: for a 3D TV or projector in its own 3D
-  mode, or for VR viewers that take a side by side picture.
+- **Side-by-Side** and **Top-and-Bottom**, Half or Full. Half squeezes each eye
+  into half the screen, for a 3D TV or projector in its own 3D mode. Full gives
+  each eye the display's whole resolution on a double-wide (or double-tall)
+  display mode, as AR glasses and some projectors take it; Stereo Loom switches
+  to that mode where the display offers it (a display already in one, such as
+  glasses at 3840 x 1080, is left as it is).
+- **Katanga**: the two eyes handed to [Katanga](https://github.com/bo3b/Katanga)
+  over its shared-texture protocol (as wiz3D does), to view in a VR headset.
+  Start Katanga first.
 - **Row Interleaved**, **Column Interleaved** and **Checkerboard**: for passive
   (polarised) and DLP 3D displays.
 - **HDMI Frame Packing**: for 3D TVs and projectors that take frame-packed 3D.

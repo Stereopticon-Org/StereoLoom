@@ -8,16 +8,17 @@ using namespace srw;
 
 static constexpr UINT kIconId = 1;
 
-// Load Stereo Loom's icon at the system's small-icon size -- the light tile on a
-// light taskbar, the dark one otherwise -- falling back to the default
-// application icon if it is unavailable.
+// Stereo Loom's mark (no tile) at the system's small-icon size, in the colours
+// for the taskbar's theme -- dark threads on a light taskbar, light ones on a
+// dark taskbar (Windows' "default app mode" is the apps', SystemUsesLightTheme
+// the taskbar's) -- falling back to the default application icon.
 static HICON LoadTrayIcon()
 {
     DWORD light = 0, sz = sizeof(light);
     RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
                  L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &sz);
     HICON icon = (HICON)LoadImageA(
-        GetModuleHandle(nullptr), MAKEINTRESOURCEA(light ? IDI_TRAY_LIGHT : IDI_TRAY), IMAGE_ICON,
+        GetModuleHandle(nullptr), MAKEINTRESOURCEA(light ? IDI_TRAY_ON_LIGHT : IDI_TRAY_ON_DARK), IMAGE_ICON,
         GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
         LR_DEFAULTCOLOR);
     return icon ? icon : LoadIcon(nullptr, IDI_APPLICATION);
@@ -76,6 +77,20 @@ void TrayIcon::Remove()
     nid.uID    = kIconId;
     Shell_NotifyIconW(NIM_DELETE, &nid);
     m_added = false;
+}
+
+// The icon again, for the taskbar's theme as it is now (Windows' light / dark
+// switch: WM_SETTINGCHANGE "ImmersiveColorSet").
+void TrayIcon::RefreshIcon()
+{
+    if (!m_added) return;
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd   = m_hwnd;
+    nid.uID    = kIconId;
+    nid.uFlags = NIF_ICON;
+    nid.hIcon  = LoadTrayIcon();
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
 void TrayIcon::SetTooltip(const char* tooltip)

@@ -358,8 +358,8 @@ namespace srw::Settings
         WriteDword(kSettingsKey, L"WeaverChoice", (DWORD)(choice >= 0 && choice <= 6 ? choice : 0));
     }
 
-    int  ReadDisplayOutput() { const DWORD v = ReadDword(kSettingsKey, L"DisplayOutput", 0); return v < 10 ? (int)v : 0; }
-    void WriteDisplayOutput(int output) { WriteDword(kSettingsKey, L"DisplayOutput", (DWORD)(output >= 0 && output < 10 ? output : 0)); }
+    int  ReadDisplayOutput() { const DWORD v = ReadDword(kSettingsKey, L"DisplayOutput", 0); return v < 13 ? (int)v : 0; }
+    void WriteDisplayOutput(int output) { WriteDword(kSettingsKey, L"DisplayOutput", (DWORD)(output >= 0 && output < 13 ? output : 0)); }
     std::wstring ReadOutputDisplay() { return ReadText(kSettingsKey, L"OutputDisplay"); }
     void WriteOutputDisplay(const std::wstring& device) { WriteText(kSettingsKey, L"OutputDisplay", device); }
     int  ReadOutputAnaColours() { const DWORD v = ReadDword(kSettingsKey, L"OutputAnaColours", 0); return v < 3 ? (int)v : 0; }

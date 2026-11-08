@@ -1,9 +1,11 @@
 #include "resource.h"
 
-// Application icon: Stereo Loom's mark (the Stereopticon logo set), the dark tile;
-// the light one is the tray's on a light taskbar (TrayIcon.cpp).
-IDI_TRAY       ICON "../assets/stereo_loom.ico"
-IDI_TRAY_LIGHT ICON "../assets/stereo_loom_light.ico"
+// Application icon: Stereo Loom's logo (the Stereopticon logo set), the dark tile.
+IDI_TRAY            ICON "../assets/stereo_loom.ico"
+// The tray's: the mark alone, no tile -- light threads for a dark taskbar, dark
+// threads for a light one (TrayIcon.cpp follows Windows' setting).
+IDI_TRAY_ON_DARK    ICON "../assets/tray_on_dark.ico"
+IDI_TRAY_ON_LIGHT   ICON "../assets/tray_on_light.ico"
 
 // UI fonts embedded into the exe (Inter, SIL Open Font License) — loaded from these
 // resources at runtime so no font files need to ship beside the executable.

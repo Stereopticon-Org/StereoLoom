@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="185.6 132 760 760" width="1024" height="1024">
+<title>Stereo Loom</title>
+<defs>
+<mask id="under" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><rect width="1024" height="1024" fill="#fff"/><path d="M203.6 512 A385.8 385.8 0 0 1 779.5 512 A385.8 385.8 0 0 1 203.6 512 Z" fill="#000"/><rect x="727" y="469" width="200.7" height="86" rx="30.7" fill="#000"/></mask>
+<mask id="over" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><rect width="1024" height="1024" fill="#fff"/><rect x="455.7" y="383" width="112.6" height="258" rx="0" fill="#000"/></mask>
+</defs>
+<g mask="url(#under)"><rect x="298" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#EDE7DC"/><rect x="666.6" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#EDE7DC"/></g>
+<g mask="url(#over)"><path d="M235.5 512 A371.2 371.2 0 0 1 747.5 512 A371.2 371.2 0 0 1 235.5 512 Z" fill="#C8894A"/><rect x="727" y="495.6" width="174.1" height="32.8" rx="16.4" fill="#C8894A"/></g>
+<rect x="482.3" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#EDE7DC"/>
+</svg>

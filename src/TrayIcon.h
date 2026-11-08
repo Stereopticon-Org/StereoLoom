@@ -168,6 +168,7 @@ namespace srw
 
         // Update the tooltip text (e.g. to reflect current state).
         void SetTooltip(const char* tooltip);
+        void RefreshIcon();   // (the taskbar went light / dark)
 
         // Build and show the right-click context menu, with current state
         // reflected as checkmarks/radio marks. Commands post as WM_COMMAND.

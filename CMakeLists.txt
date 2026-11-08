@@ -196,6 +196,8 @@ add_executable(StereoLoom WIN32
     src/Zondision.h
     src/Vision3D.cpp
     src/Vision3D.h
+    src/KatangaOutput.cpp
+    src/KatangaOutput.h
     src/TrayIcon.cpp
     src/Capture.cpp
     src/CaptureDXGI.cpp

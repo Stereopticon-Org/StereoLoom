@@ -27,6 +27,8 @@ namespace srw
         void SetOptions(DisplayOutput output, int anaColours, int anaStyle, bool swapEyes);
         // The side-by-side picture (left | right, each perEyeWidth wide) to draw from.
         void SetInput(ID3D11ShaderResourceView* srv, int perEyeWidth, int height);
+        int EyeWidth() const { return m_eyeW; }
+        int EyeHeight() const { return m_h; }
         // Drawn into the bound render target, over the viewport set (the renderer's).
         // originX / originY: where the render target's pixel (0, 0) is on its
         // display, in pixels from the display's top left -- so the interleaved rows

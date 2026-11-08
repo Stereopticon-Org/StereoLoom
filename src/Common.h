@@ -58,13 +58,17 @@ namespace srw
         Checkerboard,       // alternate pixels (DLP 3D)
         FramePacking,       // HDMI 1.4 frame packing: left eye, 45 blank rows, right eye (1920 x 2205 / 1280 x 1470)
         Vision3D,           // NVIDIA 3D Vision shutter glasses (NVAPI stereo; on new drivers with 3D Vision restored)
+        FullSideBySide,     // left | right, each eye at full resolution: a double-wide display mode (3840 x 1080 ...)
+        FullTopAndBottom,   // left over right, each eye at full resolution: a double-tall display mode
+        Katanga,            // handed to Katanga (bo3b's stereo viewer, for VR headsets) over its shared texture
         Count
     };
     inline const char* DisplayOutputName(DisplayOutput o)
     {
         static const char* const names[] = {
-            "Leia SR", "Zondision", "Anaglyph", "Side-by-Side", "Top-and-Bottom",
-            "Row Interleaved", "Column Interleaved", "Checkerboard", "HDMI Frame Packing", "3D Vision" };
+            "Leia SR", "Zondision", "Anaglyph", "Side-by-Side (Half)", "Top-and-Bottom (Half)",
+            "Row Interleaved", "Column Interleaved", "Checkerboard", "HDMI Frame Packing", "3D Vision",
+            "Side-by-Side (Full)", "Top-and-Bottom (Full)", "Katanga" };
         const int i = (int)o;
         return i >= 0 && i < (int)DisplayOutput::Count ? names[i] : "?";
     }

@@ -43,4 +43,27 @@ for theme, t in THEMES.items():
         thread(xs[1], t['fg']),
         '</g>', '</svg>', '']
     open(os.path.join(out, f'stereo_loom_{theme}.svg'), 'w', encoding='utf-8', newline='\n').write('\n'.join(parts))
+# The mark alone (no tile), for the tray and anywhere the logo sits on its own:
+# the gaps cut out (transparent), not painted. on_dark: light threads, for dark
+# backgrounds; on_light: dark threads.
+cx = (lx0 + lx1) / 2
+tail = (lx1 - S * 0.02, cy - S * 0.016, S * 0.88, cy + S * 0.016)
+vb = '185.6 132 760 760'
+for name, theme in (('on_dark', 'dark'), ('on_light', 'light')):
+    t = THEMES[theme]
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{vb}" width="1024" height="1024">',
+        '<title>Stereo Loom</title>',
+        '<defs>',
+        f'<mask id="under" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><rect width="1024" height="1024" fill="#fff"/>'
+        + vesica(cx, (lx1 - lx0) + gap * 2.4, lh + gap * 2, '#000')
+        + rrect(tail[0], tail[1] - gap, tail[2] + gap, tail[3] + gap, S * 0.03, '#000') + '</mask>',
+        f'<mask id="over" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><rect width="1024" height="1024" fill="#fff"/>'
+        + rrect(xs[1] - bw / 2 - gap, cy - lh / 2 - gap, xs[1] + bw / 2 + gap, cy + lh / 2 + gap, 0, '#000') + '</mask>',
+        '</defs>',
+        '<g mask="url(#under)">' + thread(xs[0], t['fg']) + thread(xs[2], t['fg']) + '</g>',
+        '<g mask="url(#over)">' + vesica(cx, lx1 - lx0, lh, t['accent']) + rrect(*tail, S * 0.016, t['accent']) + '</g>',
+        thread(xs[1], t['fg']),
+        '</svg>', '']
+    open(os.path.join(out, f'stereo_loom_mark_{name}.svg'), 'w', encoding='utf-8', newline='\n').write('\n'.join(parts))
 print('ok')

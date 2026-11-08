@@ -5,6 +5,7 @@
 #include "Common.h"
 #include "OutputEncoder.h"
 #include "Vision3D.h"
+#include "KatangaOutput.h"
 #include <d3d11.h>
 #include <memory>
 
@@ -206,12 +207,14 @@ namespace srw
         HWND                      m_plainHwnd = nullptr;
         OutputEncoder             m_encoder;
         Vision3D                  m_vision;               // (the 3D Vision output)
+        KatangaOutput             m_katanga;              // (the Katanga output)
         int                       m_anaColours = 0, m_anaStyle = 0;
         bool                      m_swapEyes = false;
         int                       m_framePack = 0;        // (SetFramePacking)
         bool                      m_modeForced = false;   // (frame packing: the display's mode changed by us)
         std::wstring              m_forcedDevice;
-        void ForceFramePackMode(bool on);
+        void ForceOutputMode(bool on);   // (frame packing; Full SBS / TAB)
+        void DrawInto(ID3D11RenderTargetView* rtv, int w, int h);
 
         SR::SRContext*            m_context = nullptr;
         SR::IDX11Weaver1*         m_weaver  = nullptr;

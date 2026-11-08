@@ -193,7 +193,10 @@ void OutputEncoder::Fill()
     switch (m_output)
     {
     case DisplayOutput::SideBySide:        mode = 1; break;
+    case DisplayOutput::FullSideBySide:    mode = 1; break;   // (the same picture, on a double-wide display mode)
+    case DisplayOutput::Katanga:           mode = 1; break;
     case DisplayOutput::TopAndBottom:      mode = 2; break;
+    case DisplayOutput::FullTopAndBottom:  mode = 2; break;
     case DisplayOutput::RowInterleaved:    mode = 3; break;
     case DisplayOutput::ColumnInterleaved: mode = 4; break;
     case DisplayOutput::Checkerboard:      mode = 5; break;
