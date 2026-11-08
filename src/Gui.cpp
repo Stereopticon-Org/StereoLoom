@@ -1132,7 +1132,7 @@ bool Gui::Render(GuiState& state)
         // Title->switch gap: 4px in expanded, 2px in compact (compresses by 2px
         // to free more room for the status lines below).
         ImGui::Dummy(ImVec2(0, (m_expanded ? 4.0f : 2.0f) * m_dpiScale));
-        const float sw = ImGui::GetFrameHeight() * 1.7f * 1.8f;   // switch width (heightScale 1.7)
+        const float sw = ToggleBase() * 1.7f * 1.8f;   // switch width (heightScale 1.7)
         ImGui::SetCursorPosX((winW - sw) * 0.5f);
         if (ToggleSwitch("##weaving", state.weaving, 1.7f)) post(ID_TRAY_TOGGLE_WEAVE);
     }
@@ -1225,7 +1225,7 @@ bool Gui::Render(GuiState& state)
             // the state, no need for the "Off" suffix).
             const char* ot = showOt ? trackLabel : "Head Tracking";
             const float th  = ImGui::GetTextLineHeight();
-            const float swH = ImGui::GetFrameHeight() * 0.55f;   // toggle height
+            const float swH = ToggleBase() * 0.55f;   // toggle height
             const float swW = swH * 1.8f;                        // toggle width
             const float gap = 0.45f * th;
             const float textW = ImGui::CalcTextSize(ot).x;
