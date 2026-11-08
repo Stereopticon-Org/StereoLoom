@@ -1,4 +1,4 @@
-// dx12test: the first building block of the DX12 weaver option. SR Loom's
+// dx12test: the first building block of the DX12 weaver option. Stereo Loom's
 // capture and conversion stay Direct3D 11; the DX12 weaver needs the converted
 // picture as a Direct3D 12 texture. This checks, on this machine's GPU and
 // driver, that a D3D11 texture can be handed to D3D12 without a copy and read
@@ -27,7 +27,7 @@ int main()
     DXGI_ADAPTER_DESC1 ad{}; if (adapter) adapter->GetDesc1(&ad);
     printf("adapter: %ls\n", ad.Description);
 
-    // Direct3D 11 (as SR Loom's renderer) and Direct3D 12 on the same adapter.
+    // Direct3D 11 (as Stereo Loom's renderer) and Direct3D 12 on the same adapter.
     ID3D11Device* d11 = nullptr; ID3D11DeviceContext* c11 = nullptr;
     HRESULT hr = D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
                                    D3D11_SDK_VERSION, &d11, nullptr, &c11);

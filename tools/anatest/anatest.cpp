@@ -1,6 +1,6 @@
 // anatest: offline check of the anaglyph "Recovered Colour" conversion.
 // Loads an anaglyph image, runs the real Converter (the same shaders as
-// SR Loom) and saves the result, so quality changes can be compared on
+// Stereo Loom) and saves the result, so quality changes can be compared on
 // the same pictures without the SR display.
 //
 //   anatest <in.jpg|png> <out.png> [mode=4] [combo=0] [crop x y w h] [frames=1]
@@ -27,7 +27,7 @@
 using namespace srw;
 
 // Zero-copy check (ANATEST_RAW=1 with ANATEST_FORMATS): the converter given a
-// plain UNORM view of the same pixels plus SetSourceEncoded -- what SR Loom does
+// plain UNORM view of the same pixels plus SetSourceEncoded -- what Stereo Loom does
 // with the capture's own frame -- must match the _SRGB view's output. Prints the
 // largest byte difference, how many bytes differ, and both GPU times.
 static std::vector<uint8_t> ReadOutputBytes(ID3D11Device* dev, ID3D11DeviceContext* ctx, Converter& cv)
@@ -431,7 +431,7 @@ int wmain(int argc, wchar_t** argv)
     if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, getenv("ANATEST_DEBUG") ? D3D11_CREATE_DEVICE_DEBUG : 0, nullptr, 0, D3D11_SDK_VERSION, &dev, nullptr, &ctx)))
     { fwprintf(stderr, L"no D3D11 device\n"); return 1; }
 
-    // The source as SR Loom sees a capture: RGBA8, read through an sRGB view.
+    // The source as Stereo Loom sees a capture: RGBA8, read through an sRGB view.
     D3D11_TEXTURE2D_DESC td{};
     td.Width = w; td.Height = h; td.MipLevels = 1; td.ArraySize = 1; td.SampleDesc.Count = 1;
     td.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;

@@ -219,7 +219,7 @@ int main(int argc, char** argv)
     WNDCLASSW wc{}; wc.lpfnWndProc = TestWndProc; wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = L"SRLoomCapTest"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     RegisterClassW(&wc);
-    HWND wnd = CreateWindowExW(0, wc.lpszClassName, L"SR Loom capture test", WS_OVERLAPPEDWINDOW,
+    HWND wnd = CreateWindowExW(0, wc.lpszClassName, L"Stereo Loom capture test", WS_OVERLAPPEDWINDOW,
                                120, 120, 800, 600, nullptr, nullptr, wc.hInstance, nullptr);
     ShowWindow(wnd, SW_SHOWNOACTIVATE);
     UpdateWindow(wnd);

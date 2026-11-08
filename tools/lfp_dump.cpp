@@ -1,5 +1,5 @@
 // lfp_dump.cpp -- tiny CLI test that exercises LFPReader against an LFP
-// file. Builds as a standalone exe (no SR Loom / D3D11 deps) for quick
+// file. Builds as a standalone exe (no Stereo Loom / D3D11 deps) for quick
 // verification that the container parser handles real Lytro files.
 //
 // Build by hand:
@@ -7,7 +7,7 @@
 // Then run e.g.:
 //   lfp_dump.exe "lib\Test Images\Lytro\IMG_0007.lfp"
 //
-// Logs go to stdout + the same srweaver.log file SR Loom uses (Log lives
+// Logs go to stdout + the same srweaver.log file Stereo Loom uses (Log lives
 // in Common.h). Outputs: file size, chunk count, per-chunk type/size/sha1
 // summary, and -- if any Metadata chunk parses as JSON containing
 // imageRef/metadataRef/privateMetadataRef keys -- the resolved sha1s.

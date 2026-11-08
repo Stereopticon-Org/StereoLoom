@@ -8,12 +8,17 @@ using namespace srw;
 
 static constexpr UINT kIconId = 1;
 
-// Load the embedded Dimenco logo icon at the system's small-icon size,
-// falling back to the default application icon if it is unavailable.
+// Stereo Loom's mark (no tile) at the system's small-icon size, in the colours
+// for the taskbar's theme -- dark threads on a light taskbar, light ones on a
+// dark taskbar (Windows' "default app mode" is the apps', SystemUsesLightTheme
+// the taskbar's) -- falling back to the default application icon.
 static HICON LoadTrayIcon()
 {
+    DWORD light = 0, sz = sizeof(light);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                 L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &sz);
     HICON icon = (HICON)LoadImageA(
-        GetModuleHandle(nullptr), MAKEINTRESOURCEA(IDI_TRAY), IMAGE_ICON,
+        GetModuleHandle(nullptr), MAKEINTRESOURCEA(light ? IDI_TRAY_ON_LIGHT : IDI_TRAY_ON_DARK), IMAGE_ICON,
         GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
         LR_DEFAULTCOLOR);
     return icon ? icon : LoadIcon(nullptr, IDI_APPLICATION);
@@ -30,7 +35,7 @@ TrayIcon::~TrayIcon()
 // land as garbled multi-byte glyphs. Convert through the W form instead.
 static void Utf8ToWide(const char* in, wchar_t* out, int outChars)
 {
-    const char* src = in ? in : "SR Loom";
+    const char* src = in ? in : "Stereo Loom";
     int n = MultiByteToWideChar(CP_UTF8, 0, src, -1, out, outChars);
     if (n == 0)
     {
@@ -72,6 +77,20 @@ void TrayIcon::Remove()
     nid.uID    = kIconId;
     Shell_NotifyIconW(NIM_DELETE, &nid);
     m_added = false;
+}
+
+// The icon again, for the taskbar's theme as it is now (Windows' light / dark
+// switch: WM_SETTINGCHANGE "ImmersiveColorSet").
+void TrayIcon::RefreshIcon()
+{
+    if (!m_added) return;
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd   = m_hwnd;
+    nid.uID    = kIconId;
+    nid.uFlags = NIF_ICON;
+    nid.hIcon  = LoadTrayIcon();
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
 void TrayIcon::SetTooltip(const char* tooltip)
@@ -136,12 +155,12 @@ UINT TrayIcon::ShowContextMenu(HWND hwnd, const MenuState& s, bool returnCmd)
     HMENU menu = CreatePopupMenu();
     if (!menu) return 0;
 
-    // Explicit "Open SR Loom" entry at the top. Left-click on the tray
+    // Explicit "Open Stereo Loom" entry at the top. Left-click on the tray
     // icon also opens the panel, but that's non-obvious from the right-
     // click menu alone (Reddit feedback, 2026-06-28: user spent time
     // hunting for the head-tracking UI via right-click before realising).
     // Bold to hint it's the primary action.
-    AppendMenuA(menu, MF_STRING, ID_TRAY_OPEN_PANEL, "Open SR Loom");
+    AppendMenuA(menu, MF_STRING, ID_TRAY_OPEN_PANEL, "Open Stereo Loom");
     SetMenuDefaultItem(menu, ID_TRAY_OPEN_PANEL, FALSE);
     // Persistent "update available" entry (the launch balloon is easy to
     // miss and disappears). Opens the release page.

@@ -3,6 +3,9 @@
 #pragma once
 
 #include "Common.h"
+#include "OutputEncoder.h"
+#include "Vision3D.h"
+#include "KatangaOutput.h"
 #include <d3d11.h>
 #include <memory>
 
@@ -133,13 +136,31 @@ namespace srw
 
         bool HasContext() const { return m_context != nullptr; }
 
+        // ---- Display Output (Settings DisplayOutput) ----
+        // The SR runtime's DLLs are installed (they are loaded only when used, so
+        // Stereo Loom runs on a PC without them -- the other outputs).
+        static bool RuntimePresent();
+        // What the next session draws: the SR weave, or (any other) Stereo Loom's
+        // own encoding of the two eyes on `device` (a Windows display name; empty:
+        // automatic -- a Zondision display for Zondision, else the primary). Takes
+        // effect at the next StartSR; GetSRDisplayRect follows it at once.
+        void SetOutput(DisplayOutput output, const std::wstring& device);
+        DisplayOutput Output() const { return m_output; }
+        bool IsPlainOutput() const { return m_output != DisplayOutput::SR; }
+        // The session up is one of Stereo Loom's own outputs.
+        bool IsPlainUp() const { return m_plainUp; }
+        // Anaglyph colours and style, and the eyes swapped (live).
+        void SetOutputOptions(int anaColours, int anaStyle, bool swapEyes);
+        // HDMI frame packing's size: 0 1080p (1920 x 2205), 1 720p (1280 x 1470). At the next StartSR.
+        void SetFramePacking(int size) { m_framePack = size; }
+
         // Borrowed pointer to the SRContext. Used by the OpenTrack bridge
         // (and anything else that wants to attach its own SR::HeadPoseTracker
         // / sense stream without spinning up a second context). Lifetime is
         // tied to this SRWeaver -- callers must Disable any borrowed
         // subscriptions before Shutdown.
         SR::SRContext* Context() const { return m_context; }
-        bool HasWeaver()  const { return m_weaver != nullptr || m_legacy != nullptr || m_weaver12 != nullptr || m_legacy12 != nullptr || m_lensOnlyUp; }
+        bool HasWeaver()  const { return m_weaver != nullptr || m_legacy != nullptr || m_weaver12 != nullptr || m_legacy12 != nullptr || m_lensOnlyUp || m_plainUp; }
         // Lens only: the next SR session holds the lens on with no weaver and no
         // tracker (see StartSR). Set before the session starts; IsLensOnly: the
         // session that is up is one.
@@ -175,6 +196,25 @@ namespace srw
         void SetInput12(ID3D12Resource* res, int perEyeWidth, int height, DXGI_FORMAT format);
         bool FinishWeaver();   // (head tracker, context initialise, lens hint: either weaver)
         void StopHeadTracker();
+        bool StartPlain(ID3D11DeviceContext* immediateContext, HWND window);
+        void StopPlain();
+        bool PlainDisplayRect(RECT& out);
+
+        DisplayOutput             m_output = DisplayOutput::SR;   // (SetOutput)
+        std::wstring              m_outputDevice;
+        bool                      m_plainUp = false;      // (one of Stereo Loom's own outputs is the session)
+        bool                      m_plain3D = false;      // (Zondision: 3D asked for)
+        HWND                      m_plainHwnd = nullptr;
+        OutputEncoder             m_encoder;
+        Vision3D                  m_vision;               // (the 3D Vision output)
+        KatangaOutput             m_katanga;              // (the Katanga output)
+        int                       m_anaColours = 0, m_anaStyle = 0;
+        bool                      m_swapEyes = false;
+        int                       m_framePack = 0;        // (SetFramePacking)
+        bool                      m_modeForced = false;   // (frame packing: the display's mode changed by us)
+        std::wstring              m_forcedDevice;
+        void ForceOutputMode(bool on);   // (frame packing; Full SBS / TAB)
+        void DrawInto(ID3D11RenderTargetView* rtv, int w, int h);
 
         SR::SRContext*            m_context = nullptr;
         SR::IDX11Weaver1*         m_weaver  = nullptr;

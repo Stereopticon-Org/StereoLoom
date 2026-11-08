@@ -55,10 +55,15 @@ namespace srw
     // WPARAM = 0 for Automatic Detection, else StereoFormatIndex + 1.
     constexpr UINT WM_APP_PIN_INPUT = WM_APP + 11;
 
+    // GUI -> main window: Samsung Odyssey 3D Hub's fullscreen popup off
+    // (WPARAM 0) or its saved preference put back (WPARAM 1); Hub's games side by
+    // side off (2) or on (3). See SamsungHub.h.
+    constexpr UINT WM_APP_SAMSUNG_POPUP = WM_APP + 12;
+
     // Menu command IDs (also reused as WM_COMMAND ids from the popup menu).
     enum TrayCommand : UINT
     {
-        ID_TRAY_OPEN_PANEL   = 40000,   // "Open SR Loom" -- shows the GUI (same as left-click)
+        ID_TRAY_OPEN_PANEL   = 40000,   // "Open Stereo Loom" -- shows the GUI (same as left-click)
         ID_TRAY_TOGGLE_WEAVE = 40001,
         ID_TRAY_MODE_FULLSCREEN,
         ID_TRAY_MODE_WINDOWED,
@@ -163,6 +168,7 @@ namespace srw
 
         // Update the tooltip text (e.g. to reflect current state).
         void SetTooltip(const char* tooltip);
+        void RefreshIcon();   // (the taskbar went light / dark)
 
         // Build and show the right-click context menu, with current state
         // reflected as checkmarks/radio marks. Commands post as WM_COMMAND.

@@ -484,7 +484,7 @@ namespace srw::Profiles
         std::ofstream f(path, std::ios::trunc);
         if (!f.is_open()) { Log("Profiles::Save: failed to open file for write"); return; }
 
-        f << "# SR Loom profile list. Hand-editable.\n"
+        f << "# Stereo Loom profile list. Hand-editable.\n"
              "#\n"
              "# Each [Name] section is one profile. Match keys:\n"
              "#   exe=       case-insensitive substring of the foreground window's\n"
@@ -504,7 +504,7 @@ namespace srw::Profiles
              "#                                  (HSBS, HTAB, _2x1, MVC, anaglyph, etc.);\n"
              "#                                  falls back to defaultformat if nothing is\n"
              "#                                  recognised. (format=title means the same.)\n"
-             "#   format=detect                  SR Loom's Automatic Detection: it looks at\n"
+             "#   format=detect                  Stereo Loom's Automatic Detection: it looks at\n"
              "#                                  the PICTURE for the layout (experimental).\n"
              "#   format=<id>                    always use this format for this profile.\n"
              "#   defaultformat=<id>             only used when format=auto and no token\n"
@@ -551,7 +551,7 @@ namespace srw::Profiles
              "#   at their defaults, or when the profile already has them. weaver= is only\n"
              "#   ever set here, by hand.\n"
              "#\n"
-             "# Only fields you customised are written. Unset fields use SR Loom's\n"
+             "# Only fields you customised are written. Unset fields use Stereo Loom's\n"
              "# defaults. Order inside a section doesn't matter.\n"
              "#\n"
              "# include_head_tracking=1 makes the profile also re-apply the\n"
@@ -561,7 +561,7 @@ namespace srw::Profiles
              "# ht_output_mode, ht_invert_x ht_invert_y ht_invert_z ht_invert_yaw\n"
              "# ht_invert_pitch ht_invert_roll (0/1).\n"
              "#\n"
-             "# This file is read again by itself when it is changed while SR Loom runs.\n\n";
+             "# This file is read again by itself when it is changed while Stereo Loom runs.\n\n";
 
         // Sparse writer: emit only fields that differ from Profile{} defaults.
         // Keeps the file readable + matches NTM's compact example style. The

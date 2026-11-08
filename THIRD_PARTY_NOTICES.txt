@@ -1,7 +1,7 @@
-SR Loom: third-party notices
+Stereo Loom: third-party notices
 ============================
 
-SR Loom itself is MIT licensed (see LICENSE). SRLoom.exe includes or is built
+Stereo Loom itself is MIT licensed (see LICENSE). StereoLoom.exe includes or is built
 with the following third-party software. Their licences are reproduced below.
 
   1. Dear ImGui (MIT)
@@ -9,8 +9,10 @@ with the following third-party software. Their licences are reproduced below.
   3. 1 Euro Filter (BSD 3-Clause)
   4. Inter font (SIL Open Font License 1.1)
   5. stb_image (public domain / MIT)
-  6. Leia Simulated Reality SDK (MIT): SR Loom links against it; the SR
+  6. Leia Simulated Reality SDK (MIT): Stereo Loom links against it; the SR
      Platform runtime is installed separately.
+  7. Odyssey Stereo Controls (MIT): how Samsung Odyssey 3D Hub is asked to
+     turn its fullscreen popup off and back on (src/SamsungHub.cpp).
 
 
 ------------------------------------------------------------------------------
@@ -42,7 +44,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-2. NPClient (TrackIR-compatible client DLL, embedded in SRLoom.exe)
+2. NPClient (TrackIR-compatible client DLL, embedded in StereoLoom.exe)
    Original author: uglyDwarf, Linuxtrack project
    (https://github.com/uglyDwarf/linuxtrack), as vendored by OpenTrack
    (https://github.com/opentrack/opentrack, contrib/npclient)
@@ -110,7 +112,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-4. Inter font (embedded in SRLoom.exe)
+4. Inter font (embedded in StereoLoom.exe)
    https://github.com/rsms/inter
 ------------------------------------------------------------------------------
 
@@ -452,3 +454,73 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
 IN THE SOFTWARE.
 
+
+------------------------------------------------------------------------------
+7. Odyssey Stereo Controls
+   https://github.com/AlonBorodAHub/Odyssey-Stereo-Controls
+   Stereo Loom's Samsung Hub popup switch (src/SamsungHub.cpp) follows its way of
+   asking Hub: the settings pipe, the message and the fields it carries, and
+   the three preferences that hold the popup.
+------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2026 AlonBorodAHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------------
+8. NV3D-Lib (the 3D Vision output; statically linked when built with it)
+   https://github.com/oneup03/NV3D-Lib
+------------------------------------------------------------------------------
+
+NV3D-Lib presents a side-by-side picture to NVIDIA 3D Vision through a
+Direct3D 9Ex device and NVIDIA's stereo signature. Its LICENSE file is the GNU
+Lesser General Public License, version 2.1 (its header text says LGPL v3);
+the full text is in its repository and in lib/NV3D-Lib/LICENSE of a build tree.
+
+Stereo Loom links it statically. As the LGPL asks, Stereo Loom's complete
+source is published (MIT), with the build files (CMakeLists.txt), so anyone
+can rebuild Stereo Loom against a modified NV3D-Lib: put the modified
+library's include/ and lib/x64/Release-MT/ in lib/NV3D-Lib and build.
+
+------------------------------------------------------------------------------
+9. NVIDIA NVAPI (nvapi64.lib, statically linked with NV3D-Lib)
+------------------------------------------------------------------------------
+
+SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: MIT
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

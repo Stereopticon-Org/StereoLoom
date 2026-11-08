@@ -592,7 +592,7 @@ bool Converter::Convert(ID3D11ShaderResourceView* source, int srcWidth, int srcH
     // Recovered Colour given the capture's own frame (zero-copy: an encoded
     // UNORM view, SetSourceEncoded). Windows hands over a new frame every
     // refresh whether or not anything on screen changed (and calls the whole
-    // screen changed: SR Loom's own window is on it), so most frames are the
+    // screen changed: Stereo Loom's own window is on it), so most frames are the
     // one before again. Copying each one to read it and averaging it down just
     // to find that out was the cost of every frame. Instead: the frame
     // averaged down as it is (no decode: one cheap pass), compared with last
@@ -1344,6 +1344,7 @@ bool Converter::Convert(ID3D11ShaderResourceView* source, int srcWidth, int srcH
     }
     SAFE_RELEASE(srcTex2D);
     SAFE_RELEASE(directTex);
+    ++m_serial;   // (a picture was made: Serial)
     m_lastVersion = m_srcVersion;   // (0: unknown -- the next call converts regardless)
     m_lastKey     = key;
     m_lastTintHash = m_tintHash;

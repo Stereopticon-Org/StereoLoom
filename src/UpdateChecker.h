@@ -1,4 +1,4 @@
-// UpdateChecker.h — background poll of GitHub Releases for a newer SR Loom build.
+// UpdateChecker.h — background poll of GitHub Releases for a newer Stereo Loom build.
 #pragma once
 
 #include <windows.h>

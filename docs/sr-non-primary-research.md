@@ -7,7 +7,7 @@ the *Windows primary* monitor, or can it weave on a secondary display?
 **Short answer:** the SDK does **not** require it. The "must be primary"
 instruction in vendor user guides is a Windows-setup convention, baked into
 vendor *launcher apps* (Samsung Reality Hub, Acer SpatialLabs Go / TrueGame),
-not into the underlying LeiaSR runtime or `IDX11Weaver`. SR Loom already
+not into the underlying LeiaSR runtime or `IDX11Weaver`. Stereo Loom already
 follows the SDK-recommended pattern and should work on non-primary setups
 unchanged. Verify with the diagnostic logging already in `WinMain`.
 
@@ -107,7 +107,7 @@ globally, not per-weaver.
   circumstances"* — modern Windows + the SR runtime route correctly; the
   primary requirement was a pre-Win11 launcher-app workaround.
 
-## 6. Conclusion + code implications for SR Loom
+## 6. Conclusion + code implications for Stereo Loom
 
 **The "must be primary" requirement is a Windows-setup convention, not a
 LeiaSR limitation.** The SR runtime locates the SR panel by EDID, exposes its
@@ -115,7 +115,7 @@ desktop rectangle via `IDisplayManager::getPrimaryActiveSRDisplay()->getLocation
 and the weaver follows `MonitorFromWindow(hwnd)` only for refresh-rate
 tracking.
 
-**What SR Loom already does right** (`src/main.cpp`):
+**What Stereo Loom already does right** (`src/main.cpp`):
 `ResolveTargetRect()` (line 157) queries the SDK for the SR display rect;
 `SrMonitor()` (line 1425) maps that rect back to an `HMONITOR` via
 `MonitorFromPoint(center, MONITOR_DEFAULTTOPRIMARY)`; the output window is
@@ -131,21 +131,21 @@ in `srloom.log`. Nothing in this path assumes Windows-primary.
 2. `WGC` "this display" passthrough already sets `WDA_EXCLUDEFROMCAPTURE`, so
    the feedback loop is fine regardless of primary status.
 3. Update the README's "make the SR display your primary monitor" line to
-   *"SR Loom does not require the SR display to be Windows primary; Samsung's
+   *"Stereo Loom does not require the SR display to be Windows primary; Samsung's
    own setup guide recommends it for Reality Hub, but our weave window
    self-targets the SR panel via the SDK."*
 
 **Hardware-specific caveats:**
 - **Samsung Odyssey 3D:** Reality Hub itself may behave oddly on non-primary
   setups (per Samsung's own support page) — that's *their* app, not ours.
-  SR Loom is unaffected.
+  Stereo Loom is unaffected.
 - **Acer SpatialLabs (View / View Pro / Edge):** SpatialLabs Go / TrueGame
   historically launched games on Windows-primary regardless of where the
-  SpatialLabs panel was positioned. SR Loom side-steps this entirely by
+  SpatialLabs panel was positioned. Stereo Loom side-steps this entirely by
   placing its own borderless window on the SDK-reported SR rect.
 - **Both:** if the user has *two* SR displays attached, the SDK exposes only
   `getPrimaryActiveSRDisplay()` — there is no enumeration API in 1.36.2, so
-  SR Loom can only target one. Documented limitation.
+  Stereo Loom can only target one. Documented limitation.
 
 ## Sources
 

@@ -1,5 +1,5 @@
 // Settings.cpp — HKCU registry helpers. Two stores:
-//   1. SR Loom's own settings under HKCU\Software\SRLoom (DWORDs)
+//   1. Stereo Loom's own settings under HKCU\Software\SRLoom (DWORDs)
 //   2. The Windows-standard auto-run list under HKCU\Software\Microsoft\Windows
 //      \CurrentVersion\Run, which the shell reads at login to launch entries
 //      (per-user, no admin required).
@@ -32,6 +32,21 @@ namespace
         return v;
     }
 
+    std::wstring ReadText(const wchar_t* path, const wchar_t* name)
+    {
+        wchar_t buf[512] = {}; DWORD sz = sizeof(buf) - sizeof(wchar_t);
+        if (RegGetValueW(HKEY_CURRENT_USER, path, name, RRF_RT_REG_SZ, nullptr, buf, &sz) != ERROR_SUCCESS) return std::wstring();
+        return std::wstring(buf);
+    }
+
+    void WriteText(const wchar_t* path, const wchar_t* name, const std::wstring& value)
+    {
+        HKEY h = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, path, 0, nullptr, 0, KEY_WRITE, nullptr, &h, nullptr) != ERROR_SUCCESS) return;
+        RegSetValueExW(h, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()), (DWORD)((value.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(h);
+    }
+
     void WriteDword(const wchar_t* path, const wchar_t* name, DWORD value)
     {
         HKEY h = nullptr;
@@ -54,6 +69,19 @@ namespace srw::Settings
         const LSTATUS s = RegQueryValueExW(h, kSrLoomValue, nullptr, nullptr, nullptr, nullptr);
         RegCloseKey(h);
         return s == ERROR_SUCCESS;
+    }
+
+    // The auto-run entry pointing at an exe that is not there any more (SR Loom's
+    // SRLoom.exe, replaced by StereoLoom.exe; or the folder moved): pointed at this
+    // one, so starting with Windows carries on.
+    void RepairRunAtStartup()
+    {
+        const std::wstring v = ReadText(kRunKey, kSrLoomValue);
+        if (v.empty()) return;
+        std::wstring path = v;
+        if (path.size() > 1 && path[0] == L'"') { const size_t e = path.find(L'"', 1); path = path.substr(1, e == std::wstring::npos ? std::wstring::npos : e - 1); }
+        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return;
+        WriteRunAtStartup(true);
     }
 
     void WriteRunAtStartup(bool enable)
@@ -188,6 +216,27 @@ namespace srw::Settings
     bool ReadAutoPlaneDX12() { const DWORD v = ReadDword(kSettingsKey, L"AutoPlane", 1); return v != 0 && v != 2; }   // (2: the Direct3D 11 presenter only)
     bool ReadAutoPlaneHold() { return ReadDword(kSettingsKey, L"AutoPlane", 1) == 3; }   // (3: held once reached -- an experiment, Renderer::UpdateAutoPlane)
     bool ReadWeaveRaw() { return ReadDword(kSettingsKey, L"WeaveRaw", 0) != 0; }
+    bool ReadLookAround() { return ReadDword(kSettingsKey, L"LookAround", 0) != 0; }
+    bool ReadLookShow() { return ReadDword(kSettingsKey, L"LookShow", 0) != 0; }
+    int  ReadLookSize() { return (int)ReadDword(kSettingsKey, L"LookSize", 0); }
+    int  ReadLookSmooth() { return (int)(std::min)((DWORD)64, ReadDword(kSettingsKey, L"LookSmooth", 0)); }
+    int  ReadLookGauss() { return (int)(std::min)((DWORD)3, ReadDword(kSettingsKey, L"LookGauss", 0)); }
+    void WriteLookGauss(int mode) { WriteDword(kSettingsKey, L"LookGauss", (DWORD)mode); }
+    int  ReadLookDepth() { return (int)(std::min)((DWORD)2, ReadDword(kSettingsKey, L"LookDepth", 2)); }
+    void WriteLookDepth(int mode) { WriteDword(kSettingsKey, L"LookDepth", (DWORD)mode); }
+    bool ReadLookLive() { return ReadDword(kSettingsKey, L"LookLive", 1) != 0; }
+    void WriteLookLive(bool on) { WriteDword(kSettingsKey, L"LookLive", on ? 1 : 0); }
+    bool ReadLookPaint() { return ReadDword(kSettingsKey, L"LookPaint", 1) != 0; }
+    void WriteLookPlate(bool on) { WriteDword(kSettingsKey, L"LookPlate", on ? 1 : 0); }
+    void WriteLookPaint(bool on) { WriteDword(kSettingsKey, L"LookPaint", on ? 1 : 0); }
+    bool ReadLookPlate() { return ReadDword(kSettingsKey, L"LookPlate", 0) != 0; }
+    int  ReadLookPaintGap() { const int v = (int)ReadDword(kSettingsKey, L"LookPaintGap", 200); return v >= 0 && v <= 5000 ? v : 200; }
+    bool ReadLookEdges() { return ReadDword(kSettingsKey, L"LookEdges", 1) != 0; }
+    std::wstring ReadLookModel() { return ReadText(kSettingsKey, L"LookModel"); }
+    void WriteLookModel(const std::wstring& file) { WriteText(kSettingsKey, L"LookModel", file); }
+    void WriteLookAround(bool on) { WriteDword(kSettingsKey, L"LookAround", on ? 1 : 0); }
+    int  ReadLookParallax() { const int v = (int)ReadDword(kSettingsKey, L"LookParallax", 1100) - 1000; return v >= -300 && v <= 300 ? v : 100; }   // (kept as the % + 1000)
+    void WriteLookParallax(int pct) { WriteDword(kSettingsKey, L"LookParallax", (DWORD)((pct >= -300 && pct <= 300 ? pct : 100) + 1000)); }
     bool ReadGpuRealtime() { return ReadDword(kSettingsKey, L"GpuRealtime", 0) != 0; }
     void WriteGpuRealtime(bool on) { WriteDword(kSettingsKey, L"GpuRealtime", on ? 1 : 0); }
     bool ReadAutoPlane()
@@ -309,6 +358,19 @@ namespace srw::Settings
         WriteDword(kSettingsKey, L"WeaverChoice", (DWORD)(choice >= 0 && choice <= 6 ? choice : 0));
     }
 
+    int  ReadDisplayOutput() { const DWORD v = ReadDword(kSettingsKey, L"DisplayOutput", 0); return v < 13 ? (int)v : 0; }
+    void WriteDisplayOutput(int output) { WriteDword(kSettingsKey, L"DisplayOutput", (DWORD)(output >= 0 && output < 13 ? output : 0)); }
+    std::wstring ReadOutputDisplay() { return ReadText(kSettingsKey, L"OutputDisplay"); }
+    void WriteOutputDisplay(const std::wstring& device) { WriteText(kSettingsKey, L"OutputDisplay", device); }
+    int  ReadOutputAnaColours() { const DWORD v = ReadDword(kSettingsKey, L"OutputAnaColours", 0); return v < 3 ? (int)v : 0; }
+    void WriteOutputAnaColours(int v) { WriteDword(kSettingsKey, L"OutputAnaColours", (DWORD)(v >= 0 && v < 3 ? v : 0)); }
+    int  ReadOutputAnaStyle() { const DWORD v = ReadDword(kSettingsKey, L"OutputAnaStyle", 0); return v < 4 ? (int)v : 0; }
+    void WriteOutputAnaStyle(int v) { WriteDword(kSettingsKey, L"OutputAnaStyle", (DWORD)(v >= 0 && v < 4 ? v : 0)); }
+    int  ReadOutputFramePacking() { return ReadDword(kSettingsKey, L"OutputFramePacking", 0) == 1 ? 1 : 0; }
+    void WriteOutputFramePacking(int v) { WriteDword(kSettingsKey, L"OutputFramePacking", v == 1 ? 1u : 0u); }
+    bool ReadOutputSwapEyes(){ return ReadDword(kSettingsKey, L"OutputSwapEyes", 0) != 0; }
+    void WriteOutputSwapEyes(bool on) { WriteDword(kSettingsKey, L"OutputSwapEyes", on ? 1u : 0u); }
+
     void WriteDiagSkipWeave(bool enable)
     {
         WriteDword(kSettingsKey, L"DiagSkipWeave", enable ? 1u : 0u);
@@ -382,6 +444,8 @@ namespace srw::Settings
         const DWORD v = ReadDword(kSettingsKey, L"ThemeMode", 0);
         return v <= 2 ? (int)v : 0;
     }
+    DWORD ReadPanelOpen() { return ReadDword(kSettingsKey, L"PanelOpen", 0xFFFFFFFFu); }
+    void  WritePanelOpen(DWORD bits) { WriteDword(kSettingsKey, L"PanelOpen", bits); }
     void WriteThemeMode(int mode) { WriteDword(kSettingsKey, L"ThemeMode", (DWORD)(mode >= 0 && mode <= 2 ? mode : 0)); }
 
     bool ReadSystemUsesLightTheme()

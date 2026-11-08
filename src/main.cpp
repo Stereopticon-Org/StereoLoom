@@ -6,11 +6,14 @@
 #include "Renderer.h"
 #include "Present12.h"
 #include "SRWeaver.h"
+#include "Zondision.h"
 #include "TrayIcon.h"
 #include "UpdateChecker.h"
 #include "Capture.h"
 #include "CaptureDXGI.h"
 #include "Converter.h"
+#include "LookAround.h"
+#include "NeuralDepth.h"
 #include "RegionWeave.h"
 #include "ScreenAnalysis.h"
 #include "GpuTrack.h"
@@ -27,6 +30,7 @@
 #include "Detector.h"
 #include "Gui.h"
 #include "Settings.h"
+#include "SamsungHub.h"
 #include "Profiles.h"
 #include "MediaProfiles.h"
 #include "VideoSource.h"
@@ -114,7 +118,7 @@ static constexpr int kSystemExtendedHandleInformation = 64;
 namespace
 {
     constexpr char  kWindowClass[] = "SRWeaverWindow";
-    constexpr char  kWindowTitle[] = "SR Loom";
+    constexpr char  kWindowTitle[] = "Stereo Loom";
     constexpr int   kHotkeyToggle    = 1;   // Ctrl+Alt+W : enable/disable weaving
     constexpr int   kHotkeyMode      = 2;   // Ctrl+Alt+F : fullscreen/windowed
     constexpr int   kHotkeyCapture   = 3;   // Ctrl+Alt+C : make active window 3D
@@ -135,7 +139,7 @@ namespace
     // and one of those now and then blocks it for 16-30 ms: with the render
     // loop on that thread, a frame or two was lost every 10-20 s in every mode.
     //
-    // The two never run SR Loom's code at the same time: one lock (g_appLock)
+    // The two never run Stereo Loom's code at the same time: one lock (g_appLock)
     // is held by whichever is running it. The render thread lets go of it
     // while it waits for the next refresh (most of every frame); a window
     // procedure takes it for as long as it handles a message. The system's
@@ -547,6 +551,22 @@ namespace
         Capture      capture;        // WGC: default; only API that can do per-window + window-exclusion
         CaptureDXGI  captureDxgi;    // Output Duplication fallback for exclusive-fullscreen sources
         Converter    converter;
+        LookAround   look;                  // new views from the two eyes as the head moves (an experiment: Settings LookAround)
+        NeuralDepth  neural;                // a trained matcher's depth for a picture that stays (an experiment: Settings LookNeural)
+        bool         lookNeural = false, neuralActive = false;   // (neuralActive: the look-around is on the trained matcher's depth)
+        int          lookDepth = -1;        // (Settings LookDepth: 0 its own matcher, 1 the trained one and its own, 2 the trained one alone)
+        std::wstring lookModel, exeDir;     // (Settings LookModel: the trained matcher's file, in the neural folder beside the exe)
+        unsigned     neuralSubmitted = 0;   // (the converter's picture last handed to it)
+        ULONGLONG    neuralTick = 0;        // (when the converter's picture last changed)
+        ID3D11Texture2D* neuralTex = nullptr; ID3D11Texture2D* neuralStage = nullptr;
+        bool         lookLive = true, lookPaint = true;   // (Settings LookLive: the trained matcher on every picture, not only one that stays; LookPaint: a painted background for a picture that stays)
+        bool         lookPlate = false;     // (Settings LookPlate: the plate of earlier pictures kept, and the motion found for it)
+        bool         lookEdges = true;      // (Settings LookEdges: steps in depth kept steps)
+        bool         neuralCopying = false; unsigned neuralCopySerial = 0, neuralDepthSerial = 0; int neuralCopyW = 0, neuralCopyH = 0;
+        double       neuralMs = 0.0; int neuralCount = 0; ULONGLONG neuralLogTick = 0;
+        double       paintMs = 0.0; int paintCount = 0;   // (the painter's answers since the last log line, and about how long each took)
+        ULONGLONG    lookDiagTick = 0; ID3D11Texture2D* lookDiagStage = nullptr;   // (the look-around's five-second line to the log)
+        ID3D11ShaderResourceView* layerSrv = nullptr; unsigned layerAsked = 0;   // (the painted background in use; the picture one was last asked for)
         // Auto Stereo (region weaving). While autoStereo is on, the weave
         // window covers the SR display (Fullscreen mode, click-through) but
         // is clipped to the regions in regionWeaver; each region is converted
@@ -716,6 +736,14 @@ namespace
         bool                         asyncSlow = false;        // (conversions are slow at the moment: apart from the weave)
         double                       asyncEnterMs = 3.5;       // (a conversion this long is slow: Settings AsyncEnterUs)
         bool                         weaveRaw = false;         // (Settings WeaveRaw: the weaver reads a Half SBS capture itself -- an experiment)
+        bool                         lookOn = false;           // (Settings LookAround)
+        float                        lookParallax = 1.0f;      // (Settings LookParallax: head movement to view movement; negative turns it round)
+        float                        lookX = 0.0f;             // (where the head is, in eye spacings from the middle, smoothed)
+        bool                         lookBound = false;        // (the weaver's input is the look-around's picture)
+        float                        lookY = 0.0f, lookRho = 1.0f;   // (... up and down; and how near: the eyes' own distance over the head's)
+        unsigned                     lookSerial = 0;           // (the converter's picture the look-around last matched)
+        bool                         lookShow = false;         // (Settings LookShow: the depth found shown in place of the picture)
+        int                          lookSize = 0;             // (Settings LookSize: the matching size asked for)
         int                          asyncSlowRun = 0;         // (slow conversions in a row)
         unsigned                     asyncSeenSerial = 0;
         ULONGLONG                    asyncSlowAt = 0;          // (when one last took over 2.5 ms)
@@ -754,7 +782,7 @@ namespace
         std::string  openTrackExePath; // detected opentrack.exe path (empty if not installed)
         // NaturalPoint registry says where NPClient.dll/NPClient64.dll live.
         // When set + both DLLs exist, OpenTrack's NPClient stack is usable
-        // and SR Loom enables TrackIR output by writing the same
+        // and Stereo Loom enables TrackIR output by writing the same
         // FT_SharedMem the DLL reads from. Empty when not detected; GUI
         // greys the TrackIR checkbox + shows "(Please install OpenTrack)".
         std::string  npClientDir;
@@ -838,7 +866,7 @@ namespace
         // the foreground hook every time the user focuses an external app.
         // Used by "Save current as profile" because at click-time the
         // GUI panel itself is the foreground -- without this cache we'd
-        // capture SR Loom's own exe instead of the game the user just
+        // capture Stereo Loom's own exe instead of the game the user just
         // alt-tabbed away from.
         HWND                  lastExternalForeground = nullptr;
         // Currently-loaded image / video file path (empty when source is
@@ -871,7 +899,7 @@ namespace
         HWND       katangaPublisherWnd = nullptr;
         unsigned   katangaGeneration   = 0;   // last KatangaSource::Generation() bound to the weaver
         // Katanga auto-receive (Settings::ReadKatangaAutoReceive). While
-        // katangaAuto is set, SR Loom switched itself into Katanga because a
+        // katangaAuto is set, Stereo Loom switched itself into Katanga because a
         // sender appeared; the saved state is restored when it stops.
         bool         katangaAuto            = false;
         DWORD        katangaAutoStartMs     = 0;
@@ -994,6 +1022,12 @@ namespace
         // kept that long so switching weaving straight back on is instant.
         ULONGLONG  srStopAtMs     = 0;
         int        weaverChoiceSeen = -1;   // (Settings WeaverChoice last acted on; -1 not read yet)
+        int        outputSeen = -1;         // (Settings DisplayOutput / OutputDisplay last acted on)
+        std::wstring outputDeviceSeen;
+        // No SR Platform on this PC (or its service never answered): with Leia SR
+        // chosen, this output is used instead -- a Zondision display's where there
+        // is one, else anaglyph (WinMain). SR: none needed.
+        DisplayOutput srStandIn = DisplayOutput::SR;
         ULONGLONG  displayChangedAtMs = 0;  // (WM_DISPLAYCHANGE: when; HandleDisplayChange once it settles)
         double     paceHz = 0.0;            // (the refresh rate the renderer paces for: the SR display's current one)
         RECT       srDisplayRect  = { 0, 0, 1920, 1080 };  // filled from SR SDK
@@ -1270,7 +1304,7 @@ namespace
         }
     }
 
-    // Position helper: top-left or top-right corner of the SR Loom main window's
+    // Position helper: top-left or top-right corner of the Stereo Loom main window's
     // CLIENT area. Anchoring to the window (not the SR display rect) means the
     // overlays sit correctly in BOTH fullscreen and windowed modes, and follow
     // the window when the user drags / resizes it.
@@ -2457,7 +2491,7 @@ namespace
     // "click a profile in the tray menu" path.
     //
     // captureHwnd: when the foreground hook fires the auto-apply path, we
-    // pass the game's window so SR Loom re-targets the capture at the
+    // pass the game's window so Stereo Loom re-targets the capture at the
     // game (mode -> WindowOverlay, source -> CaptureWindow). Without this
     // a freshly-launched game would just see the format flip but the
     // weave would still be pointed at whatever it was pointed at before
@@ -2586,7 +2620,7 @@ namespace
             (p.fullscreenOnly && captureHwnd) ? captureHwnd : nullptr;
     }
 
-    // True for any window owned by SR Loom's own process (GUI panel,
+    // True for any window owned by Stereo Loom's own process (GUI panel,
     // weave window, fullscreen-control overlay, tray menus).
     bool IsOwnProcessWindow(HWND h)
     {
@@ -2622,7 +2656,12 @@ namespace
             // re-applies.
             if (fg != app.lastAppliedHwnd || p.name != app.lastAutoAppliedProfile)
             {
-                ApplyProfile(app, p, fg, title);
+                // (Weaving another display, and the game is on it: that display stays the
+                // source -- capturing the game's window instead would put it back on its
+                // own display, as an overlay, and nothing on the SR one.)
+                const bool onPicked = app.source == SourceKind::CaptureMonitor && app.foreignDisplay &&
+                                      MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) == app.sourceMonitor;
+                ApplyProfile(app, p, onPicked ? nullptr : fg, title);
                 app.lastAppliedHwnd        = fg;
                 app.lastAutoAppliedProfile = p.name;
                 app.lastAutoAppliedTitle   = title;
@@ -2721,7 +2760,7 @@ namespace
     // nothing covers the weave. Two refinements on top of that:
     //   - the SR display's taskbar is cut OUT of the weave window whenever it's
     //     showing, so the real 2D taskbar is visible (un-woven) through the
-    //     hole while SR Loom stays on top of everything else;
+    //     hole while Stereo Loom stays on top of everything else;
     //   - a fullscreen app/game that pushes itself above us (many set
     //     HWND_TOPMOST on activation) gets put back underneath.
 
@@ -2807,7 +2846,7 @@ namespace
     }
 
     // z-order band of a window (undocumented user32!GetWindowBand, present on
-    // Win8+). 1 = ZBID_DESKTOP (every normal app, SR Loom included); anything
+    // Win8+). 1 = ZBID_DESKTOP (every normal app, Stereo Loom included); anything
     // higher is system UI that always stacks above us: Start, toasts / Action
     // Center, volume OSD, Alt+Tab, Win+V / emoji, Game Bar. Returns 0 if the
     // API is unavailable or fails.
@@ -2875,8 +2914,8 @@ namespace
         DWORD    band = 0;           // z-band (see WindowBand)
         LONG_PTR ex = 0;             // extended style
         int      radius = 0;         // rounded corners (see WindowCornerRadius)
-        bool     own = false;        // one of SR Loom's windows
-        bool     gui = false;        // SR Loom's panel
+        bool     own = false;        // one of Stereo Loom's windows
+        bool     gui = false;        // Stereo Loom's panel
         bool     shell = false;      // Windows shell UI
         bool     trayWnd = false;    // a taskbar
         bool     desktop = false;    // Progman / WorkerW (the list stops here)
@@ -3079,7 +3118,7 @@ namespace
         RECT cut{};
 
         // Taskbar. (Not over the media viewer in Fullscreen: a picture or video
-        // of SR Loom's own fills the screen, as any player's does -- there is
+        // of Stereo Loom's own fills the screen, as any player's does -- there is
         // no desktop under it for the taskbar to belong to.)
         const bool ownMediaFullscreen = app.source == SourceKind::TestImage && app.mode == OutputMode::Fullscreen;
         HWND tb = ownMediaFullscreen ? nullptr : SrTaskbar(mon);
@@ -3161,8 +3200,12 @@ namespace
             h.push_back(std::move(cur));
             while (h.size() > 2 && h[1].t < now100 - 5'000'000) h.pop_front();   // keep ~0.5 s
         };
+        // (Weaving another display: its picture never holds the SR display's windows, so a window is cut
+        // where it is now only -- where it was when that display last changed, which may be long ago on a
+        // still desktop, is not in the picture.)
+        const bool capHasSrWindows = !(app.source == SourceKind::CaptureMonitor && app.foreignDisplay);
         auto atCapture = [&](const std::deque<TimedCuts>& h) -> const TimedCuts* {
-            if (h.empty()) return nullptr;
+            if (h.empty() || !capHasSrWindows) return nullptr;
             if (capT <= 0) return h.size() >= 2 ? &h[h.size() - 2] : &h.back();   // unknown: one frame back
             const TimedCuts* best = &h.front();
             for (const TimedCuts& e : h) { if (e.t <= capT) best = &e; else break; }
@@ -3389,12 +3432,45 @@ namespace
 
     // Put the weave back on top if a fullscreen app/game on the SR display
     // has pushed itself above it. Only fullscreen-sized, non-shell windows
-    // count, so Start, flyouts, tray menus, tooltips and SR Loom's own panel
+    // count, so Start, flyouts, tray menus, tooltips and Stereo Loom's own panel
     // can still appear above the weave as normal.
     void KeepWeaveAboveFullscreenApps(AppState& app)
     {
         if (!IsTopmostWeaveMode(app)) return;
         const HMONITOR mon = SrMonitor(app);
+        // A game that holds the display to itself (exclusive fullscreen: Direct3D's,
+        // or a Vulkan / OpenGL game the driver presents natively) is shown instead of
+        // every window, the weave included, whatever the window order says -- the
+        // lens is on and the picture under it is the game's own side-by-side. Seen
+        // from here only by asking Windows; nothing can be drawn over it, so: said
+        // in the log, and once to the user.
+        {
+            QUERY_USER_NOTIFICATION_STATE qs = QUNS_ACCEPTS_NOTIFICATIONS;
+            const bool exclusive = SUCCEEDED(SHQueryUserNotificationState(&qs)) && qs == QUNS_RUNNING_D3D_FULL_SCREEN;
+            static bool s_was = false, s_told = false;
+            static DWORD s_lastMs = 0;
+            if (exclusive && (!s_was || GetTickCount() - s_lastMs > 5000))
+            {
+                s_lastMs = GetTickCount();
+                const HWND fg = ::GetForegroundWindow();
+                char cls[64] = {};
+                if (fg) GetClassNameA(fg, cls, (int)sizeof(cls));
+                Log("Weave: a program holds the display exclusively (foreground %p '%s', class '%s', %s the SR display) -- the weave cannot be shown over it; it needs borderless / windowed fullscreen",
+                    (void*)fg, fg ? ForegroundExeBaseName(fg).c_str() : "", cls,
+                    fg && MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) == mon ? "on" : "not on");
+                if (!s_told && fg && MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) == mon)
+                {
+                    s_told = true;
+                    NOTIFYICONDATAA nid{ sizeof(nid) };
+                    nid.hWnd = app.hwnd; nid.uID = 1; nid.uFlags = NIF_INFO; nid.dwInfoFlags = NIIF_WARNING;
+                    _snprintf_s(nid.szInfoTitle, _TRUNCATE, "Stereo Loom can't show over this game");
+                    _snprintf_s(nid.szInfo, _TRUNCATE, "It is in exclusive fullscreen. Set it to borderless or windowed fullscreen (for Vulkan / OpenGL games on NVIDIA: present method 'Prefer layered on DXGI Swapchain').");
+                    Shell_NotifyIconA(NIM_MODIFY, &nid);
+                }
+            }
+            if (!exclusive && s_was) Log("Weave: the display is no longer held exclusively");
+            s_was = exclusive;
+        }
         for (HWND h = GetWindow(app.hwnd, GW_HWNDPREV); h; h = GetWindow(h, GW_HWNDPREV))
         {
             if (!IsWindowVisible(h) || IsCloaked(h) || IsOwnProcessWindow(h)) continue;
@@ -3430,15 +3506,15 @@ namespace
     }
 
     // "Save current window as profile" tray action. Captures the
-    // foreground window's exe + title and the current SR Loom stereo
+    // foreground window's exe + title and the current Stereo Loom stereo
     // settings; persists. If a profile with the same name (= exe by
     // default, or window title if empty) already exists, overwrites it.
     void SaveCurrentAsProfile(AppState& app)
     {
         // Prefer the cached "last non-self foreground" -- when the user
-        // clicks the GUI button, the SR Loom panel itself is the live
+        // clicks the GUI button, the Stereo Loom panel itself is the live
         // foreground, so GetForegroundWindow() would return our own
-        // window and we'd save "SRLoom.exe" as the profile. The hook
+        // window and we'd save "StereoLoom.exe" as the profile. The hook
         // cache holds the last external window the user focused.
         HWND fg = app.lastExternalForeground;
         if (!fg || !IsWindow(fg))
@@ -3646,7 +3722,7 @@ namespace
         {
             // The captured window has closed. Don't keep weaving its last frame —
             // tear the overlay down and go idle (turns the lens off too), so the
-            // stale 3D image disappears without having to quit SR Loom.
+            // stale 3D image disappears without having to quit Stereo Loom.
             app.capture.Stop();
             app.sourceWindow = nullptr;
             app.source = SourceKind::CaptureMonitor;   // sane default for the next enable
@@ -3814,12 +3890,31 @@ namespace
         return app.lfOn && (app.format == StereoFormat::Quilt || app.format == StereoFormat::RGBD) && !app.lfFollow && !app.lfCentre;
     }
 
+    // The Display Output to use (Settings DisplayOutput), with Leia SR's stand-in
+    // where there is no SR Platform.
+    DisplayOutput WantedOutput(AppState& app)
+    {
+        DisplayOutput o = (DisplayOutput)Settings::ReadDisplayOutput();
+        if (o == DisplayOutput::SR && app.srStandIn != DisplayOutput::SR) o = app.srStandIn;
+        return o;
+    }
+    // The weaver told which output, on which display, and how (before a session starts).
+    void ApplyOutputChoice(AppState& app)
+    {
+        const DisplayOutput o = WantedOutput(app);
+        app.weaver.SetOutput(o, o == DisplayOutput::SR ? std::wstring() : Settings::ReadOutputDisplay());
+        app.weaver.SetOutputOptions(Settings::ReadOutputAnaColours(), Settings::ReadOutputAnaStyle(), Settings::ReadOutputSwapEyes());
+        app.weaver.SetFramePacking(Settings::ReadOutputFramePacking());
+    }
+
     bool StartSRSession(AppState& app)
     {
         if (app.weaver.HasWeaver()) return true;
-        const bool lensOnly = LensOnlyWanted(app);
+        ApplyOutputChoice(app);
+        const bool lensOnly = LensOnlyWanted(app) && !app.weaver.IsPlainOutput();
         app.weaver.SetLensOnly(lensOnly);
-        const bool want12 = !lensOnly && Settings::ReadWeaverChoice() >= 4 && app.renderer.IsDComp();   // (4 the modern Direct3D 12 weaver; lens only draws with Direct3D 11)
+        // (4 the modern Direct3D 12 weaver; lens only, and Stereo Loom's own outputs, draw with Direct3D 11)
+        const bool want12 = !lensOnly && !app.weaver.IsPlainOutput() && Settings::ReadWeaverChoice() >= 4 && app.renderer.IsDComp();
         float hdrNits = 0.0f;
         const bool hdrOn = app.renderer.DisplayIsHdr(&hdrNits);
         const bool hdrOut = HdrWanted(app, hdrOn);
@@ -3938,8 +4033,8 @@ namespace
             app.srStopAtMs = GetTickCount64() + kSrKeepAliveMs;
         }
         app.tray.SetTooltip(enable
-            ? "SR Loom — weaving\nLeft-click for panel"
-            : "SR Loom — paused (SR off)\nLeft-click for panel");
+            ? "Stereo Loom — weaving\nLeft-click for panel"
+            : "Stereo Loom — paused (3D off)\nLeft-click for panel");
     }
 
     // Selecting a source or format turns weaving ON if it isn't already (so the 3D
@@ -4215,6 +4310,9 @@ namespace
             return;
         if (app.capture.StartMonitor(mon))
         {
+            // (A picked display's fallback duplication: not this one.)
+            if (app.dxgiActive) { app.captureDxgi.Stop(); app.dxgiActive = false; }
+            app.wgcStuck = 0;
             if (app.weavingEnabled) BeginCaptureWarmup(app);
             app.source = SourceKind::CaptureMonitor;
             app.sourceMonitor = mon;
@@ -4597,8 +4695,19 @@ namespace
     {
         DemoteVRFormatForLiveCapture(app);
         app.capture.SetCaptureCursor(true);   // show the pointer on the captured display
-        if (!mon || !app.capture.StartMonitor(mon))
+        const bool started = mon && app.capture.StartMonitor(mon);
+        {
+            MONITORINFOEXA mi{}; mi.cbSize = sizeof(mi);
+            if (mon) GetMonitorInfoA(mon, &mi);
+            Log("UseDisplay: %s (%p, %ldx%ld at %ld,%ld), SR display %p: capture %s",
+                mon ? mi.szDevice : "(none)", (void*)mon, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+                mi.rcMonitor.left, mi.rcMonitor.top, (void*)SrMonitor(app), started ? "started" : "FAILED");
+        }
+        if (!started)
             return;
+        // (The fallback duplication of the display picked before -- it would go on showing that one.)
+        if (app.dxgiActive) { app.captureDxgi.Stop(); app.dxgiActive = false; }
+        app.wgcStuck = 0;
         app.sourceWindow = nullptr;
         app.source = SourceKind::CaptureMonitor;
         app.sourceMonitor = mon;
@@ -4689,10 +4798,10 @@ namespace
         if (app.detector.Detect(srv, w, h, f))
         {
             ChangeFormat(app, f);
-            app.tray.SetTooltip("SR Loom — detected a stereo layout");
+            app.tray.SetTooltip("Stereo Loom — detected a stereo layout");
             return true;
         }
-        app.tray.SetTooltip("SR Loom — no stereo layout detected");
+        app.tray.SetTooltip("Stereo Loom — no stereo layout detected");
         return false;
     }
 
@@ -5443,7 +5552,7 @@ namespace
     //
     // With Settings::ReadKatangaAutoReceive on (default), a Katanga sender
     // appearing (a Katanga game, or a bridge such as markleoryan79's 3D
-    // Slicer extension) switches SR Loom into Katanga receiving by itself;
+    // Slicer extension) switches Stereo Loom into Katanga receiving by itself;
     // when the sender stops, the previous format / mode / weaving state comes
     // back. The existing Katanga machinery (arm mode, publisher discovery,
     // lens hint) does the actual receiving.
@@ -5481,6 +5590,8 @@ namespace
         const DWORD now = GetTickCount();
         if (now - app.katangaAutoLastPollMs < 500) return;
         app.katangaAutoLastPollMs = now;
+        // (The Katanga output is on: the handle in Katanga's file is Stereo Loom's own.)
+        if (app.weaver.Output() == DisplayOutput::Katanga) return;
 
         // katangaAutoBlocked: set when an auto session ends while a handle is
         // still published (sender stopped but left a stale value, or an idle
@@ -5579,7 +5690,7 @@ namespace
         return out.right > out.left && out.bottom > out.top;
     }
 
-    // Windows that must always show as plain 2D, never woven: SR Loom's own
+    // Windows that must always show as plain 2D, never woven: Stereo Loom's own
     // panel, and terminals (text windows -- weaving only garbles them).
     bool IsKeep2DWindow(const AppState& app, HWND h)
     {
@@ -5737,7 +5848,7 @@ namespace
             // an invisible helper, not something covering the screen for real.
             // An ordinary maximised app (Discord over a browser) is in front
             // whether or not it has the focus -- it used to be skipped once
-            // the focus moved (e.g. to SR Loom's panel), so the pictures
+            // the focus moved (e.g. to Stereo Loom's panel), so the pictures
             // behind it were woven over it.
             const long long a = (long long)(onMon.right - onMon.left) * (onMon.bottom - onMon.top);
             const bool overlayType = (w.ex & (WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) != 0;
@@ -6756,7 +6867,7 @@ namespace
     // The SR display's CURRENT refresh rate (Hz), re-read every few seconds
     // (the mode can change). Per monitor: DWM's global timing reports the
     // Overlay / frame-limiter hooks other programs inject into every D3D app
-    // (SR Loom included). A global frame limit in one of them caps the weave.
+    // (Stereo Loom included). A global frame limit in one of them caps the weave.
     std::string LoadedPresentHooks()
     {
         static const wchar_t* const kHooks[] = {
@@ -6801,7 +6912,7 @@ namespace
     }
 
     // Pace for the SR display's CURRENT refresh rate, not its maximum: it can be
-    // set lower (e.g. 120 Hz), or changed while SR Loom runs.
+    // set lower (e.g. 120 Hz), or changed while Stereo Loom runs.
     void PaceForSrRefresh(AppState& app, bool now)
     {
         const double hz = SrRefreshHz(app, now);
@@ -7169,11 +7280,11 @@ namespace
             srcW     = app.katanga.Width();
             srcH     = app.katanga.Height();
             gotFrame = nowReceiving;
-            // Pin SR Loom's overlay directly above the publishing game's
+            // Pin Stereo Loom's overlay directly above the publishing game's
             // main window each frame. Many DirectX games SetWindowPos
             // HWND_TOPMOST on themselves when activated, which would pop
             // them above us in the topmost band on a click-into-game --
-            // forcing the user to alt-tab to SR Loom to push the weave
+            // forcing the user to alt-tab to Stereo Loom to push the weave
             // back up. Inserting just above the game's HWND specifically
             // (not generic HWND_TOPMOST) wins regardless of which band
             // the game is in. SWP_NOACTIVATE means we never steal focus.
@@ -7481,7 +7592,8 @@ namespace
         // values where it used to mix light: to be judged by eye.)
         const bool rawSBS = app.weaveRaw && srcEncoded && !app.weaver.IsDX12() && !app.renderer.IsDX12() && app.renderer.IsDComp();
         // (Not in HDR: the conversion is where the picture is brought into the weave's range.)
-        const bool identitySBS = liveSource && (halfSbsFmt || katangaFmt) && !swapNow && noConv && (!srcEncoded || rawSBS) && !app.hdrActive;
+        const bool identitySBS = liveSource && (halfSbsFmt || katangaFmt) && !swapNow && noConv && (!srcEncoded || rawSBS) && !app.hdrActive &&
+                                 !app.lookOn;   // (look-around works on the converter's picture)
         app.renderer.SetRawWeave(identitySBS && srcEncoded);
 
         if (identitySBS)
@@ -7598,7 +7710,7 @@ namespace
                         }
                     }
 
-                    // Window-position perspective shift: when SR Loom is windowed
+                    // Window-position perspective shift: when Stereo Loom is windowed
                     // on the SR display, the user's "looking toward" the window's
                     // SCREEN POSITION, not the panel centre. Subtract the window's
                     // centre-relative-to-panel-centre offset (in mm) from each
@@ -7687,7 +7799,7 @@ namespace
                 const FramePackPreset& fp = fps[(app.framePackMode >= 0 && app.framePackMode < fpN) ? app.framePackMode : 0];
                 app.converter.SetFramePacking(fp.eyeFrac, fp.gapFrac, fp.eyeAlign);
             }
-            // Light field (an experiment): the Quilt's views interlaced by SR Loom.
+            // Light field (an experiment): the Quilt's views interlaced by Stereo Loom.
             // Which view a sub-pixel shows is where under its lens it is seen from
             // the place the views are aimed at -- straight ahead at the Viewing
             // Distance, or the tracked head with Follow My Head -- as the SDK's own
@@ -7992,6 +8104,215 @@ namespace
                 }
                 if (app.asyncMode != was) p12->SetAsync(app.asyncMode);
             }
+            // Look-around (an experiment, Settings LookAround): the two eyes the
+            // converter made, seen again from where the viewer's head is -- every
+            // loop, since the head moves whether or not the picture changes. The
+            // left eye's own place is 0 and the right's 1; the head an eye spacing
+            // to the right puts them at 1 and 2. (Direct3D 11 weaver only so far;
+            // not the layouts that already follow the head, nor HDR.)
+            {
+                const bool lookNow = app.lookOn && !app.weaver.IsDX12() && !app.weaver.IsLensOnly() && !app.autoStereo && !app.hdrActive &&
+                                     app.format != StereoFormat::RGBD && app.format != StereoFormat::LightField &&
+                                     !(app.lfOn && app.format == StereoFormat::Quilt) && app.converter.OutputSRV() != nullptr;
+                if (lookNow)
+                {
+                    // Where the head is: across and up-and-down in eye spacings from the
+                    // middle of the screen, and how near (the eyes' own distance over the
+                    // head's -- 650 mm taken as the eyes' own). No limit on any of them:
+                    // far enough out the picture comes apart, and that is the viewer's
+                    // to find.
+                    // (The eyes not found this loop -- too near the camera, looking away:
+                    // the view stays where it was. Falling back to the middle was a
+                    // cut-off: lean in far enough and the picture snapped flat.)
+                    float l[3] = {}, r[3] = {}, tx = app.lookX, ty = app.lookY, rho = app.lookRho, spacing = 63.0f;
+                    if (app.weaver.GetPredictedEyePositions(l, r))
+                    {
+                        spacing = (std::max)(40.0f, std::fabs(r[0] - l[0]));
+                        tx = 0.5f * (l[0] + r[0]) / spacing * app.lookParallax;
+                        ty = -0.5f * (l[1] + r[1]) / spacing * app.lookParallax;   // (the tracker's y is up; the picture's is down)
+                        const float z = 0.5f * (l[2] + r[2]);
+                        if (z > 20.0f) rho = 1.0f + (650.0f / z - 1.0f) * std::fabs(app.lookParallax);
+                        rho = (std::max)(0.05f, rho);   // (no limit on how near; only never nought)
+                    }
+                    app.lookX += (tx - app.lookX) * 0.5f; app.lookY += (ty - app.lookY) * 0.5f; app.lookRho += (rho - app.lookRho) * 0.5f;
+                    LookAround::View v;
+                    // (All but still: the picture as it is -- and exactly so.)
+                    const bool still = std::fabs(app.lookX) < 0.004f && std::fabs(app.lookY) < 0.004f && std::fabs(app.lookRho - 1.0f) < 0.002f;
+                    if (!still) { v.tL = app.lookX; v.tR = 1.0f + app.lookX; v.ty = app.lookY; v.rho = app.lookRho; }
+                    if (app.lookShow) v.only = 2;
+                    v.screenW = 597.0f / spacing; v.screenH = 336.0f / spacing;   // (a 27 inch display; the picture taken to fill it)
+                    // (The picture is matched again only when the converter has made a new
+                    // one: between a game's frames only the head moves.)
+                    const bool fresh = app.converter.Serial() != app.lookSerial;
+                    app.lookSerial = app.converter.Serial();
+                    // The trained matcher (NeuralDepth). Live (Settings LookLive): every picture it is
+                    // free for is handed over, small, and each answer is used as it comes -- for the
+                    // picture then showing, which may be a few on from the one it was made for. Not
+                    // live: only a picture that has stayed, and its own matcher again the moment the
+                    // picture changes. And for a picture that stays, a painted background.
+                    if (fresh)
+                    {
+                        app.neuralTick = GetTickCount64();
+                        if (app.neuralActive && !app.lookLive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; }
+                        // (Live, the painter follows along: the layer stands until the next one comes.)
+                        if (app.layerSrv && !(app.lookLive && app.lookPaint)) { app.look.SetLayer(nullptr); SAFE_RELEASE(app.layerSrv); }
+                        app.layerAsked = 0;
+                    }
+                    if (!app.lookNeural && app.neuralActive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; app.neuralSubmitted = 0; }
+                    if (app.lookNeural && app.neural.Ready())
+                    {
+                        const int ew = app.converter.OutputPerEyeWidth(), eh = app.converter.OutputHeight();
+                        int mw = 0, mh = 0; app.look.MapSize(ew, eh, mw, mh);
+                        const float aspect = v.screenW / v.screenH;
+                        const ULONGLONG nowMs = GetTickCount64();
+                        // (Handed over in two steps so the loop never waits on the GPU: made small and
+                        // copied out this time round; read, a loop or two on, when the copy is done.)
+                        // (Live: the next picture is made ready a loop or two before the thread is free for it --
+                        // so it goes from one answer straight to a picture that is new, and never waits for one.)
+                        if (!app.neuralCopying && app.neuralSubmitted != app.lookSerial &&
+                            (app.lookLive ? app.neural.Remaining() <= 14.0 : (!app.neural.Busy() && nowMs - app.neuralTick > 150)))
+                        {
+                            int nw = 0, nh = 0; app.neural.NetSize(aspect, 736, nw, nh);
+                            ID3D11Texture2D* shrunk = app.look.Shrink(app.converter.OutputSRV(), ew, eh, nw, nh);
+                            D3D11_TEXTURE2D_DESC td{}; if (shrunk) shrunk->GetDesc(&td);
+                            D3D11_TEXTURE2D_DESC sd{}; if (app.neuralStage) app.neuralStage->GetDesc(&sd);
+                            if (shrunk && (!app.neuralStage || sd.Width != td.Width || sd.Height != td.Height || sd.Format != td.Format))
+                            {
+                                SAFE_RELEASE(app.neuralStage);
+                                D3D11_TEXTURE2D_DESC st = td; st.Usage = D3D11_USAGE_STAGING; st.BindFlags = 0; st.CPUAccessFlags = D3D11_CPU_ACCESS_READ; st.MiscFlags = 0;
+                                app.renderer.Device()->CreateTexture2D(&st, nullptr, &app.neuralStage);
+                            }
+                            if (shrunk && app.neuralStage)
+                            {
+                                app.renderer.Context()->CopyResource(app.neuralStage, shrunk);
+                                app.renderer.Context()->Flush();   // (begun now, not when the frame is: read a loop sooner)
+                                app.neuralCopying = true; app.neuralCopySerial = app.lookSerial; app.neuralCopyW = nw; app.neuralCopyH = nh;
+                            }
+                            app.neuralSubmitted = app.lookSerial;
+                        }
+                        if (app.neuralCopying)
+                        {
+                            D3D11_MAPPED_SUBRESOURCE m{};
+                            const HRESULT hr = app.renderer.Context()->Map(app.neuralStage, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m);
+                            if (SUCCEEDED(hr))
+                            {
+                                app.neural.Submit((const uint8_t*)m.pData, (int)m.RowPitch, app.neuralCopyW, app.neuralCopyH, aspect, 736, mw, mh, app.neuralCopySerial);
+                                app.renderer.Context()->Unmap(app.neuralStage, 0);
+                                app.neuralCopying = false;
+                            }
+                            else if (hr != DXGI_ERROR_WAS_STILL_DRAWING) app.neuralCopying = false;
+                        }
+                        std::vector<uint16_t> res; int rw = 0, rh = 0; unsigned rs = 0; double rms = 0.0;
+                        if (app.neural.Take(res, rw, rh, rs, rms))
+                        {
+                            if ((app.lookLive || rs == app.lookSerial) && rw == mw && rh == mh)
+                            {
+                                SAFE_RELEASE(app.neuralTex);
+                                D3D11_TEXTURE2D_DESC nd{};
+                                nd.Width = (UINT)(rw * 2); nd.Height = (UINT)rh; nd.MipLevels = 1; nd.ArraySize = 1; nd.SampleDesc.Count = 1;
+                                nd.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; nd.Usage = D3D11_USAGE_DEFAULT; nd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                                D3D11_SUBRESOURCE_DATA init{ res.data(), (UINT)(rw * 2 * 8), 0 };
+                                if (SUCCEEDED(app.renderer.Device()->CreateTexture2D(&nd, &init, &app.neuralTex)))
+                                {
+                                    // (The same picture's depth, only better: the plate begun again. A later picture's: it goes on.)
+                                    app.look.SetExternalDisparity(app.neuralTex, app.neuralActive && rs != app.neuralDepthSerial);
+                                    app.neuralActive = true; app.neuralDepthSerial = rs;
+                                    app.neuralMs += (rms - app.neuralMs) * 0.2; ++app.neuralCount;
+                                }
+                            }
+                        }
+                        // (Now and then, how it is going.)
+                        if (app.neuralCount && nowMs - app.neuralLogTick > 5000)
+                        {
+                            double tp = 0, tr = 0, ta = 0; app.neural.Times(tp, tr, ta);
+                            Log("NeuralDepth: %d answers in the last five seconds, about %.0f ms each (inputs %.0f, model %.0f)%s; %d backgrounds painted, about %.0f ms each", app.neuralCount, app.neuralMs, tp, tr, app.lookLive ? " (live)" : "", app.paintCount, app.paintMs);
+                            app.paintCount = 0;
+                            app.neuralCount = 0; app.neuralLogTick = nowMs;
+                        }
+                        // The painted background, for a picture that has stayed and has its depth.
+                        if (app.lookPaint && app.neural.PainterThere() && app.neuralActive && app.neuralDepthSerial == app.lookSerial &&
+                            app.layerAsked != app.lookSerial && nowMs - app.neuralTick > 300)
+                        {
+                            if (app.neural.RequestLayer(app.lookSerial, mw)) app.layerAsked = app.lookSerial;
+                        }
+                        std::vector<float> lay; int ln = 0; unsigned ls = 0; double lms = 0.0;
+                        if (app.neural.TakeLayer(lay, ln, ls, lms) && (app.lookLive || ls == app.lookSerial) && app.lookPaint)
+                        {
+                            D3D11_TEXTURE2D_DESC ld{};
+                            ld.Width = (UINT)ln; ld.Height = (UINT)ln; ld.MipLevels = 1; ld.ArraySize = 1; ld.SampleDesc.Count = 1;
+                            ld.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; ld.Usage = D3D11_USAGE_DEFAULT; ld.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                            D3D11_SUBRESOURCE_DATA init{ lay.data(), (UINT)(ln * 16), 0 };
+                            ID3D11Texture2D* lt = nullptr;
+                            if (SUCCEEDED(app.renderer.Device()->CreateTexture2D(&ld, &init, &lt)))
+                            {
+                                SAFE_RELEASE(app.layerSrv);
+                                app.renderer.Device()->CreateShaderResourceView(lt, nullptr, &app.layerSrv);
+                                lt->Release();
+                                app.look.SetLayer(app.layerSrv);
+                                if (!app.lookLive) Log("NeuralDepth: picture %u, background painted in %.0f ms", ls, lms);
+                                app.paintMs += (lms - app.paintMs) * 0.2; ++app.paintCount;
+                            }
+                        }
+                    }
+                    // (Painting off: the layer dropped, and the picture counted as not asked for -- so that on again paints it.)
+                    if (!app.lookPaint) { if (app.layerSrv) { app.look.SetLayer(nullptr); SAFE_RELEASE(app.layerSrv); } app.layerAsked = 0; }
+                    const bool lookDrawn = app.look.Render(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), v, fresh);
+                    if (lookDrawn)
+                    {
+                        app.weaver.SetInputView(app.look.OutputSRV(), app.look.OutputPerEyeWidth(), app.look.OutputHeight(), app.look.OutputFormat());
+                        app.lookBound = true;
+                    }
+                    // (Every five seconds, to the log: whether it drew, and how bright the middle of what went in
+                    // and of what came out is -- a black screen then says at once which side of here it is on.)
+                    if (GetTickCount64() - app.lookDiagTick > 5000)
+                    {
+                        app.lookDiagTick = GetTickCount64();
+                        auto middle = [&](ID3D11Texture2D* tex, int eyeW, int eyeH) -> double {
+                            if (!tex) return -1.0;
+                            D3D11_TEXTURE2D_DESC td{}; tex->GetDesc(&td);
+                            D3D11_TEXTURE2D_DESC sd{}; if (app.lookDiagStage) app.lookDiagStage->GetDesc(&sd);
+                            if (!app.lookDiagStage || sd.Format != td.Format)
+                            {
+                                SAFE_RELEASE(app.lookDiagStage);
+                                D3D11_TEXTURE2D_DESC st = td; st.Width = 64; st.Height = 64; st.MipLevels = 1; st.Usage = D3D11_USAGE_STAGING; st.BindFlags = 0; st.CPUAccessFlags = D3D11_CPU_ACCESS_READ; st.MiscFlags = 0;
+                                app.renderer.Device()->CreateTexture2D(&st, nullptr, &app.lookDiagStage);
+                            }
+                            if (!app.lookDiagStage || (td.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS && td.Format != DXGI_FORMAT_R8G8B8A8_UNORM && td.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)) return -2.0;
+                            const UINT x0 = (UINT)(std::max)(0, eyeW / 2 - 32), y0 = (UINT)(std::max)(0, eyeH / 2 - 32);
+                            D3D11_BOX box{ x0, y0, 0, x0 + 64, y0 + 64, 1 };
+                            app.renderer.Context()->CopySubresourceRegion(app.lookDiagStage, 0, 0, 0, 0, tex, 0, &box);
+                            D3D11_MAPPED_SUBRESOURCE m{}; double sum = 0.0;
+                            if (FAILED(app.renderer.Context()->Map(app.lookDiagStage, 0, D3D11_MAP_READ, 0, &m))) return -3.0;
+                            for (int y = 0; y < 64; ++y) { const uint8_t* p = (const uint8_t*)m.pData + (size_t)y * m.RowPitch; for (int x = 0; x < 64; ++x, p += 4) sum += (p[0] + p[1] + p[2]) / 3.0; }
+                            app.renderer.Context()->Unmap(app.lookDiagStage, 0);
+                            return sum / 4096.0;
+                        };
+                        const double in = middle(app.converter.OutputTexture(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight());
+                        const double out = lookDrawn ? middle(app.look.OutputTexture(), app.look.OutputPerEyeWidth(), app.look.OutputHeight()) : -1.0;
+                        Log("LookAround: drew %d; brightness at the middle of the left eye: in %.1f, out %.1f (0 black, 255 white; under 0: could not be read); head %.2f across, %.2f down, nearness %.2f; depth from %s, painted background %s",
+                            lookDrawn ? 1 : 0, in, out, app.lookX, app.lookY, app.lookRho, app.neuralActive ? "the network" : "its own matcher", app.layerSrv ? "in use" : "none");
+                        // (... and what each of its passes cost the card, a frame, on average over the frames timed: where the
+                        // time goes while it is really running, beside whatever else has the card.)
+                        {
+                            app.look.SetProfile(true);
+                            std::vector<std::pair<std::string, double>> pr;
+                            if (app.look.TakeProfile(pr))
+                            {
+                                std::string line; double all = 0.0; char one[96];
+                                for (const auto& e : pr) { all += e.second; if (e.second >= 0.02) { _snprintf_s(one, _TRUNCATE, " %s %.2f |", e.first.c_str(), e.second); line += one; } }
+                                Log("LookAround: GPU ms a frame by pass:%s all %.2f", line.c_str(), all);
+                            }
+                        }
+                    }
+                }
+                else if (app.lookBound)
+                {
+                    // (Off again: the converter's own picture back.)
+                    app.lookBound = false;
+                    if (app.converter.OutputSRV())
+                        app.weaver.SetInputView(app.converter.OutputSRV(), app.converter.OutputPerEyeWidth(), app.converter.OutputHeight(), app.converter.OutputFormat());
+                }
+            }
             app.renderer.BindAndClearBackBuffer();
             {
                 HitchWatch hw("SR weave call");
@@ -8140,6 +8461,19 @@ namespace
                             int ev[5] = {};
                             if (app.weaver.TakeEventCounts(ev))
                                 Log("  SR events: viewer lost %d, found %d | lens on %d, off %d | other %d", ev[0], ev[1], ev[2], ev[3], ev[4]);
+                            // (What is in front, and whether it has the display to itself: a
+                            // weave that is drawn and not seen is explained by this line.)
+                            if (const HWND fg = ::GetForegroundWindow())
+                            {
+                                char cls[64] = {};
+                                GetClassNameA(fg, cls, (int)sizeof(cls));
+                                QUERY_USER_NOTIFICATION_STATE qs = QUNS_ACCEPTS_NOTIFICATIONS;
+                                SHQueryUserNotificationState(&qs);
+                                const LONG_PTR ex = GetWindowLongPtr(fg, GWL_EXSTYLE);
+                                Log("  in front: %p '%s' (class '%s'%s%s, band %lu) | Windows' state %d%s", (void*)fg, ForegroundExeBaseName(fg).c_str(), cls,
+                                    IsWindowFullscreen(fg) ? ", fills its display" : "", (ex & WS_EX_TOPMOST) ? ", topmost" : "", (unsigned long)WindowBand(fg),
+                                    (int)qs, qs == QUNS_RUNNING_D3D_FULL_SCREEN ? " (a program holds the display exclusively)" : "");
+                            }
                         }
                         Present12::AsyncStats as;
                         if (app.renderer.IsDX12() && app.renderer.DX12()->TakeAsyncStats(as))
@@ -8244,7 +8578,7 @@ namespace
                         if (hooks != s_hooks)
                         {
                             s_hooks = hooks;
-                            Log("  Present hooks loaded in SR Loom: %s", hooks.empty() ? "none" : hooks.c_str());
+                            Log("  Present hooks loaded in Stereo Loom: %s", hooks.empty() ? "none" : hooks.c_str());
                         }
                     }
                 }
@@ -8262,7 +8596,7 @@ namespace
     // who sent it (see LogSlowMessage).
     // --- A small readout over the 3D picture for a moment --------------------
     // What a hotkey just changed (Convergence, Anti-Crosstalk), so they can be
-    // set by eye with the picture filling the screen. In SR Loom's own colours
+    // set by eye with the picture filling the screen. In Stereo Loom's own colours
     // (dark or light, as the panel), small, in the top-right corner of the
     // picture -- the SR display in Fullscreen, the woven window or the Looking
     // Glass otherwise -- mostly see-through, and soon faded away: a name, the
@@ -8464,7 +8798,7 @@ namespace
                 case ReleaseInfo::Available:
                     app->pendingUpdateUrl = info->url;
                     app->pendingUpdateTag = info->tag;
-                    _snprintf_s(title, _TRUNCATE, "SR Loom update available");
+                    _snprintf_s(title, _TRUNCATE, "Stereo Loom update available");
                     _snprintf_s(body, _TRUNCATE,
                                 "Version %s is out (you have %s). Click to open the release page.",
                                 info->tag.c_str(), kAppVersion);
@@ -8474,7 +8808,7 @@ namespace
                 case ReleaseInfo::UpToDate:
                     app->pendingUpdateUrl.clear();
                     app->pendingUpdateTag.clear();
-                    _snprintf_s(title, _TRUNCATE, "SR Loom is up to date");
+                    _snprintf_s(title, _TRUNCATE, "Stereo Loom is up to date");
                     _snprintf_s(body, _TRUNCATE,
                                 "You're on the latest release (%s).", kAppVersion);
                     Log("UpdateChecker: user-checked, already up to date");
@@ -8529,6 +8863,25 @@ namespace
         case WM_APP_GUI_CAPTURE_DISPLAY:  // GUI display-picker chose a monitor to weave
             if (app) UseDisplay(*app, reinterpret_cast<HMONITOR>(lParam));
             return 0;
+
+        case WM_APP_SAMSUNG_POPUP:   // panel: Samsung Hub's fullscreen popup off (0) or back as it was (1); its games side by side off (2) or on (3)
+        {
+            // (Off the window's thread: Hub is waited for, and Windows may ask for administrator approval.)
+            static std::atomic<bool> s_busy{ false };
+            if (s_busy.exchange(true)) return 0;
+            const UINT what = (UINT)wParam;   // (0 popup off, 1 popup back, 2 games' side by side off, 3 on)
+            std::thread([hwnd, what]() {
+                std::string msg;
+                const bool ok = what >= 2 ? SamsungHub::SetGamesSbs(what == 3, msg) : SamsungHub::SetPopup(what == 1, msg);
+                NOTIFYICONDATAA nid{ sizeof(nid) };
+                nid.hWnd = hwnd; nid.uID = 1; nid.uFlags = NIF_INFO; nid.dwInfoFlags = ok ? NIIF_INFO : NIIF_WARNING;
+                _snprintf_s(nid.szInfoTitle, _TRUNCATE, what >= 2 ? "Samsung 3D games" : "Samsung 3D popup");
+                _snprintf_s(nid.szInfo, _TRUNCATE, "%s", msg.c_str());
+                Shell_NotifyIconA(NIM_MODIFY, &nid);
+                s_busy = false;
+            }).detach();
+            return 0;
+        }
 
         case WM_APP_PIN_INPUT:   // panel pin: this Stereo 3D Input is the default from now on
             if (app)
@@ -8660,7 +9013,7 @@ namespace
                 app->vrMoved     = false;
                 ReleaseCapture();
                 if (!wasClick) return 0;   // real drag -- consume
-                // Quick click on the SR Loom window: toggle the test-image
+                // Quick click on the Stereo Loom window: toggle the test-image
                 // overlays the same way the non-VR click path does.
                 const bool anyVisible =
                     (g_fsCtrl && IsWindowVisible(g_fsCtrl)) ||
@@ -9210,7 +9563,7 @@ namespace
         case WM_SYSCOMMAND:
             // Hijack the native title-bar Maximise -- a true OS maximise would
             // just fill the monitor with chrome still showing, which doesn't
-            // match the SR Loom mental model of "go fullscreen". Switch to
+            // match the Stereo Loom mental model of "go fullscreen". Switch to
             // OutputMode::Fullscreen instead, which removes the chrome AND
             // lays the woven content full-panel (3D works correctly there).
             // Mask off the low 4 bits per SC_* docs (they're internal use).
@@ -9248,6 +9601,10 @@ namespace
             // native title bar (Looking Glass / Windowed). Cheap, idempotent.
             if (app && (GetWindowLongPtr(hwnd, GWL_STYLE) & WS_CAPTION))
                 ApplyCaptionTheme(hwnd);
+            // ... and the taskbar's: the tray icon in its colours.
+            // (An ANSI window: the setting's name comes as ANSI text.)
+            if (app && lParam && lstrcmpiA(reinterpret_cast<LPCSTR>(lParam), "ImmersiveColorSet") == 0)
+                app->tray.RefreshIcon();
             break;
 
         case WM_CLOSE:
@@ -9763,10 +10120,10 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     if (FAILED(r11) || FAILED(r12))
                     {
                         app.deviceLost = true;
-                        Log("Graphics device lost: Direct3D 11 0x%08X, Direct3D 12 0x%08X (0x887A0006: the GPU hung on SR Loom's own commands; "
+                        Log("Graphics device lost: Direct3D 11 0x%08X, Direct3D 12 0x%08X (0x887A0006: the GPU hung on Stereo Loom's own commands; "
                             "0x887A0007: it was reset over another program's; 0x887A0005: removed; 0x887A0020: a driver error). "
-                            "Weaving is switched off -- SR Loom has to be started again.", (unsigned)r11, (unsigned)r12);
-                        // (What SR Loom was doing, and what Direct3D 12 recorded of
+                            "Weaving is switched off -- Stereo Loom has to be started again.", (unsigned)r11, (unsigned)r12);
+                        // (What Stereo Loom was doing, and what Direct3D 12 recorded of
                         // the GPU's last work: to find what the GPU hung on.)
                         Log("  at the time: format %s, anaglyph mode %d, weaver %s, conversion apart from the weave %s, last conversion %.2f ms, source %dx%d, light field %s",
                             Profiles::FormatToString(app.format), app.anaglyphMode, app.weaver.WeaverChoice() >= 4 ? "DX12" : "DX11",
@@ -9777,16 +10134,27 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                 }
                 // Weaver choice (panel): a different weaver needs a new SR session.
                 const int wantWeaver = Settings::ReadWeaverChoice();
-                if (app.weaverChoiceSeen < 0) app.weaverChoiceSeen = wantWeaver;
+                // ... and so does another Display Output, or its display.
+                // (Frame packing's size in the next byte up: another size, another session.)
+                const int wantOutput = (int)WantedOutput(app) |
+                    (WantedOutput(app) == DisplayOutput::FramePacking ? Settings::ReadOutputFramePacking() << 8 : 0);
+                const std::wstring wantDevice = wantOutput == (int)DisplayOutput::SR ? std::wstring() : Settings::ReadOutputDisplay();
+                // (Anaglyph colours, the eyes swapped: as they are, no restart.)
+                app.weaver.SetOutputOptions(Settings::ReadOutputAnaColours(), Settings::ReadOutputAnaStyle(), Settings::ReadOutputSwapEyes());
+                if (app.weaverChoiceSeen < 0) { app.weaverChoiceSeen = wantWeaver; app.outputSeen = wantOutput; app.outputDeviceSeen = wantDevice; }
                 // ... and so does HDR going on or off (Windows' switch, or a layout
                 // the float chain is / isn't for: HdrWanted).
                 else if (wantWeaver != app.weaverChoiceSeen || HdrWanted(app, app.hdrDisplay) != app.hdrActive ||
-                         (app.weaver.HasWeaver() && LensOnlyWanted(app) != app.weaver.IsLensOnly()))   // (... and the light field's lens-only session)
+                         wantOutput != app.outputSeen || wantDevice != app.outputDeviceSeen ||
+                         (app.weaver.HasWeaver() && (LensOnlyWanted(app) && !app.weaver.IsPlainOutput()) != app.weaver.IsLensOnly()))   // (... and the light field's lens-only session)
                 {
+                    const bool outputChanged = wantOutput != app.outputSeen || wantDevice != app.outputDeviceSeen;
                     app.weaverChoiceSeen = wantWeaver;
+                    app.outputSeen = wantOutput; app.outputDeviceSeen = wantDevice;
                     if (app.weaver.HasWeaver())
                     {
-                        Log("Weaver choice %d, HDR chain %s: restarting the SR session", wantWeaver, HdrWanted(app, app.hdrDisplay) ? "on" : "off");
+                        Log("Weaver choice %d, Display Output %s, HDR chain %s: restarting the session", wantWeaver,
+                            DisplayOutputName((DisplayOutput)(wantOutput & 0xFF)), HdrWanted(app, app.hdrDisplay) ? "on" : "off");
                         app.weaver.StopSR();
                         app.srStopAtMs = 0;
                         if (app.weavingEnabled)
@@ -9798,6 +10166,9 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                             app.captureRebind = true;   // (the new weaver needs its input)
                         }
                     }
+                    else ApplyOutputChoice(app);
+                    // (Another output may be on another display: the weave window moves there.)
+                    if (outputChanged) HandleDisplayChange(app);
                 }
                 // Anti-crosstalk (panel): applied when it changes, and to a new weaver.
                 {
@@ -9820,7 +10191,7 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                 app.lfSpread = Settings::ReadLfSpread() / 100.0f;
                 app.lfDistanceCm = Settings::ReadLfDistance();
                 app.lfPattern = Settings::ReadLfPattern();
-                // profiles.ini edited outside SR Loom: read again (checked about once a second).
+                // profiles.ini edited outside Stereo Loom: read again (checked about once a second).
                 {
                     static ULONGLONG s_profCheck = 0;
                     if (GetTickCount64() - s_profCheck > 1000)
@@ -9838,6 +10209,32 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                     }
                 }
                 app.perfLog = Settings::ReadPerfLog();
+                app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
+                app.lookShow = Settings::ReadLookShow();
+                {
+                    const int ld = Settings::ReadLookDepth();
+                    if (ld != app.lookDepth) { app.lookDepth = ld; app.look.SetExternalStage(ld == 2 ? 2 : 4); app.look.SetExternalLeftOnly(ld == 2); app.neural.SetLeftOnly(ld == 2); }
+                    app.lookNeural = ld != 0;
+                    // (Another model chosen: the matcher begun again with it, and the picture handed over afresh.)
+                    app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint();
+                    app.neural.SetAutoPaint(app.lookLive && app.lookPaint);
+                    { const bool pl = Settings::ReadLookPlate(); if (pl != app.lookPlate) { app.lookPlate = pl; app.look.SetPlate(pl); } }
+                    // (With earlier pictures remembered the painter is asked for less often: what was seen stands before
+                    // what it paints, and it shares the card with everything else.)
+                    app.neural.SetPaintGap((std::max)(Settings::ReadLookPaintGap(), app.lookPlate ? 500 : 0));
+                    app.look.SetGaussian(Settings::ReadLookGauss());
+                    { static int s_smooth = -1; const int sm = Settings::ReadLookSmooth(); if (sm != s_smooth) { s_smooth = sm; app.look.SetExternalBlur(sm); } }
+                    { const bool ed = Settings::ReadLookEdges(); if (ed != app.lookEdges) { app.lookEdges = ed; app.look.SetExternalSnap(ed ? 2 : 0); } }
+                    const std::wstring lm = Settings::ReadLookModel();
+                    if (lm != app.lookModel && !app.neural.Busy())
+                    {
+                        app.lookModel = lm;
+                        app.neural.Shutdown(); app.neural.Start(app.exeDir, lm);
+                        if (app.neuralActive) { app.look.SetExternalDisparity(nullptr); app.neuralActive = false; }
+                        app.neuralSubmitted = 0;
+                    }
+                }
+                { const int ls = Settings::ReadLookSize(); if (ls != app.lookSize) { app.lookSize = ls; app.look.SetBase(ls); } }
                 app.renderer.SetAutoPlane(Settings::ReadAutoPlane(), Settings::ReadAutoPlaneDX12(), Settings::ReadAutoPlaneHold());   // (the panel's Straight to Display toggle)
                 app.renderer.SetLatencyStats(app.perfLog);
                 app.eyeOrderDetect = Settings::ReadEyeOrderDetect();
@@ -9900,21 +10297,23 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // Install the crash handler first so any later init failure that
     // segfaults / access-violates leaves a useful trail in srweaver.log.
     SetUnhandledExceptionFilter(SrLoomCrashHandler);
-    // No IME / Text Services on SR Loom's threads: its hooks run inside every
+    // Stereo Loom run again as administrator for one Samsung Hub change (SamsungHub::SetPopup): that alone, then out.
+    if (const int hub = SamsungHub::RunElevatedPart(lpCmdLine); hub >= 0) return hub;
+    // No IME / Text Services on Stereo Loom's threads: its hooks run inside every
     // PeekMessage and talk to other processes, a known source of message-pump
     // stalls in games. (Must come before any window is created.)
     ImmDisableIME((DWORD)-1);
     TscPerMs();   // (starts the CPU-time calibration for the hitch log)
-    Log("WinMain: SR Loom v%s starting (pid %lu)", kAppVersion, GetCurrentProcessId());
+    Log("WinMain: Stereo Loom v%s starting (pid %lu)", kAppVersion, GetCurrentProcessId());
 
-    // Single instance. Two SR Loom processes fight over the SR display /
+    // Single instance. Two Stereo Loom processes fight over the SR display /
     // weaver / hotkeys / tray. A second launch just opens the running
     // copy's panel and exits. (The mutex is released by the OS on exit.)
     static HANDLE s_instanceMutex = CreateMutexA(nullptr, FALSE, "Local\\SRLoomSingleInstance");
     const DWORD instanceGle = GetLastError();
     if (s_instanceMutex && instanceGle == ERROR_ALREADY_EXISTS)
     {
-        Log("WinMain: another SR Loom is already running -- opening its panel and exiting");
+        Log("WinMain: another Stereo Loom is already running -- opening its panel and exiting");
         if (HWND other = FindWindowA(kWindowClass, nullptr))
             PostMessageA(other, WM_COMMAND, MAKEWPARAM(ID_TRAY_OPEN_PANEL, 0), 0);
         return 0;
@@ -9933,6 +10332,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // Media Foundation: needed to decode quilt video files (mp4/mov/etc.).
     VideoSource::Startup();
 
+    Settings::RepairRunAtStartup();   // (SR Loom's SRLoom.exe is now StereoLoom.exe)
+
     // Testing aid: "-noexclude" leaves the window visible to screen capture.
     const bool excludeFromCapture = !(lpCmdLine && strstr(lpCmdLine, "-noexclude"));
 
@@ -9943,17 +10344,40 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // lens preference OFF, so the lenses don't switch on for a moment at
     // start-up (the session is closed again before the main loop; weaving
     // opens its own).
-    if (!app.weaver.CreateContext(10.0, false))
+    // (Only for the Leia SR output. Without the SR Platform installed, Leia SR stands
+    // in as a Zondision display's output where there is one, else anaglyph -- so
+    // Stereo Loom is of use on any PC. With the platform installed but its service
+    // not answering, as it always was: an error.)
     {
-        ShowError("Could not connect to the Simulated Reality service.\n"
-                  "Make sure the SR Platform runtime is installed and running.");
-        return 1;
+        const DisplayOutput chosen = (DisplayOutput)Settings::ReadDisplayOutput();
+        Log("WinMain: Display Output %s", DisplayOutputName(chosen));
+        if (chosen == DisplayOutput::SR)
+        {
+            if (!SRWeaver::RuntimePresent())
+            {
+                RECT zr{};
+                app.srStandIn = Zondision::FindDisplay(zr) ? DisplayOutput::Zondision : DisplayOutput::Anaglyph;
+                Log("WinMain: no SR Platform -- %s output used instead (Settings, Display Output to choose)", DisplayOutputName(app.srStandIn));
+            }
+            else if (!app.weaver.CreateContext(10.0, false))
+            {
+                if (MessageBoxA(nullptr, "Could not connect to the Simulated Reality service.\n"
+                                         "Make sure the SR Platform runtime is installed and running.\n\n"
+                                         "Start Stereo Loom with anaglyph output instead? (Another output can be "
+                                         "chosen in Settings, Display Output.)",
+                                "Stereo Loom", MB_ICONWARNING | MB_YESNO) != IDYES)
+                    return 1;
+                app.srStandIn = DisplayOutput::Anaglyph;
+                Log("WinMain: SR service not answering -- anaglyph output for this run");
+            }
+        }
+        ApplyOutputChoice(app);
     }
     // Decide where the output window lives (the SR display if available).
     app.srDisplayRect = ResolveTargetRect(app.weaver);
 
     // Diagnostic snapshot: what does the runtime report for the SR display,
-    // and is it Windows' primary monitor? Lets us verify whether SR Loom
+    // and is it Windows' primary monitor? Lets us verify whether Stereo Loom
     // works on a non-primary SR display setup (the runtime + getLocation()
     // pattern should support it on Windows 11; see docs/sr-non-primary-research.md).
     {
@@ -10084,6 +10508,21 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
         return 7;
     }
     Log("WinMain: converter.Initialize OK");
+    if (!app.look.Initialize(app.renderer.Device(), app.renderer.Context())) Log("WinMain: look-around not available");
+    {
+        // (The trained matcher, where its runtime and model are beside the exe.)
+        wchar_t exe[MAX_PATH] = {}; GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring dir = exe; const size_t cut = dir.find_last_of(L"\\/"); if (cut != std::wstring::npos) dir.resize(cut);
+        app.exeDir = dir; app.lookModel = Settings::ReadLookModel();
+        app.lookDepth = Settings::ReadLookDepth(); app.lookNeural = app.lookDepth != 0;
+        app.look.SetExternalStage(app.lookDepth == 2 ? 2 : 4);
+        app.look.SetExternalLeftOnly(app.lookDepth == 2); app.neural.SetLeftOnly(app.lookDepth == 2);   // (the trained matcher alone: the left eye asked for, the right made from it)
+        app.lookPlate = Settings::ReadLookPlate(); app.look.SetPlate(app.lookPlate);
+        app.neural.SetPaintGap(Settings::ReadLookPaintGap()); app.look.SetGaussian(Settings::ReadLookGauss());
+        app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint(); app.neural.SetAutoPaint(app.lookLive && app.lookPaint);
+        app.neural.Start(dir, app.lookModel);
+    }
+    app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
     app.converter.SetScrollReuse(Settings::ReadScrollReuse());
     app.deferHeavyConvert = Settings::ReadDeferRecovered();
     app.asyncConvert = Settings::ReadAsyncConvert();
@@ -10285,7 +10724,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
             // admin (writing to HKLM\Software would silently fail on
             // standard user accounts). Games read HKCU after HKLM via the
             // standard registry override, so this works for the typical
-            // non-elevated SR Loom user. Both bitness views written so
+            // non-elevated Stereo Loom user. Both bitness views written so
             // 32-bit games see the same path the 64-bit games do.
             auto writeKey = [](HKEY root, const char* sub, REGSAM extra, const std::string& path) -> bool {
                 HKEY k = nullptr;
@@ -10375,7 +10814,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     Log("WinMain: tray.Add() begin");
     bool trayOK = false;
     try {
-        trayOK = app.tray.Add(app.hwnd, "SR Loom — paused (SR off)");
+        trayOK = app.tray.Add(app.hwnd, "Stereo Loom — paused (3D off)");
     } catch (std::exception& e) {
         Log("WinMain: tray.Add() std::exception: %s", e.what());
     } catch (...) {
@@ -10389,7 +10828,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     EnsureFsSetWindow(hInstance);
     EnsureFsVidWindow(hInstance);
 
-    // Accept dropped image files anywhere on the SR Loom main window -- the
+    // Accept dropped image files anywhere on the Stereo Loom main window -- the
     // WM_DROPFILES handler routes through LoadTestImage with the dropped path.
     DragAcceptFiles(app.hwnd, TRUE);
     const int hk1 = RegisterHotKey(app.hwnd, kHotkeyToggle,    MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'W');
@@ -10455,11 +10894,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // 1 ms timer resolution for this process: waits with short timeouts
     // (the capture wait, frame pacing) otherwise round up to Windows' 15.6 ms
     // default tick -- which held the weave to ~64 frames/s on any display.
-    // (Windows 10 2004+ applies this to SR Loom only, not system-wide.)
+    // (Windows 10 2004+ applies this to Stereo Loom only, not system-wide.)
     timeBeginPeriod(1);
     // ... and Windows told to honour it for this process whatever its windows
     // are doing. Windows 11 ignores a process's timer resolution (and may slow
-    // it down) when it thinks its windows aren't in view -- SR Loom's panel is
+    // it down) when it thinks its windows aren't in view -- Stereo Loom's panel is
     // usually hidden in the tray -- and a 1 ms sleep then takes 15.6 ms: the
     // render loop stalling for a refresh or two, seen in a tester's log at
     // 165 Hz. (Not on Windows 10: the call fails, harmlessly.)
@@ -10562,7 +11001,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
             const double pump = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tPump0).count();
             if (!g_threaded && pump - dispatched > 20.0)   // (with a render thread, this thread's waits hold up no frame)
             {
-                Log("Hitch: messages sent to SR Loom's windows took %.1f ms (running %.1f ms of it)",
+                Log("Hitch: messages sent to Stereo Loom's windows took %.1f ms (running %.1f ms of it)",
                     pump - dispatched, ThreadCpuMs() - cpuPump0 - dispatchedCpu);
                 // First time: list every window on this thread, so the log shows
                 // whose they could be (ours, the tray's, or ones the SR runtime
@@ -10627,6 +11066,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // Stop OpenTrack BEFORE the weaver shuts down its SRContext --
     // the bridge holds an SR::HeadPoseTracker pointing into that context.
     app.openTrack.Disable();
+    app.neural.Shutdown(); SAFE_RELEASE(app.neuralTex); SAFE_RELEASE(app.neuralStage); SAFE_RELEASE(app.layerSrv); SAFE_RELEASE(app.lookDiagStage);
+    app.look.Shutdown();
     app.converter.Shutdown();
     app.capture.Shutdown();
     app.weaver.Shutdown();

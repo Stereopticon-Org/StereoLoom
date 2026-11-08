@@ -24,13 +24,13 @@
 
 namespace srw
 {
-    // Current SR Loom version. Compared (after stripping any leading 'v') to
+    // Current Stereo Loom version. Compared (after stripping any leading 'v') to
     // the GitHub Releases latest-tag by the update checker. Bump in lockstep
     // with the git tag for new releases.
-    constexpr const char* kAppVersion = "3.1";
+    constexpr const char* kAppVersion = "4.0";
 
     // GitHub repo path for the update checker + "About" links.
-    constexpr const char* kRepoSlug = "effcol/SR-Loom";
+    constexpr const char* kRepoSlug = "Stereopticon-Org/SR-Loom";
 
     // How the woven output window is presented.
     enum class OutputMode
@@ -40,6 +40,38 @@ namespace srw
         WindowOverlay,  // borderless click-through overlay tracking a source window
         LookingGlass    // movable see-through loupe weaving the screen beneath it
     };
+
+    // What the two eyes become on the display (Settings DisplayOutput). SR: the Leia
+    // SR weave (Samsung Odyssey 3D, Acer SpatialLabs and the rest). Zondision: side by
+    // side on a Zondision display (the Zimo M1), which weaves it itself once its SDK
+    // has switched it to 3D. The others are drawn by Stereo Loom (OutputEncoder) on any
+    // display, for glasses or a 3D TV. (Stored as numbers: keep the order.)
+    enum class DisplayOutput
+    {
+        SR = 0,
+        Zondision,
+        Anaglyph,
+        SideBySide,         // left | right, each eye squeezed to half the width (a 3D TV's "SBS")
+        TopAndBottom,       // left over right, each eye half the height
+        RowInterleaved,     // alternate rows (passive / polarised 3D displays)
+        ColumnInterleaved,  // alternate columns
+        Checkerboard,       // alternate pixels (DLP 3D)
+        FramePacking,       // HDMI 1.4 frame packing: left eye, 45 blank rows, right eye (1920 x 2205 / 1280 x 1470)
+        Vision3D,           // NVIDIA 3D Vision shutter glasses (NVAPI stereo; on new drivers with 3D Vision restored)
+        FullSideBySide,     // left | right, each eye at full resolution: a double-wide display mode (3840 x 1080 ...)
+        FullTopAndBottom,   // left over right, each eye at full resolution: a double-tall display mode
+        Katanga,            // handed to Katanga (bo3b's stereo viewer, for VR headsets) over its shared texture
+        Count
+    };
+    inline const char* DisplayOutputName(DisplayOutput o)
+    {
+        static const char* const names[] = {
+            "Leia SR", "Zondision", "Anaglyph", "Side-by-Side (Half)", "Top-and-Bottom (Half)",
+            "Row Interleaved", "Column Interleaved", "Checkerboard", "HDMI Frame Packing", "3D Vision",
+            "Side-by-Side (Full)", "Top-and-Bottom (Full)", "Katanga" };
+        const int i = (int)o;
+        return i >= 0 && i < (int)DisplayOutput::Count ? names[i] : "?";
+    }
 
     // What the weaver is currently weaving. Katanga used to live here as a
     // 4th source kind; it moved to StereoFormat (an "external stereo input"
@@ -276,7 +308,7 @@ namespace srw
         if (ms <= 15.0) return;
         const char* from = (sendFlags & ISMEX_SEND)   ? "sent by another thread or program"
                          : (sendFlags & ISMEX_NOTIFY) ? "notification from another thread"
-                         : "from SR Loom's own thread";
+                         : "from Stereo Loom's own thread";
         Log("Hitch: %s window message 0x%04X (wParam 0x%llX), %s, took %.1f ms",
             window, msg, (unsigned long long)wp, from, ms);
     }
@@ -423,7 +455,7 @@ namespace srw
     // Show a modal error box (used for unrecoverable startup failures).
     inline void ShowError(const char* msg)
     {
-        ::MessageBoxA(nullptr, msg, "SR Loom", MB_ICONERROR | MB_OK);
+        ::MessageBoxA(nullptr, msg, "Stereo Loom", MB_ICONERROR | MB_OK);
 #ifdef _DEBUG
         ::OutputDebugStringA(msg);
         ::OutputDebugStringA("\n");

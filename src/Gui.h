@@ -207,6 +207,9 @@ namespace srw
         // hide behind a click on first launch. Collapsible so users who
         // never touch tracking can tidy it away.
         bool                     m_headTrackingSectionOpen = true;
+        bool                     m_splatSectionOpen = true;   // (the GAUSSIAN SPLATS section)
+        bool                     m_outputSectionOpen = true;  // (the DISPLAY OUTPUT section)
+        unsigned long            m_panelOpenSaved = 0xFFFFFFFFul;   // (the sections' open or closed as last saved: Settings PanelOpen)
         // DISPLAY + STEREO 3D INPUT also collapsible (default expanded);
         // users who've set their format / display mode once may want to
         // tidy away those sections too once everything is dialled in.
@@ -224,6 +227,14 @@ namespace srw
         bool                     m_perfLog               = false;  // frame / GPU timing in the log
         bool                     m_gpuRealtime           = false;  // Settings GpuRealtime (the GPU scheduler's realtime class: needs administrator)
         bool                     m_autoPlaneOn           = true;   // Settings AutoPlane (straight to the display when nothing shows through)
+        bool                     m_lookOn                = false;  // Settings LookAround (new views as the head moves: an experiment)
+        int                      m_lookGauss             = 0;      // Settings LookGauss
+        int                      m_lookDepth             = 2;      // Settings LookDepth (0 its own matcher, 1 a trained one and its own, 2 the trained one alone)
+        std::string              m_lookModel;                      // Settings LookModel (the trained matcher's file; none: stereo.onnx)
+        std::vector<std::string> m_lookModels;                     // the .onnx files in the neural folder, listed when the list is opened
+        bool                     m_lookLive              = true;   // Settings LookLive (the trained matcher on every picture)
+        bool                     m_lookPlate             = false;  // Settings LookPlate (what was in sight in earlier pictures kept, for what is uncovered)
+        bool                     m_lookPaint             = true;   // Settings LookPaint (a painted background for a picture that stays)
         bool                     m_eyeOrder              = false;  // Automatic works out the eye order
         int                      m_weaverChoice          = 0;      // Settings WeaverChoice (0 modern, 1-3 legacy ACT off/static/dynamic)
         int                      m_actMode               = 0;      // Settings WeaverAct (0 the display's default, 1 off, 2 static, 3 dynamic)

@@ -1,4 +1,4 @@
-# WebXR support for SR Loom — research
+# WebXR support for Stereo Loom — research
 
 ## 1. What WebXR actually delivers
 
@@ -74,7 +74,7 @@ the extension, launch Chrome.* No browser fork, no Chromium patches.
   no real device output.
 - **[VRto3D](https://github.com/oneup03/VRto3D)** — OpenVR (SteamVR) driver
   exposing a virtual HMD, rendering SBS/TaB to a normal window. WebXR-via-
-  SteamVR-OpenXR works; SR Loom captures and weaves the SBS window. Today's
+  SteamVR-OpenXR works; Stereo Loom captures and weaves the SBS window. Today's
   baseline. Output is post-bake stereo, full WebXR feature set works.
 - **[XRGameBridge](https://github.com/JoeyAnthony/XRGameBridge)** — **the
   direct precedent**. OpenXR runtime by Joey Anthony, D3D12-only, registers
@@ -86,39 +86,39 @@ the extension, launch Chrome.* No browser fork, no Chromium patches.
   Windows support is "mostly simulated HMD" only and direct-mode display is a
   blocker. Forking Monado to weave via LeiaSR SDK is plausible but heavy.
 
-Closest model to "WebXR → SR Loom direct" = the Leia bridge extension + their
+Closest model to "WebXR → Stereo Loom direct" = the Leia bridge extension + their
 OpenXR runtime. The Looking Glass polyfill is the closest *opt-in* model.
 
-## 5. Implementation paths for SR Loom, easiest → hardest
+## 5. Implementation paths for Stereo Loom, easiest → hardest
 
 1. **Do-nothing / document the chain.** WebXR page in Chrome → SteamVR
-   OpenXR → VRto3D's virtual HMD → SBS window → SR Loom captures + weaves.
-   Zero code in SR Loom. Add a `docs/webxr-via-vrto3d.md` walkthrough and a
+   OpenXR → VRto3D's virtual HMD → SBS window → Stereo Loom captures + weaves.
+   Zero code in Stereo Loom. Add a `docs/webxr-via-vrto3d.md` walkthrough and a
    capture preset for VRto3D's headset window. UX: configure SteamVR active
-   runtime, install VRto3D, point SR Loom at the window. Already works for
+   runtime, install VRto3D, point Stereo Loom at the window. Already works for
    the subset of users on that stack.
 2. **Bundle / shell out to Leia's official chain.** If the Leia OpenXR
    runtime + WebXR-OpenXR Bridge extension work standalone on user hardware,
-   SR Loom does *nothing* for WebXR itself — just detect them and surface a
+   Stereo Loom does *nothing* for WebXR itself — just detect them and surface a
    "Open WebXR in Chrome" tray action. Code: tray menu item + runtime
    detection (registry read of `ActiveRuntime`, check for extension ID
    `kbhoohhidfimoheieoibjlecmkcodipm`). Cleanest UX, zero new rendering
    code. Caveat: depends on Leia's runtime being installable next to LeiaSR
    SDK 1.36.2 without conflict — needs testing.
 3. **Ship a "use this site" JS polyfill recipe.** Author a Looking-Glass-
-   style polyfill that targets SR Loom's existing window-capture path: page
+   style polyfill that targets Stereo Loom's existing window-capture path: page
    loads the polyfill, polyfill creates a popup, renders SBS into a canvas,
-   SR Loom auto-detects the window by title and weaves it. Code: a small TS
+   Stereo Loom auto-detects the window by title and weaves it. Code: a small TS
    package (`@srloom/webxr-polyfill`) plus a window-title heuristic in
-   SR Loom's capture picker. Only works for sites that opt in (three.js
+   Stereo Loom's capture picker. Only works for sites that opt in (three.js
    demos, custom apps) — not a general "every WebXR site works" solution.
-4. **Build an SR Loom OpenXR runtime.** Write a C++ OpenXR 1.0 runtime DLL
+4. **Build an Stereo Loom OpenXR runtime.** Write a C++ OpenXR 1.0 runtime DLL
    that implements `XR_KHR_D3D11_enable` + `XR_KHR_D3D12_enable` +
    `XR_EXT_win32_appcontainer_compatible`, registers under
    `HKLM\SOFTWARE\Khronos\OpenXR\1`, accepts the per-eye D3D textures in
    `xrEndFrame`, hands them to the existing LeiaSR weave pipeline via shared
    handles, and adds head pose from the LeiaSR eye tracker. This *is*
-   "WebXR → SR Loom direct" and works for every OpenXR app — not just web.
+   "WebXR → Stereo Loom direct" and works for every OpenXR app — not just web.
    XRGameBridge proves it's feasible at the scale of one developer. The
    sandbox extension and the Chrome conformance dance are the real cost.
    Multi-month effort, but it would obsolete VRto3D-for-WebXR on SR hardware.
@@ -128,4 +128,4 @@ OpenXR runtime. The Looking Glass polyfill is the closest *opt-in* model.
 
 Recommendation: ship option 1 immediately (docs only), evaluate option 2 once
 the Leia runtime is tested against LeiaSR 1.36.2, keep option 4 as a long-term
-"SR Loom is the OpenXR runtime on this machine" play if XRGameBridge stalls.
+"Stereo Loom is the OpenXR runtime on this machine" play if XRGameBridge stalls.

@@ -1,24 +1,39 @@
-# SR Loom
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo/stereo_loom_dark_256.png">
+  <img src="assets/logo/stereo_loom_light_256.png" width="96" alt="Stereo Loom logo">
+</picture>
+
+# Stereo Loom
+
+Part of [Stereopticon](https://stereopticon.org): open-source stereoscopic 3D,
+for every display.
 
 <img width="210" height="276" alt="image" src="https://github.com/user-attachments/assets/9c5132f2-5673-4d70-82b9-5ea284c76aad" /> <img width="210" height="276" alt="image" src="https://github.com/user-attachments/assets/d8dcd576-908e-433a-bbd5-f5998231f833" />
 
-A lightweight Windows tray app that weaves stereo 3D onto **Simulated Reality**
-displays (Samsung Odyssey 3D, Acer SpatialLabs, and other LeiaSR / Dimenco
-panels). Point it at your screen, a window, or a floating "looking glass", pick
-the stereo format your content is in, and it converts and weaves it with
-head-tracked depth. No glasses needed.
+A lightweight Windows tray app that shows stereo 3D on 3D displays: it weaves
+for **Simulated Reality** displays (Samsung Odyssey 3D, Acer SpatialLabs, and
+other LeiaSR / Dimenco panels), drives **Zondision** displays (the Zimo M1), and
+can output anaglyph, side by side, top and bottom, interleaved, HDMI frame-packed or
+3D Vision 3D for glasses,
+3D TVs and projectors on any display. Point it at your screen, a window, or a
+floating "looking glass", pick the stereo format your content is in, and it
+converts and shows it in 3D.
 
-> **v3.1** is a single self-contained `SRLoom.exe`. It needs a Simulated Reality
-> display and the SR Platform runtime installed. New in 3.1: a Direct3D 12
-> weaver option, anti-crosstalk controls, RGB + Depth pictures, an experimental
-> light-field mode with no eye tracking, experimental HDR, faster and steadier
-> Recovered Colour for anaglyphs, and custom anaglyph colours. See
-> `CHANGELOG.md` for the full list.
+> **Stereo Loom was called SR Loom** (and `SRLoom.exe`) up to v3.1. It was
+> renamed when it learnt to drive displays other than Leia SR ones. Nothing is
+> lost in the move: settings, profiles and the log are kept where SR Loom kept
+> them (`HKCU\Software\SRLoom`, `%LOCALAPPDATA%\SRLoom` and `srweaver.log` beside
+> the exe), so an existing setup carries straight over.
+
+> **v4.0** is a single self-contained `StereoLoom.exe`. New in 4.0: the rename,
+> and Display Outputs beyond Leia SR (Zondision, 3D Vision, anaglyph, side by
+> side and top and bottom in half and full, interleaved, checkerboard, HDMI frame
+> packing and Katanga). See `docs/releases/` for each release's notes.
 
 ## What it does
 
 The LeiaSR weaver takes a **full side-by-side (SBS)** texture and produces the
-lenticular, eye-tracked output. SR Loom captures your source, converts whatever
+lenticular, eye-tracked output. Stereo Loom captures your source, converts whatever
 stereo layout it is in to SBS with a GPU shader, then weaves:
 
 ```
@@ -42,7 +57,7 @@ capture (screen / window)  ->  convert any stereo format to SBS  ->  weave  ->  
 - **Lytro Light Field** files
 - **Katanga**: frames sent by a game or bridge over the Katanga shared-texture
   protocol
-- **Automatic Detection** (experimental): SR Loom looks at the picture and works
+- **Automatic Detection** (experimental): Stereo Loom looks at the picture and works
   out the layout itself
 
 ### Display modes
@@ -52,6 +67,48 @@ capture (screen / window)  ->  convert any stereo format to SBS  ->  weave  ->  
 - **Make active window 3D**: weave whatever window you are using (Ctrl+Alt+C).
 - **Looking Glass**: a floating, draggable and resizable 3D viewport.
 
+### Display outputs
+Chosen in the Display Output section, below Stereo 3D Input. Everything before the output (the capture,
+the stereo format, Gaussian Splats) works the same whichever is chosen.
+- **Leia SR** (the default): the SR weave, eye tracked, for SR displays. Its own
+  settings sit under it: the weaver (Direct3D 11 or 12), the anti-crosstalk
+  method and strength, contrast, and, where the display maker's software is
+  installed, the Acer SpatialLabs and Samsung Odyssey 3D switches.
+- **Zondision**: side by side on a Zondision display (the Zimo M1), which weaves
+  it with its own chip; Stereo Loom switches the display's 3D on and off through
+  Zondision's SDK, and its eye tracker drives Gaussian Splats. Needs Zondision's
+  3DS software installed.
+- **Anaglyph**: red / cyan, green / magenta or amber / blue glasses, on any
+  display. Optimised (Dubois' matrices, least ghosting with red / cyan), Colour,
+  Half Colour or Grey.
+- **Side-by-Side** and **Top-and-Bottom**, Half or Full. Half squeezes each eye
+  into half the screen, for a 3D TV or projector in its own 3D mode. Full gives
+  each eye the display's whole resolution on a double-wide (or double-tall)
+  display mode, as AR glasses and some projectors take it; Stereo Loom switches
+  to that mode where the display offers it (a display already in one, such as
+  glasses at 3840 x 1080, is left as it is).
+- **Katanga**: the two eyes handed to [Katanga](https://github.com/bo3b/Katanga)
+  over its shared-texture protocol (as wiz3D does), to view in a VR headset.
+  Start Katanga first.
+- **Row Interleaved**, **Column Interleaved** and **Checkerboard**: for passive
+  (polarised) and DLP 3D displays.
+- **HDMI Frame Packing**: for 3D TVs and projectors that take frame-packed 3D.
+  Stereo Loom switches the display to 1920 x 2205 (or 1280 x 1470 for 720p)
+  while the 3D is on, leaving the refresh rate to the driver, and puts it back
+  after. If the display does not offer that size, add it as a custom resolution
+  (NVIDIA Control Panel, AMD Software or CRU).
+- **3D Vision**: NVIDIA's shutter glasses, through
+  [NV3D-Lib](https://github.com/oneup03/NV3D-Lib) as wiz3D does it. Needs the 3D
+  Vision glasses, emitter and a 120 Hz panel, an NVIDIA driver with 3D Vision
+  (R425 or older, or a newer one with
+  [Vision Restoration](https://github.com/oscardelatorre/VisionRestoration)), and
+  "Set up stereoscopic 3D" on in the NVIDIA Control Panel.
+
+Each non-SR output can go to any display (automatic: the Zondision display, or
+the primary), and **Swap Eyes** turns the eyes round for glasses or a display
+that starts with the other eye. Without the SR Platform installed, Stereo Loom
+starts with anaglyph (or Zondision, where a Zondision display is found).
+
 ### Weaving options
 - **Weaver**: the SR SDK's weaver on Direct3D 11 (the default) or on Direct3D 12
   (experimental). With Direct3D 12 a slow conversion no longer holds the 3D back:
@@ -60,7 +117,7 @@ capture (screen / window)  ->  convert any stereo format to SBS  ->  weave  ->  
   between the eyes. The method (the display's default, Off, Static or Dynamic) is
   in Settings, Advanced.
 - **Straight to the display**: while the weave covers the whole screen with
-  nothing showing through, SR Loom bypasses Windows' compositor, which shortens
+  nothing showing through, Stereo Loom bypasses Windows' compositor, which shortens
   the time from the weave to the display. It switches back by itself when a
   cut-out is needed.
 - **Light field** (experimental, for Quilts and RGB + Depth): shows many views at
@@ -74,16 +131,16 @@ capture (screen / window)  ->  convert any stereo format to SBS  ->  weave  ->  
 
 ### Profiles
 
-SR Loom can remember settings per game, per program and per media file. Focus a
-game that has a saved profile and SR Loom switches to the right stereo format
+Stereo Loom can remember settings per game, per program and per media file. Focus a
+game that has a saved profile and Stereo Loom switches to the right stereo format
 automatically; load an image or video and it remembers what you last set.
 Profiles live in `%LOCALAPPDATA%\SRLoom\profiles.ini`, which is hand-editable.
-The top of the file lists every setting, and SR Loom reads the file again by
+The top of the file lists every setting, and Stereo Loom reads the file again by
 itself when you change it.
 
 ### Head tracking output to games
 
-SR Loom forwards the SR display's head pose to PC games as head-look input, so
+Stereo Loom forwards the SR display's head pose to PC games as head-look input, so
 flight sims, racing titles, and any TrackIR / FreeTrack / OpenTrack-aware game
 gets head tracking from the SR camera with no extra hardware. Three output
 protocols are broadcast together by default:
@@ -93,10 +150,10 @@ protocols are broadcast together by default:
 - **FreeTrack 2.0 Enhanced**: DCS World, Falcon BMS, IL-2, MSFS, X-Plane,
   Project CARS, Elite Dangerous, Star Citizen and others.
 - **TrackIR (NaturalPoint NPClient)**: iRacing, FSX/P3D, ArmA, Codemasters
-  racers and most serious sims. The NPClient.dll is embedded in SRLoom.exe and
+  racers and most serious sims. The NPClient.dll is embedded in StereoLoom.exe and
   extracted to `%LOCALAPPDATA%\SRLoom\NPClient\` on first launch, so no OpenTrack
   install is required. If OpenTrack is already installed and its registry entry
-  points at its own NPClient, SR Loom defers to it.
+  points at its own NPClient, Stereo Loom defers to it.
 
 The pipeline: filtered SR eye-pair midpoint (position) + SR head pose
 orientation → OneEuro + OpenTrack-style Accela on rotation → per-axis
@@ -146,7 +203,7 @@ Auto (follows Windows), Light or Dark, and remembers your choice.
 ## Requirements
 
 - **64-bit Windows 10 (1903+) or Windows 11.** Older builds lack the
-  screen-capture APIs SR Loom relies on.
+  screen-capture APIs Stereo Loom relies on.
 - A Simulated Reality display and a **current SR Platform runtime** installed
   (the SR Service must be running: it provides the `SimulatedReality*.dll`s and
   the eye tracking). An out-of-date runtime can be missing the modern weaver API.
@@ -154,7 +211,7 @@ Auto (follows Windows), Light or Dark, and remembers your choice.
 **Note on primary monitor:** Samsung and Acer both tell users to make the SR
 display Windows-primary. That guidance exists because their *launchers*
 (Reality Hub, SpatialLabs Go / TrueGame) open games on whichever display
-Windows considers primary. **SR Loom does NOT need the SR display to be
+Windows considers primary. **Stereo Loom does NOT need the SR display to be
 primary.** It targets the SR panel itself through the LeiaSR SDK's display
 rect, so you can run with the SR display as a secondary monitor (recommended on
 Windows 11). See `docs/sr-non-primary-research.md` for the full rationale and
@@ -163,7 +220,7 @@ SDK-level evidence.
 ## Troubleshooting
 
 - **A "fullscreen" game shows a frozen 3D image, doesn't update, or has no input.**
-  SR Loom captures and overlays via Windows' screen-capture API, which can't see
+  Stereo Loom captures and overlays via Windows' screen-capture API, which can't see
   or draw over a game in **exclusive fullscreen**. Run the game in **borderless**
   (or windowed) instead. Most modern games default to borderless-flip anyway; only
   true exclusive fullscreen is unsupported. Games that gate their own 3D mode
@@ -177,11 +234,11 @@ SDK-level evidence.
   is a false positive. The source is here for review; you can "Allow on device",
   and the detection has been reported to Microsoft.
 - **A yellow border around the captured area.** That is Windows' capture
-  indicator. SR Loom asks the OS to hide it, but Windows only grants that to
+  indicator. Stereo Loom asks the OS to hide it, but Windows only grants that to
   packaged apps, so it may remain.
-- **Variable refresh rate (G-Sync / FreeSync) causes judder.** SR Loom captures
+- **Variable refresh rate (G-Sync / FreeSync) causes judder.** Stereo Loom captures
   the source and re-presents to the SR display, so the SR display's VRR ends up
-  synced to *SR Loom's* present cadence and not the source game's. If the game
+  synced to *Stereo Loom's* present cadence and not the source game's. If the game
   runs below the SR display's refresh rate, you'll see judder. This is a
   fundamental limitation of capture-based mirroring on Windows: Sunshine,
   ShaderGlass, OBS and every other tool in this category have the same
@@ -192,45 +249,77 @@ SDK-level evidence.
   (e.g. 60 fps source on a 120 Hz panel).
 - **RTSS (RivaTuner Statistics Server) causes stutter or drops.** RTSS hooks
   `IDXGISwapChain::Present` in every Direct3D app, which interferes with SR
-  Loom's output. If you use RTSS, **add `SRLoom.exe` to its exclusion list**
+  Loom's output. If you use RTSS, **add `StereoLoom.exe` to its exclusion list**
   (RTSS Settings → "Application detection level" → exclude, or per-process
   exclusion). OBS users use the same trick for the same reason.
 - **Stutter you can't explain.** Switch on **Perf Log** in Settings, Advanced,
-  reproduce it, and attach `srweaver.log` (next to `SRLoom.exe`) to a report. The
+  reproduce it, and attach `srweaver.log` (next to `StereoLoom.exe`) to a report. The
   log records frame timings and what the SR runtime reported at the time.
 
 ## Releasing / running
 
-The build is a **single self-contained `SRLoom.exe`**. The UI fonts are embedded
-and the MSVC runtime is statically linked, so there is nothing to ship beside
-it. The only external dependency is the SR Platform runtime, which the user
-already has installed to use the display.
+The build is a **self-contained `StereoLoom.exe`**. The UI fonts are embedded
+and the MSVC runtime is statically linked. The SR Platform runtime (which an SR
+display's owner already has) is loaded only when present, so the exe also starts
+on PCs without it. Zondision's DLLs (`ZimoAdapter.dll`, `3DS_SDK.dll`,
+`jsoncpp.dll`) are carried inside the exe too, and unpacked to
+`%LOCALAPPDATA%\SRLoom\Zondision` the first time a Zondision display is used.
+Optional, beside the exe: the `neural` folder (ONNX Runtime, DirectML and the
+depth models), for Gaussian Splats' trained matcher.
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) on a
+self-hosted runner that holds the SDKs. Pushing a tag such as `v4.0` builds the
+exe and attaches it to a draft release, with its notes from
+`docs/releases/<tag>.md`; the tag must match `kAppVersion` in `src/Common.h`.
 
 ## Building
 
 Requires Visual Studio 2022/2026 (Desktop C++) and CMake ≥ 3.21. The build is
 **x64 only** (the SR Platform runtime only installs on 64-bit Windows).
 
-> The `lib/` folder (the Leia SR SDK) is **not** tracked in git. Place the
+> The `lib/` folder (the Leia SR SDK) is **not** tracked in git (another
+> folder can be given with `-DSRLOOM_LIB_DIR=...`). Place the
 > LeiaSR SDK locally at `lib/Simulated Reality/LeiaSR-SDK-1.36.2-win64`.
+> For Zondision support, unpack Zondision's C SDK (from developer.zondision.com)
+> into `lib/Zondision/3DS_CSDK_V<version>`. ZimoAdapter.dll is then built (and carried in the exe) with
+> Zondision's evaluation key, which expires; a build with a key of your own reads
+> it from `adapters/zimo/ZimoKey.private.h` (see `ZimoKey.example.h`), which is
+> never committed. Zondision ask that app keys are kept inside the binary rather
+> than published as text.
+> For the 3D Vision output, put [NV3D-Lib](https://github.com/oneup03/NV3D-Lib)'s
+> `include/NV3D.hpp`, `lib/x64/Release-MT/NV3DLib-mt.lib` and
+> `external/nvapi/amd64/nvapi64.lib` in `lib/NV3D-Lib`; without them the build
+> leaves 3D Vision out.
 
 ```powershell
 cmake -B build/x64 -A x64
 cmake --build build/x64 --config Release
-# -> build/x64/Release/SRLoom.exe
+# -> build/x64/Release/StereoLoom.exe
 ```
 
 ## Credits
 
 - **[markleoryan79](https://github.com/markleoryan79)**: brought Katanga back into
-  SR Loom's format list and built the
-  [3D Slicer → SR Loom bridge](https://github.com/markleoryan79/3D-Slicer-Stereoscopic-Display-Extension/tree/SRLoomBridge),
-  which sends stereo views of medical scans into SR Loom over Katanga. His work
-  shaped SR Loom's Katanga receiver and auto-receive support.
+  Stereo Loom's format list and built the
+  [3D Slicer → Stereo Loom bridge](https://github.com/markleoryan79/3D-Slicer-Stereoscopic-Display-Extension/tree/SRLoomBridge),
+  which sends stereo views of medical scans into Stereo Loom over Katanga. His work
+  shaped Stereo Loom's Katanga receiver and auto-receive support.
+- **[AlonBorodAHub](https://github.com/AlonBorodAHub)**: their
+  [Odyssey Stereo Controls](https://github.com/AlonBorodAHub/Odyssey-Stereo-Controls)
+  (MIT) worked out how to ask Samsung Odyssey 3D Hub to turn off its fullscreen
+  "convert to 3D" popup and to put the preference back. Stereo Loom's Samsung 3D Popup
+  switch (Settings, Samsung Odyssey 3D) works the same way.
+- **[oneup03](https://github.com/oneup03)**: [NV3D-Lib](https://github.com/oneup03/NV3D-Lib)
+  (LGPL 2.1) drives the 3D Vision output.
+- **[oscardelatorre](https://github.com/oscardelatorre)**:
+  [Vision Restoration](https://github.com/oscardelatorre/VisionRestoration) brings
+  3D Vision back on current NVIDIA drivers.
 
 ## Licence
 
 MIT (see `LICENSE`). Third-party parts (Dear ImGui, NPClient, the 1 Euro
-Filter, the **Inter** font, stb_image) are listed with their licences in
+Filter, the **Inter** font, stb_image, Odyssey Stereo Controls, NV3D-Lib, NVAPI) are listed with their licences in
 `THIRD_PARTY_NOTICES.txt`. Links against Leia's **SR SDK** (MIT); the SR
-Platform runtime must be installed separately.
+Platform runtime must be installed separately. Zondision display support uses
+Zondision's 3DS SDK, redistributed under the Zondision SDK and API Licence
+Agreement (developer.zondision.com); it is not part of this repository.

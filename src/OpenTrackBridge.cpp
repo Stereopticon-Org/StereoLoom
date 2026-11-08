@@ -1,6 +1,7 @@
 // OpenTrackBridge.cpp -- see header.
 #include "OpenTrackBridge.h"
 #include "Common.h"
+#include "SRWeaver.h"   // (RuntimePresent)
 
 #include "sr/management/srcontext.h"
 #include "sr/utility/exception.h"
@@ -202,6 +203,12 @@ namespace srw
         // Ensure SRContext exists. Lazily created so an idle app pays nothing.
         if (!m_context)
         {
+            // (No SR Platform on this PC: its DLLs are loaded only when there.)
+            if (!SRWeaver::RuntimePresent())
+            {
+                Log("OpenTrackBridge::SetOutputs: the SR Platform is not installed -- no SR head tracking to send");
+                return false;
+            }
             try { m_context = SR::SRContext::create(); }
             catch (SR::ServerNotAvailableException&)
             {

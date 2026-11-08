@@ -804,7 +804,7 @@ void Present12::LogDeviceLoss()
                 n->pCommandListDebugNameW ? n->pCommandListDebugNameW : L"?", n->pCommandQueueDebugNameW ? n->pCommandQueueDebugNameW : L"?",
                 done, n->BreadcrumbCount, done < n->BreadcrumbCount ? " (the GPU stopped inside this one)" : "", ops);
         }
-        if (!lists) Log("Present12:   no Direct3D 12 command list was in flight (the hang was not in SR Loom's Direct3D 12 work)");
+        if (!lists) Log("Present12:   no Direct3D 12 command list was in flight (the hang was not in Stereo Loom's Direct3D 12 work)");
     }
     D3D12_DRED_PAGE_FAULT_OUTPUT pf{};
     if (SUCCEEDED(dred->GetPageFaultAllocationOutput(&pf)) && pf.PageFaultVA)

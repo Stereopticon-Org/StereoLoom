@@ -1,5 +1,6 @@
 #include "SRWeaver.h"
 #include "Settings.h"
+#include "Zondision.h"
 
 // Allows SR::TryGetDisplayManagerInstance() (lazy-bound display manager).
 #define SRDISPLAY_LAZYBINDING
@@ -120,8 +121,30 @@ SRWeaver::~SRWeaver()
     Shutdown();
 }
 
+// The SR runtime's DLLs are delay-loaded (CMakeLists.txt): nothing of the SR SDK
+// may be called unless they are there. They come with the SR Platform, found the
+// way the exe always found them (its folder, then the PATH the platform sets).
+bool SRWeaver::RuntimePresent()
+{
+    static const bool present = [] {
+        const char* const dlls[] = { "SimulatedRealityCore.dll", "SimulatedRealityDirectX.dll", "SimulatedRealityDisplays.dll",
+                                     "SimulatedRealityFaceTrackers.dll", "simulatedreality.dll", "DimencoWeaving.dll" };
+        for (const char* d : dlls)
+        {
+            if (!LoadLibraryA(d))
+            {
+                Log("SR runtime: %s not found -- the SR Platform is not installed (Leia SR output unavailable)", d);
+                return false;
+            }
+        }
+        return true;
+    }();
+    return present;
+}
+
 bool SRWeaver::CreateContext(double maxSeconds, bool lensPreference)
 {
+    if (!RuntimePresent()) return false;
     const auto start = std::chrono::steady_clock::now();
     while (m_context == nullptr)
     {
@@ -146,6 +169,12 @@ bool SRWeaver::CreateContext(double maxSeconds, bool lensPreference)
 
 void SRWeaver::LensEnable()
 {
+    // (A Zondision display: its 3D is the lens.)
+    if (m_plainUp)
+    {
+        if (m_output == DisplayOutput::Zondision && !m_plain3D) m_plain3D = Zondision::Set3D(true);
+        return;
+    }
     // Only when it changes: each call waits on the SR runtime (~17 ms+), and
     // every source / mode pick used to repeat it -- a render-thread hitch.
     if (!m_lensHint || m_lensReq == 1) return;
@@ -156,6 +185,11 @@ void SRWeaver::LensEnable()
 
 void SRWeaver::LensDisable()
 {
+    if (m_plainUp)
+    {
+        if (m_output == DisplayOutput::Zondision && m_plain3D) { Zondision::Set3D(false); m_plain3D = false; }
+        return;
+    }
     if (!m_lensHint || m_lensReq == 0) return;
     m_lensReq = 0;
     try { m_lensHint->disable(); }
@@ -257,6 +291,7 @@ bool SRWeaver::TakeEventCounts(int out[5])
 
 bool SRWeaver::IsLensEnabled() const
 {
+    if (m_plainUp) return m_output == DisplayOutput::Zondision ? m_plain3D : true;
     if (!m_lensHint) return false;
     try { return m_lensHint->isEnabled(); }
     catch (...) { return false; }
@@ -313,6 +348,7 @@ bool SRWeaver::IsWindowPartVisible(HWND hwnd, int width, int height)
 
 const char* SRWeaver::GetSRPlatformVersion()
 {
+    if (!RuntimePresent()) return "";
     try
     {
         const char* v = ::getSRPlatformVersion();
@@ -323,6 +359,9 @@ const char* SRWeaver::GetSRPlatformVersion()
 
 bool SRWeaver::GetSRDisplayRect(RECT& out)
 {
+    // (Stereo Loom's own outputs: the display chosen for them.)
+    if (m_output != DisplayOutput::SR)
+        return PlainDisplayRect(out);
     if (!m_context)
         return false;
 
@@ -412,7 +451,7 @@ bool SRWeaver::CreateWeaver(ID3D11DeviceContext* immediateContext, HWND window)
     catch (...) { Log("enableLateLatching threw -- continuing without it"); }
     Log("LateLatching enabled=%d", m_weaver->isLateLatchingEnabled() ? 1 : 0);
 
-    // sRGB conversion: SR Loom uses sRGB-typed SRVs (capture is
+    // sRGB conversion: Stereo Loom uses sRGB-typed SRVs (capture is
     // BGRA8_UNORM_SRGB) and an sRGB-typed RTV on the backbuffer, so the
     // hardware handles BOTH the sample-time sRGB->linear conversion AND
     // the write-time linear->sRGB conversion. Tell the weaver shader NOT
@@ -539,7 +578,7 @@ bool SRWeaver::CreateLegacyWeaver(ID3D11DeviceContext* immediateContext, HWND wi
     return m_legacy != nullptr;
 }
 
-// The lens as the runtime knows it (for the log, and for SR Loom's own
+// The lens as the runtime knows it (for the log, and for Stereo Loom's own
 // interlacing: the light-field experiment). Guarded: the figures are read
 // from the runtime's weaving library, which may not be set up.
 static bool ReadLensFacts(float out[6], bool flags[2], int& notTracking)
@@ -614,7 +653,7 @@ static bool LightFieldPhases(float w, float h, float xCm, float yCm, float zCm, 
 bool SRWeaver::GetLightFieldGeometry(float w, float h, float xCm, float yCm, float zCm, float& pitchPx, float& slant, float& centrePhase)
 {
     double o[3] = {};
-    if (!HasWeaver() || zCm < 5.0f) return false;
+    if (!HasWeaver() || m_plainUp || zCm < 5.0f) return false;   // (Stereo Loom's own outputs: no SR lens)
     auto good = [&] { return LightFieldPhases(w, h, xCm, yCm, zCm, o) && o[0] > 1e-4 && std::isfinite(o[0]) && std::isfinite(o[1]) && std::isfinite(o[2]); };
     if (!good())
     {
@@ -630,7 +669,7 @@ bool SRWeaver::GetLightFieldGeometry(float w, float h, float xCm, float yCm, flo
             if (GetEnvironmentVariableA("ProgramData", pd, MAX_PATH))
             {
                 WIN32_FIND_DATAA fd{};
-                const HANDLE h = FindFirstFileA((std::string(pd) + "\Simulated Reality\Devices\*").c_str(), &fd);
+                const HANDLE h = FindFirstFileA((std::string(pd) + "\\Simulated Reality\\Devices\\*").c_str(), &fd);
                 if (h != INVALID_HANDLE_VALUE)
                 {
                     do { if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && fd.cFileName[0] != '.') { serial = fd.cFileName; break; } } while (FindNextFileA(h, &fd));
@@ -642,7 +681,7 @@ bool SRWeaver::GetLightFieldGeometry(float w, float h, float xCm, float yCm, flo
                 if (GetModuleFileNameA(core, mod, MAX_PATH))
                 {
                     install = mod;
-                    for (int up = 0; up < 2; ++up) { const size_t s = install.find_last_of("\/"); if (s == std::string::npos) break; install.erase(s); }
+                    for (int up = 0; up < 2; ++up) { const size_t s = install.find_last_of("\\/"); if (s == std::string::npos) break; install.erase(s); }
                 }
         }
         Log("Light field: telling the weaving library its display (%s, platform at %s)", serial.empty() ? "?" : "found", install.empty() ? "?" : install.c_str());
@@ -745,6 +784,8 @@ void SRWeaver::StopHeadTracker()
 
 bool SRWeaver::GetHeadPose(double pos[3], double orient[3]) const
 {
+    // (A Zondision display's own eye tracker.)
+    if (m_plainUp && m_output == DisplayOutput::Zondision) return Zondision::GetHeadPose(pos, orient);
     if (!m_headListener) return false;
     return m_headListener->get(pos, orient);
 }
@@ -808,6 +849,7 @@ void SRWeaver::SetInputView(ID3D11ShaderResourceView* srv, int perEyeWidth,
                             int height, DXGI_FORMAT format)
 {
     if (!srv) return;
+    if (m_plainUp) { m_encoder.SetInput(srv, perEyeWidth, height); return; }
     // (Named by a caller while the presenter's own picture was the input: that
     // is over -- TakeOverrideDropped tells the loop.)
     if (IsDX12() && m_override12) { m_override12 = false; m_input12 = nullptr; m_overrideDropped = true; }
@@ -854,11 +896,13 @@ void SRWeaver::SetInputOverride12(ID3D12Resource* res, int perEyeWidth, int heig
 
 bool SRWeaver::StartSR(ID3D11DeviceContext* immediateContext, HWND window)
 {
+    if (m_output != DisplayOutput::SR)
+        return StartPlain(immediateContext, window);
     if (!m_context && !CreateContext(10.0))
         return false;
     // Lens only (the untracked light field): the SR session with the lens held
     // on and nothing that tracks -- no weaver, no head tracker -- so the
-    // eye-tracking camera stays off. SR Loom draws the picture itself.
+    // eye-tracking camera stays off. Stereo Loom draws the picture itself.
     if (m_lensOnly)
     {
         if (m_lensOnlyUp) return true;
@@ -878,6 +922,7 @@ void SRWeaver::StopSR()
 {
     // Releasing the weaver and context lets the SR platform power down the
     // lenticular lens and eye-tracking camera. The image texture is preserved.
+    StopPlain();
     m_ws = nullptr; m_actDefKnown = false;
     m_lensOnlyUp = false;
     StopHeadTracker();   // before the context goes away
@@ -924,8 +969,65 @@ void SRWeaver::StopSR()
     }
 }
 
+// The encoder's picture drawn into another render target (w x h), the bound
+// target, viewport and rasteriser state put back after.
+void SRWeaver::DrawInto(ID3D11RenderTargetView* rtv, int w, int h)
+{
+    ID3D11RenderTargetView* prevRtv = nullptr; ID3D11DepthStencilView* prevDsv = nullptr;
+    m_immediate->OMGetRenderTargets(1, &prevRtv, &prevDsv);
+    D3D11_VIEWPORT prevVp{}; UINT nvp = 1;
+    m_immediate->RSGetViewports(&nvp, &prevVp);
+    ID3D11RasterizerState* prevRs = nullptr;
+    m_immediate->RSGetState(&prevRs);
+    m_immediate->OMSetRenderTargets(1, &rtv, nullptr);
+    const D3D11_VIEWPORT vp{ 0, 0, (float)w, (float)h, 0, 1 };
+    m_immediate->RSSetViewports(1, &vp);
+    m_immediate->RSSetState(nullptr);   // (no scissor: the whole picture)
+    m_encoder.Draw(0, 0);
+    m_immediate->OMSetRenderTargets(1, &prevRtv, prevDsv);
+    if (nvp) m_immediate->RSSetViewports(1, &prevVp);
+    m_immediate->RSSetState(prevRs);
+    SAFE_RELEASE(prevRtv); SAFE_RELEASE(prevDsv); SAFE_RELEASE(prevRs);
+}
+
 void SRWeaver::Weave()
 {
+    if (m_plainUp)
+    {
+        // (Interleaving lines up with the display's own rows and columns: where
+        // the window's top left is on its display.)
+        POINT o{ 0, 0 };
+        ClientToScreen(m_plainHwnd, &o);
+        MONITORINFO mi{ sizeof(mi) };
+        if (GetMonitorInfoW(MonitorFromPoint(o, MONITOR_DEFAULTTONEAREST), &mi)) { o.x -= mi.rcMonitor.left; o.y -= mi.rcMonitor.top; }
+        m_encoder.Draw((int)o.x, (int)o.y);
+        // (3D Vision: the same side by side drawn again at the display's size per
+        // eye into the library's texture, and handed over; the window's own copy
+        // is what shows if the glasses' fullscreen ever drops.)
+        if (m_vision.IsUp() && m_vision.Target())
+        {
+            DrawInto(m_vision.Target(), m_vision.Width() * 2, m_vision.Height());
+            m_vision.Present();
+        }
+        // (Katanga: the side by side at the eyes' own size, handed to Katanga.)
+        if (m_katanga.IsUp())
+        {
+            ID3D11Device* dev = nullptr;
+            m_immediate->GetDevice(&dev);
+            if (ID3D11RenderTargetView* rtv = m_katanga.Target(dev, m_encoder.EyeWidth(), m_encoder.EyeHeight()))
+            {
+                DrawInto(rtv, m_katanga.Width(), m_katanga.Height());
+                m_katanga.Publish(m_immediate);
+            }
+            SAFE_RELEASE(dev);
+        }
+        if (m_output == DisplayOutput::Zondision)
+        {
+            static ULONGLONG s_poll = 0;
+            if (GetTickCount64() - s_poll > 500) { s_poll = GetTickCount64(); Zondision::Poll(); }
+        }
+        return;
+    }
     if (!m_weaver && !m_legacy && !m_weaver12 && !m_legacy12)
         return;
     // The SR weaver can throw (e.g. lost SR service / tracking). Log every
@@ -994,8 +1096,165 @@ void SRWeaver::ReleaseViewTexture()
     SAFE_RELEASE(m_viewTex);
 }
 
+void SRWeaver::SetOutput(DisplayOutput output, const std::wstring& device)
+{
+    m_output = output;
+    m_outputDevice = device;
+}
+
+void SRWeaver::SetOutputOptions(int anaColours, int anaStyle, bool swapEyes)
+{
+    m_anaColours = anaColours; m_anaStyle = anaStyle; m_swapEyes = swapEyes;
+    m_encoder.SetOptions(m_output, anaColours, anaStyle, swapEyes);
+}
+
+namespace
+{
+    struct MonFind { const wchar_t* device; RECT rc; bool found; };
+    BOOL CALLBACK FindMonProc(HMONITOR m, HDC, LPRECT, LPARAM p)
+    {
+        MonFind* f = reinterpret_cast<MonFind*>(p);
+        MONITORINFOEXW mi{}; mi.cbSize = sizeof(mi);
+        if (GetMonitorInfoW(m, &mi) && _wcsicmp(mi.szDevice, f->device) == 0) { f->rc = mi.rcMonitor; f->found = true; return FALSE; }
+        return TRUE;
+    }
+}
+
+// Where a non-SR output goes: the display picked (Settings OutputDisplay), else for
+// Zondision the Zondision display, else the primary.
+bool SRWeaver::PlainDisplayRect(RECT& out)
+{
+    if (!m_outputDevice.empty())
+    {
+        MonFind f{ m_outputDevice.c_str(), {}, false };
+        EnumDisplayMonitors(nullptr, nullptr, FindMonProc, reinterpret_cast<LPARAM>(&f));
+        if (f.found) { out = f.rc; return true; }
+    }
+    if (m_output == DisplayOutput::Zondision && Zondision::FindDisplay(out)) return true;
+    MONITORINFO mi{ sizeof(mi) };
+    if (!GetMonitorInfoW(MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY), &mi)) return false;
+    out = mi.rcMonitor;
+    return true;
+}
+
+// HDMI frame packing: the display set to 1920 x 2205 (or 1280 x 1470) -- the size a
+// TV takes as frame-packed 3D -- with only the size given, so the refresh is the
+// driver's (24 Hz at 1080p on most). Temporary (CDS_FULLSCREEN): Windows puts the
+// mode back if Stereo Loom ends; off puts it back now. The display must offer the
+// size: a TV's EDID lists it as a 3D mode, or it is added as a custom resolution.
+void SRWeaver::ForceOutputMode(bool on)
+{
+    if (!on)
+    {
+        if (!m_modeForced) return;
+        const LONG r = ChangeDisplaySettingsExW(m_forcedDevice.c_str(), nullptr, nullptr, 0, nullptr);
+        Log("Display Output: %ls back to its own mode (%ld)", m_forcedDevice.c_str(), r);
+        m_modeForced = false;
+        return;
+    }
+    std::wstring dev = m_outputDevice;
+    if (dev.empty())
+    {
+        RECT rc{};
+        if (!PlainDisplayRect(rc)) return;
+        MONITORINFOEXW mi{}; mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(MonitorFromPoint(POINT{ (rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2 }, MONITOR_DEFAULTTOPRIMARY), &mi)) return;
+        dev = mi.szDevice;
+    }
+    DEVMODEW dm{}; dm.dmSize = sizeof(dm);
+    if (!EnumDisplaySettingsW(dev.c_str(), ENUM_CURRENT_SETTINGS, &dm)) return;
+    DWORD w = 0, h = 0;
+    if (m_output == DisplayOutput::FramePacking) { w = m_framePack == 1 ? 1280 : 1920; h = m_framePack == 1 ? 1470 : 2205; }
+    // (Full: each eye at the display's own size -- a mode twice as wide / tall. A
+    // display already in one -- AR glasses at 3840 x 1080 -- is left as it is.)
+    else if (m_output == DisplayOutput::FullSideBySide)
+    { if (dm.dmPelsWidth >= dm.dmPelsHeight * 3) return; w = dm.dmPelsWidth * 2; h = dm.dmPelsHeight; }
+    else if (m_output == DisplayOutput::FullTopAndBottom)
+    { if (dm.dmPelsHeight * 10 >= dm.dmPelsWidth * 9) return; w = dm.dmPelsWidth; h = dm.dmPelsHeight * 2; }
+    else return;
+    if (dm.dmPelsWidth == w && dm.dmPelsHeight == h)
+    {
+        Log("Display Output: %ls is already %lux%lu", dev.c_str(), w, h);
+        return;
+    }
+    DEVMODEW want{}; want.dmSize = sizeof(want);
+    want.dmPelsWidth = w; want.dmPelsHeight = h;
+    want.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;   // (no refresh rate: the driver's for that size)
+    const LONG r = ChangeDisplaySettingsExW(dev.c_str(), &want, nullptr, CDS_FULLSCREEN, nullptr);
+    if (r == DISP_CHANGE_SUCCESSFUL)
+    {
+        m_modeForced = true; m_forcedDevice = dev;
+        Log("Display Output: %ls set to %lux%lu (was %lux%lu)", dev.c_str(), w, h, dm.dmPelsWidth, dm.dmPelsHeight);
+    }
+    else
+        Log("Display Output: %ls does not offer %lux%lu (%ld) -- drawn at its own size; for the full picture, add %lux%lu as a custom "
+            "resolution (NVIDIA Control Panel, AMD Software or CRU)", dev.c_str(), w, h, r, w, h);
+}
+
+bool SRWeaver::StartPlain(ID3D11DeviceContext* immediateContext, HWND window)
+{
+    if (m_plainUp) return true;
+    if (!m_encoder.IsReady() && !m_encoder.Create(immediateContext))
+    {
+        Log("Display Output: the encoder could not be made");
+        return false;
+    }
+    m_encoder.SetOptions(m_output, m_anaColours, m_anaStyle, m_swapEyes);
+    m_immediate = immediateContext;
+    m_plainHwnd = window;
+    m_choice = 0;
+    if (m_output == DisplayOutput::FramePacking || m_output == DisplayOutput::FullSideBySide || m_output == DisplayOutput::FullTopAndBottom)
+        ForceOutputMode(true);
+    if (m_output == DisplayOutput::Katanga)
+    {
+        if (!m_katanga.Start())
+        {
+            Log("Katanga output: Katanga is not running (start Katanga first)");
+            return false;
+        }
+        Log("Katanga output: connected to Katanga");
+    }
+    if (m_output == DisplayOutput::Vision3D)
+    {
+        RECT rc{};
+        PlainDisplayRect(rc);
+        ID3D11Device* dev = nullptr;
+        immediateContext->GetDevice(&dev);
+        std::string msg;
+        const bool ok = m_vision.Start(dev, MonitorFromPoint(POINT{ (rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2 }, MONITOR_DEFAULTTOPRIMARY), msg);
+        SAFE_RELEASE(dev);
+        Log("3D Vision: %s", msg.c_str());
+        if (!ok) return false;
+    }
+    if (m_output == DisplayOutput::Zondision)
+    {
+        std::string msg;
+        const bool ok = Zondision::Start(msg);
+        Log("Zondision: %s", msg.c_str());
+        if (!ok) return false;
+        m_plain3D = false;
+    }
+    m_plainUp = true;
+    Log("Display Output: %s (Stereo Loom's own, no SR session)", DisplayOutputName(m_output));
+    return true;
+}
+
+void SRWeaver::StopPlain()
+{
+    if (!m_plainUp) return;
+    if (m_output == DisplayOutput::Zondision || Zondision::IsStarted()) Zondision::Stop();
+    ForceOutputMode(false);
+    m_vision.Stop();
+    m_katanga.Stop();
+    m_plainUp = false;
+    m_plain3D = false;
+    m_plainHwnd = nullptr;
+}
+
 void SRWeaver::Shutdown()
 {
+    StopPlain();
+    m_encoder.Release();
     m_ws = nullptr; m_actDefKnown = false;
     m_lensOnlyUp = false;
     ReleaseViewTexture();
