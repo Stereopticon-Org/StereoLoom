@@ -1,0 +1,89 @@
+name: Release
+
+# Builds StereoLoom.exe on the self-hosted runner (the build PC, which holds the
+# SDKs in its own lib folder) and attaches it to a DRAFT release, to be checked
+# and published by hand.
+#
+# Runs only on a version tag or the manual button: never on pull requests, since
+# the runner is a personal PC and this repository is public.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and draft a release for (e.g. v4.0); must already exist'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: [self-hosted, Windows, X64, stereoloom]
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      # The runner's .env file sets STEREOLOOM_LIB (the SDK folder) and, if there
+      # is one, STEREOLOOM_ZIMO_KEY (the path of Zondision's private key header).
+      - name: Check the build PC's setup
+        shell: pwsh
+        run: |
+          if (-not $env:STEREOLOOM_LIB -or -not (Test-Path "$env:STEREOLOOM_LIB\Simulated Reality")) {
+            throw "STEREOLOOM_LIB is not set to the SDK folder in the runner's .env file"
+          }
+          if ($env:STEREOLOOM_ZIMO_KEY -and (Test-Path $env:STEREOLOOM_ZIMO_KEY)) {
+            Copy-Item $env:STEREOLOOM_ZIMO_KEY adapters\zimo\ZimoKey.private.h -Force
+            Write-Host "Zondision: Stereo Loom's own key"
+          } else {
+            Write-Host "Zondision: the evaluation key"
+          }
+
+      - name: Check the version matches the tag
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path src\Common.h -Pattern 'kAppVersion = "([^"]+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne $env:TAG) { throw "kAppVersion is $v but the tag is $env:TAG" }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake -S . -B build\ci -A x64 "-DSRLOOM_LIB_DIR=$env:STEREOLOOM_LIB"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build\ci --config Release --target StereoLoom zimotest -- /m /nologo /verbosity:minimal
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Check the carried Zondision DLLs load
+        shell: pwsh
+        run: |
+          if (Test-Path build\ci\Release\zimotest.exe) { & build\ci\Release\zimotest.exe; if ($LASTEXITCODE) { exit $LASTEXITCODE } }
+
+      - name: Draft the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = "docs\releases\$env:TAG.md"
+          if (-not (Test-Path $notes)) { throw "No release notes at $notes" }
+          gh release view $env:TAG 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG build\ci\Release\StereoLoom.exe --clobber
+          } else {
+            gh release create $env:TAG build\ci\Release\StereoLoom.exe --draft --verify-tag `
+              --title "Stereo Loom $env:TAG" --notes-file $notes
+          }
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      # (the key never stays in the workspace)
+      - name: Clean up
+        if: always()
+        shell: pwsh
+        run: Remove-Item adapters\zimo\ZimoKey.private.h -ErrorAction SilentlyContinue

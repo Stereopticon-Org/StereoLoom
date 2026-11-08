@@ -28,10 +28,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # which the user already has for the display, is the only external dependency).
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# Where the SDKs are unpacked (lib/ by default; never committed). The release
+# workflow points this at the build PC's own lib folder.
+set(SRLOOM_LIB_DIR "${CMAKE_SOURCE_DIR}/lib" CACHE PATH "Folder holding the SDKs (Simulated Reality, Zondision, NV3D-Lib, onnxruntime)")
+
 # --- Locate the Simulated Reality SDK appropriate for the target architecture ---
-set(SR_SDK_DIR_X64 "${CMAKE_SOURCE_DIR}/lib/Simulated Reality/LeiaSR-SDK-1.36.2-win64"
+set(SR_SDK_DIR_X64 "${SRLOOM_LIB_DIR}/Simulated Reality/LeiaSR-SDK-1.36.2-win64"
     CACHE PATH "64-bit LeiaSR SDK root")
-set(SR_SDK_DIR_X86 "${CMAKE_SOURCE_DIR}/lib/Simulated Reality/simulatedreality-1.34.10-win32-Release"
+set(SR_SDK_DIR_X86 "${SRLOOM_LIB_DIR}/Simulated Reality/simulatedreality-1.34.10-win32-Release"
     CACHE PATH "32-bit SR SDK root")
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -312,7 +316,7 @@ endif()
 # they have been put in lib/NV3D-Lib (include/NV3D.hpp, lib/x64/Release-MT,
 # external/nvapi/amd64). nvapi64.dll comes with NVIDIA's driver and is delay-loaded,
 # so the exe still starts on other GPUs.
-set(NV3D_DIR "${CMAKE_SOURCE_DIR}/lib/NV3D-Lib")
+set(NV3D_DIR "${SRLOOM_LIB_DIR}/NV3D-Lib")
 if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND EXISTS "${NV3D_DIR}/include/NV3D.hpp" AND EXISTS "${NV3D_DIR}/lib/x64/Release-MT/NV3DLib-mt.lib")
     message(STATUS "Stereo Loom: NV3D-Lib at ${NV3D_DIR} (3D Vision output)")
     target_compile_definitions(StereoLoom PRIVATE SRLOOM_NV3D)
@@ -326,31 +330,46 @@ endif()
 # ZimoAdapter.dll: Stereo Loom's link to a Zondision display (adapters/zimo). Built
 # where Zondision's 3DS SDK has been unpacked into lib/Zondision (it is not
 # redistributed in this repository). The adapter holds the app key (see
-# ZimoAdapter.cpp); it and the SDK's 3DS_SDK.dll + jsoncpp.dll go beside the exe.
-file(GLOB ZIMO_SDK_DIRS LIST_DIRECTORIES true "${CMAKE_SOURCE_DIR}/lib/Zondision/3DS_CSDK_V*")
+# ZimoAdapter.cpp). It and the SDK's 3DS_SDK.dll + jsoncpp.dll are carried inside
+# the exe as resources (zimo_embed.rc, generated here) and unpacked on first use
+# (Zondision.cpp), so the release stays a single exe.
+file(GLOB ZIMO_SDK_DIRS LIST_DIRECTORIES true "${SRLOOM_LIB_DIR}/Zondision/3DS_CSDK_V*")
 list(SORT ZIMO_SDK_DIRS)
 list(REVERSE ZIMO_SDK_DIRS)
 list(LENGTH ZIMO_SDK_DIRS ZIMO_SDK_N)
 if(ZIMO_SDK_N GREATER 0 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     list(GET ZIMO_SDK_DIRS 0 ZIMO_SDK_DIR)
     message(STATUS "Stereo Loom: Zondision SDK at ${ZIMO_SDK_DIR}")
+    set(ZIMO_EMBED_DIR "${CMAKE_BINARY_DIR}/zimo_embed")
     add_library(ZimoAdapter SHARED adapters/zimo/ZimoAdapter.cpp adapters/zimo/ZimoAdapter.h)
     target_include_directories(ZimoAdapter PRIVATE "${ZIMO_SDK_DIR}/inc" "${CMAKE_SOURCE_DIR}/adapters/zimo")
     target_compile_definitions(ZimoAdapter PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
-    set_target_properties(ZimoAdapter PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>")   # (beside the exe)
+    # (built into zimo_embed, not beside the exe: a ZimoAdapter.dll beside the exe would
+    # be taken first, and the carried copy would go untried)
+    set_target_properties(ZimoAdapter PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${ZIMO_EMBED_DIR}/$<CONFIG>")
     add_dependencies(StereoLoom ZimoAdapter)
     add_custom_command(TARGET ZimoAdapter POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:ZimoAdapter>"
             "${ZIMO_SDK_DIR}/libs/release/x64/3DS_SDK.dll"
             "${ZIMO_SDK_DIR}/libs/release/x64/jsoncpp.dll"
-            "$<TARGET_FILE_DIR:StereoLoom>")
+            "${ZIMO_EMBED_DIR}")
+    file(WRITE "${ZIMO_EMBED_DIR}/zimo_embed.rc"
+        "#include \"${CMAKE_SOURCE_DIR}/src/resource.h\"\n"
+        "IDR_ZIMO_ADAPTER RCDATA \"${ZIMO_EMBED_DIR}/ZimoAdapter.dll\"\n"
+        "IDR_ZIMO_SDK     RCDATA \"${ZIMO_EMBED_DIR}/3DS_SDK.dll\"\n"
+        "IDR_ZIMO_JSONCPP RCDATA \"${ZIMO_EMBED_DIR}/jsoncpp.dll\"\n")
+    target_sources(StereoLoom PRIVATE "${ZIMO_EMBED_DIR}/zimo_embed.rc")
+    set_source_files_properties("${ZIMO_EMBED_DIR}/zimo_embed.rc" PROPERTIES OBJECT_DEPENDS
+        "${ZIMO_EMBED_DIR}/ZimoAdapter.dll;${ZIMO_EMBED_DIR}/3DS_SDK.dll;${ZIMO_EMBED_DIR}/jsoncpp.dll")
+    target_compile_definitions(StereoLoom PRIVATE SRLOOM_ZIMO_EMBED)
 endif()
 
 # The neural stereo matcher for still pictures (an experiment, src/NeuralDepth):
 # only where ONNX Runtime and DirectML have been unpacked into lib/onnxruntime
 # (the NuGet packages Microsoft.ML.OnnxRuntime.DirectML and Microsoft.AI.DirectML).
 # The DLL is delay-loaded, so Stereo Loom starts the same where it is missing.
-set(ORT_DIR "${CMAKE_SOURCE_DIR}/lib/onnxruntime")
+set(ORT_DIR "${SRLOOM_LIB_DIR}/onnxruntime")
 if(EXISTS "${ORT_DIR}/ort/build/native/include/onnxruntime_cxx_api.h" AND EXISTS "${ORT_DIR}/dml/bin/x64-win/DirectML.dll")
     target_compile_definitions(StereoLoom PRIVATE SRLOOM_NEURAL)
     target_include_directories(StereoLoom PRIVATE "${ORT_DIR}/ort/build/native/include")
@@ -456,4 +475,13 @@ if(EXISTS "${ORT_DIR}/ort/build/native/include/onnxruntime_cxx_api.h" AND EXISTS
     target_include_directories(looktest PRIVATE "${ORT_DIR}/ort/build/native/include")
     target_link_libraries(looktest PRIVATE "${ORT_DIR}/ort/runtimes/win-x64/native/onnxruntime.lib" delayimp)
     target_link_options(looktest PRIVATE /DELAYLOAD:onnxruntime.dll)
+endif()
+
+# zimotest: the carried Zondision DLLs unpack and load (only where they are built).
+if(TARGET ZimoAdapter)
+    add_executable(zimotest EXCLUDE_FROM_ALL tools/zimotest/zimotest.cpp src/Zondision.cpp "${ZIMO_EMBED_DIR}/zimo_embed.rc")
+    target_include_directories(zimotest PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_definitions(zimotest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS SRLOOM_ZIMO_EMBED)
+    target_link_libraries(zimotest PRIVATE shell32 ole32)
+    add_dependencies(zimotest ZimoAdapter)
 endif()

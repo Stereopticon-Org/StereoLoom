@@ -1,8 +1,10 @@
 // Zondision.cpp -- see Zondision.h.
 #include "Zondision.h"
 #include "Common.h"
+#include "resource.h"
 #include "../adapters/zimo/ZimoAdapter.h"
 
+#include <shlobj.h>
 #include <vector>
 #include <cmath>
 
@@ -24,12 +26,75 @@ namespace
     unsigned            g_eyeSerial = 0;
     ULONGLONG           g_eyeLogAt = 0;
 
+    // The exe carries ZimoAdapter.dll and the SDK's DLLs (SRLOOM_ZIMO_EMBED): unpacked
+    // into %LOCALAPPDATA%\SRLoom\Zondision\<hash of the three>\ the first time they
+    // are wanted, so a newer build never meets an older copy (or one still in use).
+    // Returns the adapter's path there, or "" (nothing carried / couldn't write).
+    std::string UnpackEmbedded()
+    {
+#ifdef SRLOOM_ZIMO_EMBED
+        struct Part { int id; const char* name; const void* data = nullptr; DWORD size = 0; };
+        Part parts[] = { { IDR_ZIMO_ADAPTER, "ZimoAdapter.dll" }, { IDR_ZIMO_SDK, "3DS_SDK.dll" }, { IDR_ZIMO_JSONCPP, "jsoncpp.dll" } };
+        unsigned long long hash = 1469598103934665603ull;   // (FNV-1a)
+        for (Part& p : parts)
+        {
+            HRSRC r = FindResourceW(nullptr, MAKEINTRESOURCEW(p.id), MAKEINTRESOURCEW(10));   // (RT_RCDATA)
+            HGLOBAL g = r ? LoadResource(nullptr, r) : nullptr;
+            p.data = g ? LockResource(g) : nullptr;
+            p.size = r ? SizeofResource(nullptr, r) : 0;
+            if (!p.data || !p.size) return {};
+            const unsigned char* b = (const unsigned char*)p.data;
+            for (DWORD i = 0; i < p.size; ++i) { hash ^= b[i]; hash *= 1099511628211ull; }
+        }
+        PWSTR base = nullptr;
+        if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &base)) || !base) return {};
+        wchar_t sub[32]; swprintf_s(sub, L"%016llx", hash);
+        std::wstring dir = std::wstring(base) + L"\\SRLoom\\Zondision\\" + sub;
+        CoTaskMemFree(base);
+        SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+        for (const Part& p : parts)
+        {
+            wchar_t wname[64]; MultiByteToWideChar(CP_ACP, 0, p.name, -1, wname, 64);
+            const std::wstring file = dir + L"\\" + wname;
+            WIN32_FILE_ATTRIBUTE_DATA fa{};
+            if (GetFileAttributesExW(file.c_str(), GetFileExInfoStandard, &fa) && fa.nFileSizeHigh == 0 && fa.nFileSizeLow == p.size)
+                continue;   // (already there: the folder's name is the content's hash)
+            const std::wstring tmp = file + L".tmp";
+            HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h == INVALID_HANDLE_VALUE) { Log("Zondision: could not unpack %s", p.name); return {}; }
+            DWORD wrote = 0;
+            const BOOL ok = WriteFile(h, p.data, p.size, &wrote, nullptr) && wrote == p.size;
+            CloseHandle(h);
+            if (!ok || !MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING))
+            {
+                DeleteFileW(tmp.c_str());
+                Log("Zondision: could not unpack %s", p.name);
+                return {};
+            }
+        }
+        const std::wstring adapter = dir + L"\\ZimoAdapter.dll";
+        const int n = WideCharToMultiByte(CP_ACP, 0, adapter.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        std::string out(n > 0 ? n - 1 : 0, '\0');
+        if (n > 0) WideCharToMultiByte(CP_ACP, 0, adapter.c_str(), -1, out.data(), n, nullptr, nullptr);
+        return out;
+#else
+        return {};
+#endif
+    }
+
     bool Load()
     {
         if (g_state >= 0) return g_state == 1;
         g_state = 0;
+        // (a ZimoAdapter.dll beside the exe wins -- a development build -- else the
+        // copy the exe carries; its SDK DLLs are found beside it either way)
         g_adapter = LoadLibraryExA(ExePath("ZimoAdapter.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-        if (!g_adapter) { Log("Zondision: ZimoAdapter.dll not found beside the exe (Zondision output unavailable)"); return false; }
+        if (!g_adapter)
+        {
+            const std::string carried = UnpackEmbedded();
+            if (!carried.empty()) g_adapter = LoadLibraryExA(carried.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+        }
+        if (!g_adapter) { Log("Zondision: ZimoAdapter.dll not available (Zondision output unavailable)"); return false; }
         auto ver   = (Zimo_ApiVersionFn)GetProcAddress(g_adapter, "Zimo_ApiVersion");
         auto load  = (Zimo_LoadFn)GetProcAddress(g_adapter, "Zimo_Load");
         pList      = (Zimo_ListDisplaysFn)GetProcAddress(g_adapter, "Zimo_ListDisplays");

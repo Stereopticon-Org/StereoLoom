@@ -25,12 +25,10 @@ converts and shows it in 3D.
 > them (`HKCU\Software\SRLoom`, `%LOCALAPPDATA%\SRLoom` and `srweaver.log` beside
 > the exe), so an existing setup carries straight over.
 
-> **v3.1** (as SR Loom) was a single self-contained `SRLoom.exe`, needing a
-> Simulated Reality display and the SR Platform runtime. New in 3.1: a Direct3D 12
-> weaver option, anti-crosstalk controls, RGB + Depth pictures, an experimental
-> light-field mode with no eye tracking, experimental HDR, faster and steadier
-> Recovered Colour for anaglyphs, and custom anaglyph colours. See
-> `CHANGELOG.md` for the full list.
+> **v4.0** is a single self-contained `StereoLoom.exe`. New in 4.0: the rename,
+> and Display Outputs beyond Leia SR (Zondision, 3D Vision, anaglyph, side by
+> side and top and bottom in half and full, interleaved, checkerboard, HDMI frame
+> packing and Katanga). See `docs/releases/` for each release's notes.
 
 ## What it does
 
@@ -263,21 +261,27 @@ SDK-level evidence.
 The build is a **self-contained `StereoLoom.exe`**. The UI fonts are embedded
 and the MSVC runtime is statically linked. The SR Platform runtime (which an SR
 display's owner already has) is loaded only when present, so the exe also starts
-on PCs without it. Shipped beside the exe:
-- `ZimoAdapter.dll`, `3DS_SDK.dll` and `jsoncpp.dll`, for Zondision displays
-  (built and copied by CMake when Zondision's SDK is in `lib/Zondision`).
-- the `neural` folder (ONNX Runtime, DirectML and the depth models), for
-  Gaussian Splats.
+on PCs without it. Zondision's DLLs (`ZimoAdapter.dll`, `3DS_SDK.dll`,
+`jsoncpp.dll`) are carried inside the exe too, and unpacked to
+`%LOCALAPPDATA%\SRLoom\Zondision` the first time a Zondision display is used.
+Optional, beside the exe: the `neural` folder (ONNX Runtime, DirectML and the
+depth models), for Gaussian Splats' trained matcher.
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) on a
+self-hosted runner that holds the SDKs. Pushing a tag such as `v4.0` builds the
+exe and attaches it to a draft release, with its notes from
+`docs/releases/<tag>.md`; the tag must match `kAppVersion` in `src/Common.h`.
 
 ## Building
 
 Requires Visual Studio 2022/2026 (Desktop C++) and CMake ≥ 3.21. The build is
 **x64 only** (the SR Platform runtime only installs on 64-bit Windows).
 
-> The `lib/` folder (the Leia SR SDK) is **not** tracked in git. Place the
+> The `lib/` folder (the Leia SR SDK) is **not** tracked in git (another
+> folder can be given with `-DSRLOOM_LIB_DIR=...`). Place the
 > LeiaSR SDK locally at `lib/Simulated Reality/LeiaSR-SDK-1.36.2-win64`.
 > For Zondision support, unpack Zondision's C SDK (from developer.zondision.com)
-> into `lib/Zondision/3DS_CSDK_V<version>`. ZimoAdapter.dll is then built with
+> into `lib/Zondision/3DS_CSDK_V<version>`. ZimoAdapter.dll is then built (and carried in the exe) with
 > Zondision's evaluation key, which expires; a build with a key of your own reads
 > it from `adapters/zimo/ZimoKey.private.h` (see `ZimoKey.example.h`), which is
 > never committed. Zondision ask that app keys are kept inside the binary rather

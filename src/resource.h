@@ -13,3 +13,10 @@
 // Embedded NPClient.dll (x64) for TrackIR-aware games. Extracted to
 // %LOCALAPPDATA%\SRLoom\NPClient\ on first launch.
 #define IDR_NPCLIENT64    301
+
+// Zondision (built where its SDK is present): ZimoAdapter.dll and the SDK's two DLLs,
+// carried in the exe so the release stays a single file. Unpacked on first use to
+// %LOCALAPPDATA%\SRLoom\Zondision\<hash>\ (Zondision.cpp).
+#define IDR_ZIMO_ADAPTER  401
+#define IDR_ZIMO_SDK      402
+#define IDR_ZIMO_JSONCPP  403
