@@ -1,19 +1,15 @@
 # Stereo Loom logo
 
-- `stereo_loom_dark.svg`, `stereo_loom_light.svg`: the masters (1024 x 1024,
-  rounded tile, transparent corners). From the Stereopticon logo set
-  (Stereopticon Logo.pdf, page 8), redrawn as vectors.
-- `stereo_loom_{dark,light}_{1024,512,256}.png`: PNG copies rendered from the SVGs.
-- `stereo_loom_mark_on_dark.svg`, `stereo_loom_mark_on_light.svg`: the mark alone
-  (no tile, the gaps cut out): square with nothing around it and the middle thread
-  in the middle (the shuttle a little shorter than on the tile so it fits). Light
-  threads for dark backgrounds, dark threads for light ones, with PNG copies at
-  the same sizes.
+The masters are the SVGs from the Stereopticon logo set (`lib/Logos`):
+
+- `stereo_loom_dark.svg`, `stereo_loom_light.svg`: the app icon on its rounded tile.
+- `stereo_loom_mark_on_dark.svg`, `stereo_loom_mark_on_light.svg`: the mark alone,
+  light threads for dark backgrounds and dark threads for light ones.
+- `*_{1024,512,256}.png`: PNG copies rendered from them (the number is the width).
 - `../stereo_loom.ico`: the exe and window icon (the dark tile); `../stereo_loom_light.ico`,
   the light tile, is in the exe too.
-  `../tray_on_dark.ico` and `../tray_on_light.ico`: the tray icon, following
-  Windows' light or dark taskbar. All made from the 1024 PNGs.
+- `../tray_on_dark.ico`, `../tray_on_light.ico`: the tray icon, the mark trimmed to
+  its edges, following Windows' light or dark taskbar.
 
-To change it: edit `tools/logo/make_logo_svg.py` and run it with this folder as its
-argument, then run `tools/logo/render_logo.py` with the repo root as its argument
-(it renders the PNGs with Microsoft Edge and remakes the icons; needs Pillow).
+To remake the PNGs and icons after changing an SVG, run `tools/logo/render_logo.py`
+with the repo root as its argument (it renders with Microsoft Edge; needs Pillow).

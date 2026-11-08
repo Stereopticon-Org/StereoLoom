@@ -1,10 +1,2 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-<title>Stereo Loom</title>
-<rect x="0" y="0" width="1024" height="1024" rx="225.3" fill="#161513"/>
-<rect x="298" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#EDE7DC"/>
-<rect x="666.6" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#EDE7DC"/>
-<path d="M235.5 512 C267.5 446.5 363.5 409.6 491.5 409.6 C645.1 409.6 747.5 450.6 747.5 495.6 L901.1 495.6 A16.4 16.4 0 0 1 901.1 528.4 L747.5 528.4 C747.5 573.4 645.1 614.4 491.5 614.4 C363.5 614.4 267.5 577.5 235.5 512 Z" fill="#161513" stroke="#161513" stroke-width="53.2" stroke-linejoin="round"/>
-<path d="M235.5 512 C267.5 446.5 363.5 409.6 491.5 409.6 C645.1 409.6 747.5 450.6 747.5 495.6 L901.1 495.6 A16.4 16.4 0 0 1 901.1 528.4 L747.5 528.4 C747.5 573.4 645.1 614.4 491.5 614.4 C363.5 614.4 267.5 577.5 235.5 512 Z" fill="#C8894A"/>
-<rect x="455.7" y="383" width="112.6" height="258" rx="0" fill="#161513"/>
-<rect x="482.3" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#EDE7DC"/>
-</svg>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><rect width="512" height="512" rx="112" fill="#171513"/><path d="M166 112 V400" stroke="#ede6da" stroke-width="30" stroke-linecap="round"/><path d="M346 112 V400" stroke="#ede6da" stroke-width="30" stroke-linecap="round"/><path d="M124.0 256 A183.6 183.6 0 0 1 388.0 256 A183.6 183.6 0 0 1 124.0 256 Z" fill="#171513" stroke="#171513" stroke-width="24"/><path d="M340 256 H436" stroke="#171513" stroke-width="38" stroke-linecap="round"/><path d="M330 256 H436" stroke="#c98a4b" stroke-width="14" stroke-linecap="round"/><path d="M124.0 256 A183.6 183.6 0 0 1 388.0 256 A183.6 183.6 0 0 1 124.0 256 Z" fill="#c98a4b"/><clipPath id="lv"><path d="M100.0 256 A199.7 199.7 0 0 1 412.0 256 A199.7 199.7 0 0 1 100.0 256 Z"/></clipPath><g clip-path="url(#lv)"><path d="M256 112 V400" stroke="#171513" stroke-width="54"/></g><path d="M256 112 V400" stroke="#ede6da" stroke-width="30" stroke-linecap="round"/></svg>
