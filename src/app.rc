@@ -2,6 +2,8 @@
 
 // Application icon: Stereo Loom's logo (the Stereopticon logo set), the dark tile.
 IDI_TRAY            ICON "../assets/stereo_loom.ico"
+// The light tile, carried too (for shortcuts / anything that wants the light one).
+IDI_APP_LIGHT       ICON "../assets/stereo_loom_light.ico"
 // The tray's: the mark alone, no tile -- light threads for a dark taskbar, dark
 // threads for a light one (TrayIcon.cpp follows Windows' setting).
 IDI_TRAY_ON_DARK    ICON "../assets/tray_on_dark.ico"

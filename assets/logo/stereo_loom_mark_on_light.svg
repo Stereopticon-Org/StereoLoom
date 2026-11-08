@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="185.6 132 760 760" width="1024" height="1024">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="106.5 194.6 811 634.9" width="811" height="634.9">
 <title>Stereo Loom</title>
 <defs>
-<mask id="under" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><rect width="1024" height="1024" fill="#fff"/><path d="M203.6 512 A385.8 385.8 0 0 1 779.5 512 A385.8 385.8 0 0 1 203.6 512 Z" fill="#000"/><rect x="727" y="469" width="200.7" height="86" rx="30.7" fill="#000"/></mask>
+<mask id="under" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><rect width="1024" height="1024" fill="#fff"/><path d="M235.5 512 C297 450.6 368.6 409.6 491.5 409.6 C624.6 409.6 655.4 495.6 757.8 495.6 L901.1 495.6 A16.4 16.4 0 0 1 901.1 528.4 L757.8 528.4 C655.4 528.4 624.6 614.4 491.5 614.4 C368.6 614.4 297 573.4 235.5 512 Z" fill="#000" stroke="#000" stroke-width="53.2" stroke-linejoin="round"/></mask>
 <mask id="over" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><rect width="1024" height="1024" fill="#fff"/><rect x="455.7" y="383" width="112.6" height="258" rx="0" fill="#000"/></mask>
 </defs>
 <g mask="url(#under)"><rect x="298" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#1F1C19"/><rect x="666.6" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#1F1C19"/></g>
-<g mask="url(#over)"><path d="M235.5 512 A371.2 371.2 0 0 1 747.5 512 A371.2 371.2 0 0 1 235.5 512 Z" fill="#A55D23"/><rect x="727" y="495.6" width="174.1" height="32.8" rx="16.4" fill="#A55D23"/></g>
+<g mask="url(#over)"><path d="M235.5 512 C297 450.6 368.6 409.6 491.5 409.6 C624.6 409.6 655.4 495.6 757.8 495.6 L901.1 495.6 A16.4 16.4 0 0 1 901.1 528.4 L757.8 528.4 C655.4 528.4 624.6 614.4 491.5 614.4 C368.6 614.4 297 573.4 235.5 512 Z" fill="#A55D23"/></g>
 <rect x="482.3" y="194.6" width="59.4" height="634.9" rx="29.7" fill="#1F1C19"/>
 </svg>

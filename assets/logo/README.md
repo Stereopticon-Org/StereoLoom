@@ -5,9 +5,10 @@
   (Stereopticon Logo.pdf, page 8), redrawn as vectors.
 - `stereo_loom_{dark,light}_{1024,512,256}.png`: PNG copies rendered from the SVGs.
 - `stereo_loom_mark_on_dark.svg`, `stereo_loom_mark_on_light.svg`: the mark alone
-  (no tile, the gaps cut out): light threads for dark backgrounds, dark threads
+  (no tile, the gaps cut out, cropped to it with the middle thread centred): light threads for dark backgrounds, dark threads
   for light ones, with PNG copies at the same sizes.
-- `../stereo_loom.ico`: the exe and window icon (the dark tile).
+- `../stereo_loom.ico`: the exe and window icon (the dark tile); `../stereo_loom_light.ico`,
+  the light tile, is in the exe too.
   `../tray_on_dark.ico` and `../tray_on_light.ico`: the tray icon, following
   Windows' light or dark taskbar. All made from the 1024 PNGs.
 
