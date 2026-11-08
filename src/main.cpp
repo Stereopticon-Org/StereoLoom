@@ -10522,6 +10522,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
         app.lookLive = Settings::ReadLookLive(); app.lookPaint = Settings::ReadLookPaint(); app.neural.SetAutoPaint(app.lookLive && app.lookPaint);
         app.neural.Start(dir, app.lookModel);
     }
+    // Gaussian Splats (experimental, heavy) always starts off: turned on each time it is wanted.
+    Settings::WriteLookAround(false);
     app.lookOn = Settings::ReadLookAround(); app.lookParallax = Settings::ReadLookParallax() / 100.0f;
     app.converter.SetScrollReuse(Settings::ReadScrollReuse());
     app.deferHeavyConvert = Settings::ReadDeferRecovered();

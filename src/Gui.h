@@ -207,6 +207,7 @@ namespace srw
         // hide behind a click on first launch. Collapsible so users who
         // never touch tracking can tidy it away.
         bool                     m_headTrackingSectionOpen = true;
+        bool                     m_lookNeuralChecked = false, m_lookNeuralThere = false;   // (the neural folder has a network)
         bool                     m_splatSectionOpen = true;   // (the GAUSSIAN SPLATS section)
         bool                     m_outputSectionOpen = true;  // (the DISPLAY OUTPUT section)
         unsigned long            m_panelOpenSaved = 0xFFFFFFFFul;   // (the sections' open or closed as last saved: Settings PanelOpen)

@@ -221,17 +221,22 @@ namespace
     // Returns true when clicked. Width is 1.8x its height.
     // A row's switch (the default) is a little smaller than the row's frames and
     // sits in the middle of the row's height, so it lines up with the label.
+    // Sized from the compact panel's frame height (g_toggleBase, set each frame), not
+    // the current one, so a switch is the same size in the compact and expanded panels.
     constexpr float kRowToggle = 0.8f;
-    inline float RowToggleW() { return ImGui::GetFrameHeight() * kRowToggle * 1.8f; }
+    float g_toggleBase = 0.0f;
+    inline float ToggleBase() { return g_toggleBase > 0.0f ? g_toggleBase : ImGui::GetFrameHeight(); }
+    inline float RowToggleW() { return ToggleBase() * kRowToggle * 1.8f; }
     bool ToggleSwitch(const char* id, bool on, float heightScale = kRowToggle)
     {
-        const float h = ImGui::GetFrameHeight() * heightScale;
+        const float h = ToggleBase() * heightScale;
         const float w = h * 1.8f;
         const float r = h * 0.5f;
         const bool row = heightScale == kRowToggle;
         ImVec2 p = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton(id, ImVec2(w, row ? ImGui::GetFrameHeight() : h));
-        if (row) p.y += (ImGui::GetFrameHeight() - h) * 0.5f;
+        const float rowH = (std::max)(ImGui::GetFrameHeight(), h);
+        ImGui::InvisibleButton(id, ImVec2(w, row ? rowH : h));
+        if (row) p.y += (rowH - h) * 0.5f;
         const bool clicked = ImGui::IsItemClicked();
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h),
@@ -896,6 +901,7 @@ bool Gui::Render(GuiState& state)
     // The compact panel keeps the roomier spacing it always had (the expanded one was
     // tightened to fit its many rows; the compact one has room and looked squashed).
     const bool roomy = !m_expanded;
+    g_toggleBase = ImGui::GetFontSize() + 2.0f * 8.0f * m_dpiScale;   // (the compact panel's frame height)
     if (roomy)
     {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(12.0f * m_dpiScale, 8.0f * m_dpiScale));
@@ -2727,10 +2733,20 @@ bool Gui::Render(GuiState& state)
             {
                 static const char* kDepth[3] = { "Depth: Built-in", "Depth: Neural + Built-in", "Depth: Neural" };
                 if (m_lookDepth < 0 || m_lookDepth > 2) m_lookDepth = 2;
+                // (No network beside the exe -- the release has none -- only the built-in matcher can be had.)
+                if (!m_lookNeuralChecked)
+                {
+                    m_lookNeuralChecked = true;
+                    WIN32_FIND_DATAA fd{};
+                    const HANDLE fh = FindFirstFileA(ExePath("neural\\*.onnx").c_str(), &fd);
+                    m_lookNeuralThere = fh != INVALID_HANDLE_VALUE;
+                    if (fh != INVALID_HANDLE_VALUE) FindClose(fh);
+                }
+                if (!m_lookNeuralThere && m_lookDepth != 0) { m_lookDepth = 0; Settings::WriteLookDepth(0); }
                 ImGui::SetNextItemWidth(halfW);
                 if (ImGui::BeginCombo("##lookdepth", kDepth[m_lookDepth]))
                 {
-                    for (int k = 0; k < 3; ++k)
+                    for (int k = 0; k < (m_lookNeuralThere ? 3 : 1); ++k)
                         if (ImGui::Selectable(kDepth[k], m_lookDepth == k)) { m_lookDepth = k; Settings::WriteLookDepth(k); }
                     ImGui::EndCombo();
                 }
