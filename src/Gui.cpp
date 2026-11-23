@@ -2462,8 +2462,58 @@ bool Gui::Render(GuiState& state)
                 {
                     static int s_zAge = 0; static bool s_zOk = false, s_zDisp = false;
                     if (s_zAge-- <= 0) { s_zOk = Zondision::Available(); RECT r{}; s_zDisp = s_zOk && Zondision::FindDisplay(r); s_zAge = 120; }
+                    static unsigned s_zModes = 0; static int s_zMode = -1, s_zDepth = 16; static bool s_zBlack = true;
+                    if (s_zAge == 120 || s_zMode < 0)
+                    {
+                        s_zModes = s_zOk ? Zondision::AvailableModes() : 0;
+                        s_zMode = Settings::ReadZondisionMode(); s_zDepth = Settings::ReadZondisionDepth(); s_zBlack = Settings::ReadZondisionBlackout();
+                    }
                     if (!s_zOk)        ImGui::TextDisabled("Zondision's software (3DS) or ZimoAdapter.dll not found.");
-                    else if (!s_zDisp) ImGui::TextDisabled("No Zondision display found.");
+                    else if (!s_zDisp) ImGui::TextDisabled("No Zondision device found for this mode.");
+                    if (s_zOk)
+                    {
+                        using ZM = Zondision::Mode;
+                        // (The modes the devices connected offer -- and the one chosen, even if
+                        // its device is not there now.)
+                        row("Mode", "How the Zondision device is driven. Glasses-free: the display follows your eyes. "
+                                    "Multiview: many views at once, no eye tracking (displays with multiview firmware). "
+                                    "Multiview (picture + depth): from an RGB + Depth source. Shutter, Polarised and AR: "
+                                    "Zondision's glasses, shown when connected.");
+                        if (ImGui::BeginCombo("##zmode", Zondision::ModeName((ZM)s_zMode), ImGuiComboFlags_HeightLargest))
+                        {
+                            for (int k = 0; k < (int)ZM::Count; ++k)
+                                if ((s_zModes & (1u << k)) || k == s_zMode)
+                                    if (ImGui::Selectable(Zondision::ModeName((ZM)k), k == s_zMode)) { s_zMode = k; Settings::WriteZondisionMode(k); }
+                            ImGui::EndCombo();
+                        }
+                        const bool multiview = s_zMode == (int)ZM::MultiviewTB || s_zMode == (int)ZM::MultiviewDepth;
+                        if (multiview)
+                        {
+                            row("3D Strength", "How deep the multiview 3D is (Zondision's 0 to 62; 16 is their default).");
+                            if (ImGui::SliderInt("##zdepth", &s_zDepth, 0, 62)) Settings::WriteZondisionDepth(s_zDepth);
+                        }
+                        if (s_zMode == (int)ZM::MultiviewDepth)
+                        {
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextDisabled("Needs the RGB + Depth input: the picture and its depth map go to the display as they are.");
+                            ImGui::PopTextWrapPos();
+                        }
+                        if (s_zMode == (int)ZM::Shutter)
+                        {
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextDisabled("Experimental: one eye each refresh. Use Swap Eyes if the eyes come out the wrong way round.");
+                            ImGui::PopTextWrapPos();
+                        }
+                        if (s_zMode <= (int)ZM::MultiviewDepth)
+                        {
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextUnformatted("Hide 3D Switch Flicker");
+                            otip("The screen goes black for a moment while the display switches between 2D and 3D, instead of flickering.");
+                            ImGui::SameLine();
+                            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - RowToggleW() - ImGui::GetStyle().WindowPadding.x);
+                            if (ToggleSwitch("##zblack", s_zBlack)) { s_zBlack = !s_zBlack; Settings::WriteZondisionBlackout(s_zBlack); }
+                        }
+                    }
                 }
                 else if (cur == (int)DisplayOutput::SR && !SRWeaver::RuntimePresent())
                     ImGui::TextDisabled("No SR Platform on this PC: Anaglyph (or a Zondision display) is used instead.");

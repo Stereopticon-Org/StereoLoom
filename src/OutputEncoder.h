@@ -21,12 +21,20 @@ namespace srw
         void Release();
         bool IsReady() const { return m_ps != nullptr; }
 
-        // How: the output (any but SR / Zondision's own: Zondision is drawn as side by
-        // side), the anaglyph's colours and style (Settings OutputAnaColours /
-        // OutputAnaStyle) and the eyes swapped.
+        // How: the output (any but SR; Zondision as SetZondisionLayout says), the
+        // anaglyph's colours and style (Settings OutputAnaColours / OutputAnaStyle)
+        // and the eyes swapped.
         void SetOptions(DisplayOutput output, int anaColours, int anaStyle, bool swapEyes);
-        // The side-by-side picture (left | right, each perEyeWidth wide) to draw from.
-        void SetInput(ID3D11ShaderResourceView* srv, int perEyeWidth, int height);
+        // The picture to draw from: side by side (left | right, each perEyeWidth wide),
+        // or with topBottom, left over right (each perEyeWidth wide, height high).
+        void SetInput(ID3D11ShaderResourceView* srv, int perEyeWidth, int height, bool topBottom = false);
+        // What a Zondision device is sent (ZLayout). For ColourDepth the input is a
+        // picture beside its depth map: depthLeft, the depth map is the left half;
+        // blackNear, black is near in it (the display wants white near).
+        struct ZLayout { enum { SideBySide, TopBottom, Rows, Alternate, ColourDepth }; };
+        void SetZondisionLayout(int layout, bool depthLeft = false, bool blackNear = false);
+        // Black instead of the picture (while a display switches mode).
+        void SetBlack(bool on) { m_black = on; }
         int EyeWidth() const { return m_eyeW; }
         int EyeHeight() const { return m_h; }
         // Drawn into the bound render target, over the viewport set (the renderer's).
@@ -49,6 +57,11 @@ namespace srw
         int                       m_anaColours = 0, m_anaStyle = 0;
         bool                      m_swap = false;
         bool                      m_dirty = true;
+        bool                      m_inTab = false;
+        int                       m_zLayout = 0;
+        bool                      m_depthLeft = false, m_blackNear = false;
+        bool                      m_black = false, m_field = false;
+        int                       m_mode = 0;
         float                     m_cbData[36] = {};
     };
 }

@@ -1028,7 +1028,8 @@ namespace
         // chosen, this output is used instead -- a Zondision display's where there
         // is one, else anaglyph (WinMain). SR: none needed.
         DisplayOutput srStandIn = DisplayOutput::SR;
-        ULONGLONG  displayChangedAtMs = 0;  // (WM_DISPLAYCHANGE: when; HandleDisplayChange once it settles)
+        ULONGLONG  displayChangedAtMs = 0;
+        ULONGLONG  srReconnectAtMs = 0;     // (the last session restart for the SR display coming back)  // (WM_DISPLAYCHANGE: when; HandleDisplayChange once it settles)
         double     paceHz = 0.0;            // (the refresh rate the renderer paces for: the SR display's current one)
         RECT       srDisplayRect  = { 0, 0, 1920, 1080 };  // filled from SR SDK
         HMONITOR   sourceMonitor  = nullptr; // monitor being captured (passthrough / display picker)
@@ -3892,6 +3893,15 @@ namespace
 
     // The Display Output to use (Settings DisplayOutput), with Leia SR's stand-in
     // where there is no SR Platform.
+    // Zondision's settings: the mode (the next session's), the multiview strength and the
+    // black frames (live), and where an RGB + Depth source's depth map is.
+    void ApplyZondisionOptions(AppState& app)
+    {
+        Zondision::SetMode((Zondision::Mode)Settings::ReadZondisionMode());
+        Zondision::SetDepth(Settings::ReadZondisionDepth());
+        Zondision::SetBlackoutEnabled(Settings::ReadZondisionBlackout());
+        app.weaver.SetDepthLayout((app.rgbdFlags & 1) != 0, (app.rgbdFlags & 2) != 0);
+    }
     DisplayOutput WantedOutput(AppState& app)
     {
         DisplayOutput o = (DisplayOutput)Settings::ReadDisplayOutput();
@@ -3905,6 +3915,7 @@ namespace
         app.weaver.SetOutput(o, o == DisplayOutput::SR ? std::wstring() : Settings::ReadOutputDisplay());
         app.weaver.SetOutputOptions(Settings::ReadOutputAnaColours(), Settings::ReadOutputAnaStyle(), Settings::ReadOutputSwapEyes());
         app.weaver.SetFramePacking(Settings::ReadOutputFramePacking());
+        ApplyZondisionOptions(app);
     }
 
     bool StartSRSession(AppState& app)
@@ -7592,8 +7603,25 @@ namespace
         // values where it used to mix light: to be judged by eye.)
         const bool rawSBS = app.weaveRaw && srcEncoded && !app.weaver.IsDX12() && !app.renderer.IsDX12() && app.renderer.IsDComp();
         // (Not in HDR: the conversion is where the picture is brought into the weave's range.)
-        const bool identitySBS = liveSource && (halfSbsFmt || katangaFmt) && !swapNow && noConv && (!srcEncoded || rawSBS) && !app.hdrActive &&
-                                 !app.lookOn;   // (look-around works on the converter's picture)
+        // Zondision: a Half Top-and-Bottom source goes to the display as it is where its
+        // chip takes top and bottom (multiview firmware: eye tracked, or multiview); an
+        // RGB + Depth source as it is in the picture + depth mode. No conversion pass.
+        const bool zondisionUp = app.weaver.IsPlainUp() && app.weaver.Output() == DisplayOutput::Zondision;
+        const Zondision::Mode zMode = Zondision::GetMode();
+        const bool passable = liveSource && noConv && (!srcEncoded || rawSBS) && !app.hdrActive && !app.lookOn;
+        bool zTab = false, zDepth = false;
+        if (zondisionUp)
+        {
+            const bool tabNow = passable && !swapNow && app.format == StereoFormat::HalfTAB;
+            if (zMode == Zondision::Mode::EyeTracked) zTab = Zondision::SetTopBottom(tabNow) && tabNow;
+            else if (zMode == Zondision::Mode::MultiviewTB) zTab = tabNow;
+            zDepth = zMode == Zondision::Mode::MultiviewDepth && passable && app.format == StereoFormat::RGBD;
+        }
+        const bool identitySBS = (liveSource && (halfSbsFmt || katangaFmt) && !swapNow && noConv && (!srcEncoded || rawSBS) && !app.hdrActive &&
+                                  !app.lookOn) ||   // (look-around works on the converter's picture)
+                                 zTab || zDepth;
+        static bool s_zTabWas = false;
+        if (zTab != s_zTabWas) { s_zTabWas = zTab; app.captureRebind = true; }   // (the input's shape changed: named again)
         app.renderer.SetRawWeave(identitySBS && srcEncoded);
 
         if (identitySBS)
@@ -7606,7 +7634,8 @@ namespace
                 else if (app.dxgiActive) srvFmt = app.captureDxgi.SRVFormat();
                 else                     srvFmt = app.capture.SRVFormat();
                 if (srcEncoded) { D3D11_SHADER_RESOURCE_VIEW_DESC vd{}; srcSRV->GetDesc(&vd); srvFmt = vd.Format; }   // (as it is viewed: undecoded)
-                app.weaver.SetInputView(srcSRV, srcW / 2, srcH, srvFmt);
+                if (zTab) app.weaver.SetInputView(srcSRV, srcW, srcH / 2, srvFmt, true);
+                else      app.weaver.SetInputView(srcSRV, srcW / 2, srcH, srvFmt);
                 app.captureRebind = false;
             }
         }
@@ -10136,8 +10165,34 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                 const int wantWeaver = Settings::ReadWeaverChoice();
                 // ... and so does another Display Output, or its display.
                 // (Frame packing's size in the next byte up: another size, another session.)
+                // (Zondision's mode there too: another mode, another session.)
                 const int wantOutput = (int)WantedOutput(app) |
-                    (WantedOutput(app) == DisplayOutput::FramePacking ? Settings::ReadOutputFramePacking() << 8 : 0);
+                    (WantedOutput(app) == DisplayOutput::FramePacking ? Settings::ReadOutputFramePacking() << 8 : 0) |
+                    (WantedOutput(app) == DisplayOutput::Zondision ? Settings::ReadZondisionMode() << 8 : 0);
+                // (The multiview strength, black frames: as they are, no restart. The mode
+                // waits for the session below.)
+                Zondision::SetDepth(Settings::ReadZondisionDepth());
+                Zondision::SetBlackoutEnabled(Settings::ReadZondisionBlackout());
+                app.weaver.SetDepthLayout((app.rgbdFlags & 1) != 0, (app.rgbdFlags & 2) != 0);
+                // The SR display plugged back in, or its runtime asking to be started
+                // again: a new session, at most every 3 s.
+                if (app.weaver.TakeReconnect() && app.weaver.HasWeaver() && !app.weaver.IsPlainUp() &&
+                    GetTickCount64() - app.srReconnectAtMs > 3000)
+                {
+                    app.srReconnectAtMs = GetTickCount64();
+                    Log("SR: the display came back -- restarting the session");
+                    app.weaver.StopSR();
+                    app.srStopAtMs = 0;
+                    if (app.weavingEnabled)
+                    {
+                        StartSRSession(app);
+                        const bool katangaArmed = (app.format == StereoFormat::Katanga && !app.katanga.IsReceiving());
+                        if (katangaArmed) app.weaver.LensDisable(); else app.weaver.LensEnable();
+                        app.lateLatchingApplied = -1;
+                        app.captureRebind = true;
+                    }
+                    HandleDisplayChange(app);
+                }
                 const std::wstring wantDevice = wantOutput == (int)DisplayOutput::SR ? std::wstring() : Settings::ReadOutputDisplay();
                 // (Anaglyph colours, the eyes swapped: as they are, no restart.)
                 app.weaver.SetOutputOptions(Settings::ReadOutputAnaColours(), Settings::ReadOutputAnaStyle(), Settings::ReadOutputSwapEyes());

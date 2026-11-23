@@ -104,8 +104,10 @@ namespace srw
         // weaver re-samples this view live each weave(), so callers that update
         // the underlying texture in place only need to call this on size change.
         // perEyeWidth is half the full SBS width.
+        // topBottom (Stereo Loom's own outputs only): left over right, each perEyeWidth
+        // wide and height high.
         void SetInputView(ID3D11ShaderResourceView* srv, int perEyeWidth,
-                          int height, DXGI_FORMAT format);
+                          int height, DXGI_FORMAT format, bool topBottom = false);
 
         // Load a stereo image from disk into an owned SBS texture and register
         // it as the input. fmt currently distinguishes SBS variants only.
@@ -153,6 +155,12 @@ namespace srw
         void SetOutputOptions(int anaColours, int anaStyle, bool swapEyes);
         // HDMI frame packing's size: 0 1080p (1920 x 2205), 1 720p (1280 x 1470). At the next StartSR.
         void SetFramePacking(int size) { m_framePack = size; }
+        // Zondision's picture + depth mode: where the source's depth map is and whether
+        // black is near in it (the RGB + Depth input's settings).
+        void SetDepthLayout(bool depthLeft, bool blackNear) { m_depthLeft = depthLeft; m_blackNear = blackNear; }
+        // The SR device came back (plugged in again, its service restarted): the
+        // session wants starting again. Once per event.
+        bool TakeReconnect();
 
         // Borrowed pointer to the SRContext. Used by the OpenTrack bridge
         // (and anything else that wants to attach its own SR::HeadPoseTracker
@@ -188,6 +196,7 @@ namespace srw
         class HeadListenerImpl;          // opaque to keep SDK headers out of this file
         class SystemListenerImpl;        // (the runtime's system events, logged)
         SystemListenerImpl*       m_sysListener = nullptr;
+        bool                      m_depthLeft = false, m_blackNear = false;   // (SetDepthLayout)
         void ReleaseViewTexture();
         void StartHeadTracker();
         bool CreateLegacyWeaver(ID3D11DeviceContext* immediateContext, HWND window);

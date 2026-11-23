@@ -85,10 +85,21 @@ the stereo format, Gaussian Splats) works the same whichever is chosen.
   settings sit under it: the weaver (Direct3D 11 or 12), the anti-crosstalk
   method and strength, contrast, and, where the display maker's software is
   installed, the Acer SpatialLabs and Samsung Odyssey 3D switches.
-- **Zondision**: side by side on a Zondision display (the Zimo M1), which weaves
-  it with its own chip; Stereo Loom switches the display's 3D on and off through
-  Zondision's SDK, and its eye tracker drives Gaussian Splats. Needs Zondision's
-  3DS software installed.
+- **Zondision**: Zondision's displays and glasses, through Zondision's SDK (needs
+  Zondision's 3DS software installed). It uses the device picked in Zondision's
+  own control panel. Its **Mode** list shows what is connected:
+  - **Glasses-free (eye tracked)**: the display's own chip weaves, following your
+    eyes. A Half Top-and-Bottom source goes to the display as it is where it has
+    multiview firmware (no conversion), otherwise side by side.
+  - **Multiview** and **Multiview (picture + depth)**: many views at once with no
+    eye tracking, on displays with multiview firmware; 3D Strength sets the depth.
+    Picture + depth takes an RGB + Depth source as it is.
+  - **Shutter**, **Polarised** and **AR glasses**: Zondision's glasses, put into 3D
+    for you (shutter glasses are experimental).
+  
+  The screen goes black for a moment while the display switches between 2D and
+  3D, instead of flickering (Hide 3D Switch Flicker turns this off). The eye
+  tracker drives Gaussian Splats and head tracking as the SR one does.
 - **Anaglyph**: red / cyan, green / magenta or amber / blue glasses, on any
   display. Optimised (Dubois' matrices, least ghosting with red / cyan), Colour,
   Half Colour or Grey.

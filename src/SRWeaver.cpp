@@ -103,6 +103,7 @@ class SRWeaver::SystemListenerImpl : public SR::SystemEventListener
 public:
     SR::InputStream<SR::SystemEventStream> stream;
     std::atomic<int> counts[5] = {};
+    std::atomic<bool> lost{ false }, reconnect{ false };   // (the device gone; back again after that)
     void accept(const SR::SystemEvent& e) override
     {
         static const char* kNames[] = { "Info", "ContextInvalid", "SRUnavailable", "SRRestored", "USBNotConnected", "USBNotConnectedResolved",
@@ -111,6 +112,11 @@ public:
         const uint64_t t = (uint64_t)e.eventType;
         // (Counted for the perf log: 0 viewer lost, 1 found, 2 lens on, 3 lens off, 4 the rest.)
         counts[t == 17 ? 0 : t == 16 ? 1 : t == 14 ? 2 : t == 15 ? 3 : 4].fetch_add(1);
+        // (Unplugged -- display cable, USB or the device -- then back: the session is
+        // started again. ContextInvalid: the runtime says it must be, whatever came before.)
+        if (t == 4 || t == 6 || t == 13) lost = true;
+        else if ((t == 5 || t == 7 || t == 12) && lost.exchange(false)) reconnect = true;
+        else if (t == 1) reconnect = true;
         Log("SR event: %s (%llu)%s%s", t < sizeof(kNames) / sizeof(kNames[0]) ? kNames[t] : "?", (unsigned long long)t,
             e.message.empty() ? "" : " -- ", e.message.c_str());
     }
@@ -845,11 +851,16 @@ bool SRWeaver::SetStereoImageFromFile(ID3D11Device* device,
     return ok;
 }
 
+bool SRWeaver::TakeReconnect()
+{
+    return m_sysListener && m_sysListener->reconnect.exchange(false);
+}
+
 void SRWeaver::SetInputView(ID3D11ShaderResourceView* srv, int perEyeWidth,
-                            int height, DXGI_FORMAT format)
+                            int height, DXGI_FORMAT format, bool topBottom)
 {
     if (!srv) return;
-    if (m_plainUp) { m_encoder.SetInput(srv, perEyeWidth, height); return; }
+    if (m_plainUp) { m_encoder.SetInput(srv, perEyeWidth, height, topBottom); return; }
     // (Named by a caller while the presenter's own picture was the input: that
     // is over -- TakeOverrideDropped tells the loop.)
     if (IsDX12() && m_override12) { m_override12 = false; m_input12 = nullptr; m_overrideDropped = true; }
@@ -1000,6 +1011,13 @@ void SRWeaver::Weave()
         ClientToScreen(m_plainHwnd, &o);
         MONITORINFO mi{ sizeof(mi) };
         if (GetMonitorInfoW(MonitorFromPoint(o, MONITOR_DEFAULTTONEAREST), &mi)) { o.x -= mi.rcMonitor.left; o.y -= mi.rcMonitor.top; }
+        if (m_output == DisplayOutput::Zondision)
+        {
+            // (Every frame: a "switch beginning" wants black at once.)
+            Zondision::Poll();
+            m_encoder.SetZondisionLayout(Zondision::Layout(), m_depthLeft, m_blackNear);
+            m_encoder.SetBlack(Zondision::Blackout());
+        }
         m_encoder.Draw((int)o.x, (int)o.y);
         // (3D Vision: the same side by side drawn again at the display's size per
         // eye into the library's texture, and handed over; the window's own copy
@@ -1020,11 +1038,6 @@ void SRWeaver::Weave()
                 m_katanga.Publish(m_immediate);
             }
             SAFE_RELEASE(dev);
-        }
-        if (m_output == DisplayOutput::Zondision)
-        {
-            static ULONGLONG s_poll = 0;
-            if (GetTickCount64() - s_poll > 500) { s_poll = GetTickCount64(); Zondision::Poll(); }
         }
         return;
     }

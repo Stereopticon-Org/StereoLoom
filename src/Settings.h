@@ -186,6 +186,16 @@ namespace srw::Settings
     // HDMI frame packing: 0 1080p (1920 x 2205), 1 720p (1280 x 1470). OutputFramePacking.
     int  ReadOutputFramePacking();
     void WriteOutputFramePacking(int v);
+    // Zondision: how the device is driven (Zondision::Mode, 0 eye tracked .. 5 AR
+    // glasses), the multiview modes' 3D strength (0-62, default 16), and black frames
+    // while the display switches 2D / 3D (default on). ZondisionMode, ZondisionDepth,
+    // ZondisionBlackout.
+    int  ReadZondisionMode();
+    void WriteZondisionMode(int v);
+    int  ReadZondisionDepth();
+    void WriteZondisionDepth(int v);
+    bool ReadZondisionBlackout();
+    void WriteZondisionBlackout(bool on);
     bool ReadOutputSwapEyes();
     void WriteOutputSwapEyes(bool on);
     // Anti-crosstalk through the runtime's weaver settings: 0 the display's default,

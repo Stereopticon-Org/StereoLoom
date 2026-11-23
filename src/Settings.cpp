@@ -368,6 +368,12 @@ namespace srw::Settings
     void WriteOutputAnaStyle(int v) { WriteDword(kSettingsKey, L"OutputAnaStyle", (DWORD)(v >= 0 && v < 4 ? v : 0)); }
     int  ReadOutputFramePacking() { return ReadDword(kSettingsKey, L"OutputFramePacking", 0) == 1 ? 1 : 0; }
     void WriteOutputFramePacking(int v) { WriteDword(kSettingsKey, L"OutputFramePacking", v == 1 ? 1u : 0u); }
+    int  ReadZondisionMode() { const DWORD v = ReadDword(kSettingsKey, L"ZondisionMode", 0); return v <= 5 ? (int)v : 0; }
+    void WriteZondisionMode(int v) { WriteDword(kSettingsKey, L"ZondisionMode", (DWORD)(v >= 0 && v <= 5 ? v : 0)); }
+    int  ReadZondisionDepth() { const DWORD v = ReadDword(kSettingsKey, L"ZondisionDepth", 16); return v <= 62 ? (int)v : 16; }
+    void WriteZondisionDepth(int v) { WriteDword(kSettingsKey, L"ZondisionDepth", (DWORD)(v < 0 ? 0 : v > 62 ? 62 : v)); }
+    bool ReadZondisionBlackout() { return ReadDword(kSettingsKey, L"ZondisionBlackout", 1) != 0; }
+    void WriteZondisionBlackout(bool on) { WriteDword(kSettingsKey, L"ZondisionBlackout", on ? 1 : 0); }
     bool ReadOutputSwapEyes(){ return ReadDword(kSettingsKey, L"OutputSwapEyes", 0) != 0; }
     void WriteOutputSwapEyes(bool on) { WriteDword(kSettingsKey, L"OutputSwapEyes", on ? 1u : 0u); }
 
