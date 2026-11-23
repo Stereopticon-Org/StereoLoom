@@ -89,7 +89,7 @@ namespace srw::Settings
         if (!GetFileVersionInfoW(path.c_str(), 0, size, buf.data())) return 0;
         VS_FIXEDFILEINFO* fi = nullptr; UINT len = 0;
         if (!VerQueryValueW(buf.data(), L"\\", reinterpret_cast<void**>(&fi), &len) || !fi || len < sizeof(*fi)) return 0;
-        return (unsigned long long)HIWORD(fi->dwFileVersionMS) << 32 | (unsigned long long)LOWORD(fi->dwFileVersionMS) << 16 | HIWORD(fi->dwFileVersionLS);
+        return (unsigned long long)fi->dwFileVersionMS << 32 | fi->dwFileVersionLS;   // (major.minor.patch.build, build the beta number or 65535)
     }
 
     std::wstring RunAtStartupPath()
@@ -404,6 +404,8 @@ namespace srw::Settings
     void WriteZondisionDepth(int v) { WriteDword(kSettingsKey, L"ZondisionDepth", (DWORD)(v < 0 ? 0 : v > 62 ? 62 : v)); }
     bool ReadZondisionBlackout() { return ReadDword(kSettingsKey, L"ZondisionBlackout", 1) != 0; }
     void WriteZondisionBlackout(bool on) { WriteDword(kSettingsKey, L"ZondisionBlackout", on ? 1 : 0); }
+    bool ReadGetBetas() { return ReadDword(kSettingsKey, L"GetBetas", 0) != 0; }
+    void WriteGetBetas(bool on) { WriteDword(kSettingsKey, L"GetBetas", on ? 1 : 0); }
     bool ReadOutputSwapEyes(){ return ReadDword(kSettingsKey, L"OutputSwapEyes", 0) != 0; }
     void WriteOutputSwapEyes(bool on) { WriteDword(kSettingsKey, L"OutputSwapEyes", on ? 1u : 0u); }
 

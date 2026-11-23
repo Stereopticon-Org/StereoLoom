@@ -26,6 +26,11 @@ Get `StereoLoom.exe` from the
 It is a single file: no installer, nothing to unpack. Run it and it sits in the
 tray.
 
+From 4.1, Stereo Loom updates itself: when a new version is out, the panel's
+banner (or the tray menu) offers **Install Now**, which downloads it, swaps it in
+and restarts. Turn on **Get Betas** in the About popup to be offered the test
+builds made from each change too (shown as, for example, "4.2 beta 14").
+
 > **Stereo Loom was called SR Loom** (and `SRLoom.exe`) up to v3.1. It was
 > renamed when it learnt to drive displays other than Leia SR ones, and its home
 > moved from `effcol/SR-Loom` to

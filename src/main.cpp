@@ -1048,6 +1048,9 @@ namespace
         // release page when the user clicks the toast balloon.
         std::string pendingUpdateUrl;
         std::string pendingUpdateTag;
+        ReleaseInfo pendingRelease;           // (its exe: what Install Update downloads)
+        bool        updateFailed = false;     // the last Install Update did not work (the release page was opened)
+        int         oldExeCleanupTries = 0;   // StereoLoom.exe.old left by an update, still to remove
     };
 
     AppState* g_app = nullptr;
@@ -8774,7 +8777,7 @@ namespace
                               {} };
                 ms.profileNames.reserve(app->profiles.size());
                 for (const auto& p : app->profiles) ms.profileNames.push_back(p.name);
-                if (!app->pendingUpdateUrl.empty()) ms.updateTag = app->pendingUpdateTag;
+                if (!app->pendingUpdateUrl.empty()) ms.updateTag = UpdateChecker::DisplayVersion(app->pendingUpdateTag);
                 ms.autoInput = app->autoInput;
                 // The menu on its own thread: its message loop ran on this one
                 // -- the render thread -- and the weave froze for as long as the
@@ -8827,10 +8830,12 @@ namespace
                 case ReleaseInfo::Available:
                     app->pendingUpdateUrl = info->url;
                     app->pendingUpdateTag = info->tag;
+                    app->pendingRelease   = *info;
+                    app->updateFailed     = false;
                     _snprintf_s(title, _TRUNCATE, "Stereo Loom update available");
                     _snprintf_s(body, _TRUNCATE,
-                                "Version %s is out (you have %s). Click to open the release page.",
-                                info->tag.c_str(), kAppVersion);
+                                "Version %s is out (you have %s). Install it from the panel or the tray menu; click here for what's new.",
+                                UpdateChecker::DisplayVersion(info->tag).c_str(), kAppVersionDisplay);
                     Log("UpdateChecker: notified -- latest %s, current %s",
                         info->tag.c_str(), kAppVersion);
                     break;
@@ -8839,7 +8844,7 @@ namespace
                     app->pendingUpdateTag.clear();
                     _snprintf_s(title, _TRUNCATE, "Stereo Loom is up to date");
                     _snprintf_s(body, _TRUNCATE,
-                                "You're on the latest release (%s).", kAppVersion);
+                                "You're on the latest release (%s).", kAppVersionDisplay);
                     Log("UpdateChecker: user-checked, already up to date");
                     break;
                 case ReleaseInfo::Failed:
@@ -8865,6 +8870,27 @@ namespace
                     Shell_NotifyIconA(NIM_MODIFY, &nid);
                 }
                 delete info;
+            }
+            return 0;
+
+        case WM_APP_UPDATE_DOWNLOADED:
+            // Install Update's download: ready -> swap it in, start it, and close
+            // this copy; failed -> the release page, to download it by hand.
+            if (app)
+            {
+                if (wParam && UpdateChecker::InstallAndRestart())
+                {
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                app->updateFailed = true;
+                if (!app->pendingUpdateUrl.empty())
+                    ShellExecuteA(nullptr, "open", app->pendingUpdateUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                NOTIFYICONDATAA nid{ sizeof(nid) };
+                nid.hWnd = hwnd; nid.uID = 1; nid.uFlags = NIF_INFO; nid.dwInfoFlags = NIIF_WARNING;
+                _snprintf_s(nid.szInfoTitle, _TRUNCATE, "The update could not be installed");
+                _snprintf_s(nid.szInfo, _TRUNCATE, "The release page is open to download it by hand.");
+                Shell_NotifyIconA(NIM_MODIFY, &nid);
             }
             return 0;
 
@@ -9193,6 +9219,24 @@ namespace
 
             switch (cmd)
             {
+            case ID_TRAY_INSTALL_UPDATE:
+                // Banner / tray "Install update": the release's exe, if it has one;
+                // otherwise (or if this copy cannot replace itself) its page.
+                if (!app->pendingRelease.assetUrl.empty() && !app->updateFailed)
+                    UpdateChecker::DownloadAsync(hwnd, WM_APP_UPDATE_DOWNLOADED, app->pendingRelease);
+                else if (!app->pendingUpdateUrl.empty())
+                    ShellExecuteA(nullptr, "open", app->pendingUpdateUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                return 0;
+            case ID_TRAY_GET_BETAS:
+                // Betas on / off: forget what was found, and look again.
+                Settings::WriteGetBetas(!Settings::ReadGetBetas());
+                UpdateChecker::ResetCache();
+                app->pendingRelease = ReleaseInfo{};
+                app->pendingUpdateTag.clear();
+                app->pendingUpdateUrl.clear();
+                app->updateFailed = false;
+                UpdateChecker::StartAsync(hwnd, WM_APP_UPDATE_RESULT, false);
+                return 0;
             case ID_TRAY_OPEN_UPDATE:
                 // Tray "Update available" item / GUI update banner.
                 if (!app->pendingUpdateUrl.empty())
@@ -9694,7 +9738,10 @@ static void LoopBody(AppState& app, bool frame, bool panel)
         if (app.gui.IsVisible())
         {
             GuiState gs;
-            if (!app.pendingUpdateUrl.empty()) gs.updateTag = app.pendingUpdateTag;
+            if (!app.pendingUpdateUrl.empty()) gs.updateTag = UpdateChecker::DisplayVersion(app.pendingUpdateTag);
+            gs.updateProgress = UpdateChecker::DownloadProgress();
+            gs.updateCanInstall = !app.pendingRelease.assetUrl.empty() && !app.updateFailed;
+            gs.getBetas = Settings::ReadGetBetas();
             gs.weaving       = app.weavingEnabled;
             gs.mode          = app.mode;
             gs.source        = app.source;
@@ -10106,6 +10153,16 @@ static void LoopBody(AppState& app, bool frame, bool panel)
         // that case.
         PollProfileFullscreenState(app);
         PollKatangaAutoReceive(app);   // throttled to 500ms internally
+        if (app.oldExeCleanupTries > 0)
+        {
+            static DWORD s_lastCleanupMs = 0;
+            const DWORD nowMs = GetTickCount();
+            if (nowMs - s_lastCleanupMs >= 500)
+            {
+                s_lastCleanupMs = nowMs;
+                app.oldExeCleanupTries = UpdateChecker::CleanUpOld() ? 0 : app.oldExeCleanupTries - 1;
+            }
+        }
         // Late Latching switch (panel): apply to the running weaver.
         {
             static DWORD s_last = 0;
@@ -10382,7 +10439,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // stalls in games. (Must come before any window is created.)
     ImmDisableIME((DWORD)-1);
     TscPerMs();   // (starts the CPU-time calibration for the hitch log)
-    Log("WinMain: Stereo Loom v%s starting (pid %lu)", kAppVersion, GetCurrentProcessId());
+    Log("WinMain: Stereo Loom v%s starting (pid %lu)", kAppVersionDisplay, GetCurrentProcessId());
+    // Restarted by an update: the previous copy closes first.
+    UpdateChecker::WaitForUpdatedFrom(lpCmdLine);
     LogShadowedDlls();
 
     // Single instance. Two Stereo Loom processes fight over the SR display /
@@ -10440,11 +10499,15 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     VideoSource::Startup();
 
     Settings::RepairRunAtStartup();   // (SR Loom's SRLoom.exe is now StereoLoom.exe; or an older copy's)
+    // The old exe an update left behind (retried from the main loop while its
+    // process is still closing).
+    const bool oldExeGone = UpdateChecker::CleanUpOld();
 
     // Testing aid: "-noexclude" leaves the window visible to screen capture.
     const bool excludeFromCapture = !(lpCmdLine && strstr(lpCmdLine, "-noexclude"));
 
     AppState app;
+    app.oldExeCleanupTries = oldExeGone ? 0 : 60;   // (every 500 ms: up to 30 s)
     g_app = &app;
 
     // Connect to the SR service to ask where the SR display is -- with the
@@ -10987,8 +11050,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // (throttled to once an hour; also re-run whenever the panel is opened).
     // A newer tag posts WM_APP_UPDATE_RESULT; auto-checks are silent on
     // up-to-date / failure -- only the About popup's forced check reports those.
-    if (UpdateChecker::CachedUpdate(app.pendingUpdateTag, app.pendingUpdateUrl))
+    if (UpdateChecker::CachedUpdate(app.pendingRelease))
+    {
+        app.pendingUpdateTag = app.pendingRelease.tag;
+        app.pendingUpdateUrl = app.pendingRelease.url;
         Log("UpdateChecker: cached update available -- %s", app.pendingUpdateTag.c_str());
+    }
     UpdateChecker::StartAsync(app.hwnd, WM_APP_UPDATE_RESULT, false);
     // RegisterHotKey(app.hwnd, kHotkeyDetect,  MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'D'); // auto-detect disabled
 

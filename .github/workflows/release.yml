@@ -8,7 +8,7 @@ name: Release
 # the runner is a personal PC and this repository is public.
 on:
   push:
-    tags: ['v*']
+    tags: ['v*', '!v*-beta*']   # (betas: beta.yml)
   workflow_dispatch:
     inputs:
       tag:

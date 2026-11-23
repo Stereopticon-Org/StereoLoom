@@ -60,6 +60,10 @@ namespace srw
     // side off (2) or on (3). See SamsungHub.h.
     constexpr UINT WM_APP_SAMSUNG_POPUP = WM_APP + 12;
 
+    // UpdateChecker download thread -> main window: the new release's exe is
+    // downloaded and checked (wParam 1), or that failed (wParam 0).
+    constexpr UINT WM_APP_UPDATE_DOWNLOADED = WM_APP + 13;
+
     // Menu command IDs (also reused as WM_COMMAND ids from the popup menu).
     enum TrayCommand : UINT
     {
@@ -78,6 +82,8 @@ namespace srw
         ID_TRAY_EXIT,
         ID_TRAY_OPEN_UPDATE,            // "Update available" -- opens the GitHub release page
         ID_TRAY_AUTO_STEREO,            // panel "Auto Stereo" button: detect + weave 3D images on screen
+        ID_TRAY_INSTALL_UPDATE,         // "Install update": download the new release, swap it in, restart
+        ID_TRAY_GET_BETAS,              // About popup "Get Betas": also offered the pre-releases
     };
 
     // Window-list items get ids in this range; index = id - base.

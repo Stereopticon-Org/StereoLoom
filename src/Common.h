@@ -29,6 +29,14 @@ namespace srw
     // Current Stereo Loom version (version.h). Compared (after stripping any leading
     // 'v') to the GitHub Releases latest-tag by the update checker.
     constexpr const char* kAppVersion = SRLOOM_VERSION_STR;
+    // As shown: "4.1", or a beta's "4.2 beta 14".
+#define SRLOOM_STR2_(x) #x
+#define SRLOOM_STR_(x) SRLOOM_STR2_(x)
+#if SRLOOM_VERSION_BETA
+    constexpr const char* kAppVersionDisplay = SRLOOM_VERSION_STR " beta " SRLOOM_STR_(SRLOOM_VERSION_BETA);
+#else
+    constexpr const char* kAppVersionDisplay = SRLOOM_VERSION_STR;
+#endif
 
     // GitHub repo path for the update checker + "About" links.
     constexpr const char* kRepoSlug = "Stereopticon-Org/StereoLoom";

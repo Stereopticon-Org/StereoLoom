@@ -11,7 +11,8 @@ namespace srw::Settings
     // Whether Stereo Loom is registered to launch on user login (a value in
     // HKCU\Software\Microsoft\Windows\CurrentVersion\Run named SRLoom).
     bool ReadRunAtStartup();
-    // An exe's version from its version resource (major << 32 | minor << 16 | patch);
+    // An exe's version from its version resource (major.minor.patch.build, 16 bits each,
+    // build being a beta's number or 65535 for a release);
     // 0 when it has none (Stereo Loom before 4.1, SR Loom). This exe's: ExeVersion({}).
     unsigned long long ExeVersion(const std::wstring& path);
     // The path the auto-run entry starts ("" when off).
@@ -201,6 +202,9 @@ namespace srw::Settings
     void WriteZondisionDepth(int v);
     bool ReadZondisionBlackout();
     void WriteZondisionBlackout(bool on);
+    // Updates: also offered the betas (pre-releases built from main). GetBetas, default off.
+    bool ReadGetBetas();
+    void WriteGetBetas(bool on);
     bool ReadOutputSwapEyes();
     void WriteOutputSwapEyes(bool on);
     // Anti-crosstalk through the runtime's weaver settings: 0 the display's default,

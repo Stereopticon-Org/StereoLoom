@@ -141,6 +141,9 @@ namespace srw
         // Newer GitHub release tag ("v2.2") when an update is available,
         // else empty. Drives the update banner at the top of the panel.
         std::string  updateTag;
+        int          updateProgress   = -1;      // Install Update downloading: 0-100; -1 not
+        bool         updateCanInstall = false;   // the release has an exe this copy can swap in
+        bool         getBetas         = false;   // Settings GetBetas
     };
 
     class Gui
