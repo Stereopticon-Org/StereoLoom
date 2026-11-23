@@ -167,8 +167,9 @@ UINT TrayIcon::ShowContextMenu(HWND hwnd, const MenuState& s, bool returnCmd)
     if (!s.updateTag.empty())
     {
         char label[96];
-        _snprintf_s(label, _TRUNCATE, "Update available: %s", s.updateTag.c_str());
-        AppendMenuA(menu, MF_STRING, ID_TRAY_OPEN_UPDATE, label);
+        _snprintf_s(label, _TRUNCATE, "Install update: %s", s.updateTag.c_str());
+        AppendMenuA(menu, MF_STRING, ID_TRAY_INSTALL_UPDATE, label);
+        AppendMenuA(menu, MF_STRING, ID_TRAY_OPEN_UPDATE, "What's new in it");
     }
     AppendMenuA(menu, MF_SEPARATOR, 0, nullptr);
 

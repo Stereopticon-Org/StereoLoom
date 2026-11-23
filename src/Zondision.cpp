@@ -23,6 +23,17 @@ namespace
     Zimo_StopFn         pStop = nullptr;
     Zimo_DescribeFn     pDescribe = nullptr;
     Zimo_KeyKindFn      pKeyKind = nullptr;
+    Zimo_SetModeFn      pSetMode = nullptr;
+    Zimo_SetDepthFn     pSetDepth = nullptr;
+    Zimo_PreferredDisplayFn pPreferred = nullptr;
+    Mode                g_mode = Mode::EyeTracked;
+    int                 g_features = -1;      // (what the display said it can do: -1 not known yet)
+    bool                g_tab = false;        // (EyeTracked: the chip taking top and bottom)
+    bool                g_want3D = false;
+    int                 g_depth = 16;
+    bool                g_blackoutOn = true;
+    ULONGLONG           g_blackFrom = 0;      // (0: not black)
+    bool                g_switching = false;  // (the display said a switch began, not yet that it ended)
     unsigned            g_eyeSerial = 0;
     ULONGLONG           g_eyeLogAt = 0;
 
@@ -105,7 +116,11 @@ namespace
         pStop      = (Zimo_StopFn)GetProcAddress(g_adapter, "Zimo_Stop");
         pDescribe  = (Zimo_DescribeFn)GetProcAddress(g_adapter, "Zimo_Describe");
         pKeyKind   = (Zimo_KeyKindFn)GetProcAddress(g_adapter, "Zimo_KeyKind");
-        if (!ver || ver() != ZIMO_ADAPTER_API_VERSION || !load || !pList || !pStart || !pSet3D || !pEyes || !pStatus || !pStop || !pDescribe || !pKeyKind)
+        pSetMode   = (Zimo_SetModeFn)GetProcAddress(g_adapter, "Zimo_SetMode");
+        pSetDepth  = (Zimo_SetDepthFn)GetProcAddress(g_adapter, "Zimo_SetDepth");
+        pPreferred = (Zimo_PreferredDisplayFn)GetProcAddress(g_adapter, "Zimo_PreferredDisplay");
+        if (!ver || ver() != ZIMO_ADAPTER_API_VERSION || !load || !pList || !pStart || !pSet3D || !pEyes || !pStatus || !pStop || !pDescribe || !pKeyKind
+            || !pSetMode || !pSetDepth || !pPreferred)
         {
             Log("Zondision: ZimoAdapter.dll is not the version this Stereo Loom expects");
             FreeLibrary(g_adapter); g_adapter = nullptr;
@@ -161,35 +176,117 @@ namespace
         if (a.empty() || !b || !*b) return false;
         return _stricmp(a.c_str(), b) == 0 || strstr(a.c_str(), b) || strstr(b, a.c_str());
     }
+
+    // The kind of device a mode drives.
+    bool Suits(const ZimoDisplay& d, Mode m)
+    {
+        switch (m)
+        {
+        case Mode::Shutter:   return d.shutter != 0;
+        case Mode::Polarised: return d.polarized != 0;
+        case Mode::AR:        return d.ar != 0;
+        default:              return d.zondision != 0;   // (an SR display listed by the SDK is never one)
+        }
+    }
+    // The device for the mode: the one picked in Zondision's control panel if it suits,
+    // else the first that does. False: none connected.
+    bool Choose(Mode m, ZimoDisplay& out)
+    {
+        ZimoDisplay list[8]{};
+        const int n = (std::min)(pList(list, 8), 8);
+        const int preferred = pPreferred();
+        int pick = -1;
+        for (int i = 0; i < n; ++i)
+            if (Suits(list[i], m) && (pick < 0 || list[i].id == preferred)) pick = i;
+        if (pick < 0) return false;
+        out = list[pick];
+        return true;
+    }
+    int SdkMode()
+    {
+        switch (g_mode)
+        {
+        case Mode::MultiviewTB:    return ZIMO_MULTIVIEW_TB;
+        case Mode::MultiviewDepth: return ZIMO_RGBDEPTH;
+        case Mode::Shutter:        return ZIMO_SHUTTER;
+        case Mode::Polarised:      return ZIMO_POLARIZED;
+        case Mode::AR:             return ZIMO_AR;
+        default:                   return g_tab ? ZIMO_TB : ZIMO_SBS;
+        }
+    }
+    // The modes where the display's chip switches (and the screen flickers).
+    bool ChipMode() { return g_mode == Mode::EyeTracked || g_mode == Mode::MultiviewTB || g_mode == Mode::MultiviewDepth; }
+}
+
+const char* ModeName(Mode m)
+{
+    switch (m)
+    {
+    case Mode::EyeTracked:     return "Glasses-free (eye tracked)";
+    case Mode::MultiviewTB:    return "Multiview";
+    case Mode::MultiviewDepth: return "Multiview (picture + depth)";
+    case Mode::Shutter:        return "Shutter glasses";
+    case Mode::Polarised:      return "Polarised glasses";
+    case Mode::AR:             return "AR glasses";
+    default:                   return "?";
+    }
+}
+
+int Layout()
+{
+    switch (g_mode)
+    {
+    case Mode::MultiviewTB:    return 1;   // (OutputEncoder::ZLayout::TopBottom)
+    case Mode::MultiviewDepth: return 4;   // (ColourDepth)
+    case Mode::Shutter:        return 3;   // (Alternate)
+    case Mode::Polarised:      return 2;   // (Rows)
+    case Mode::AR:             return 0;   // (SideBySide: the glasses' double-wide mode)
+    default:                   return g_tab ? 1 : 0;
+    }
 }
 
 bool Available() { return Load(); }
 
+unsigned AvailableModes()
+{
+    if (!Load()) return 0;
+    ZimoDisplay list[8]{};
+    const int n = (std::min)(pList(list, 8), 8);
+    unsigned bits = 0;
+    for (int i = 0; i < n; ++i)
+        for (int m = 0; m < (int)Mode::Count; ++m)
+            if (Suits(list[i], (Mode)m)) bits |= 1u << m;
+    // (The multiview ones only where the display has said it has multiview firmware.)
+    if (g_features < 2) bits &= ~((1u << (int)Mode::MultiviewTB) | (1u << (int)Mode::MultiviewDepth));
+    return bits;
+}
+
+void SetMode(Mode m) { if ((int)m >= 0 && m < Mode::Count) g_mode = m; }
+Mode GetMode() { return g_mode; }
+
 bool FindDisplay(RECT& out, std::string* name)
 {
     if (!Load()) return false;
-    ZimoDisplay list[8]{};
-    const int n = (std::min)(pList(list, 8), 8);
+    ZimoDisplay d{};
+    if (!Choose(g_mode, d)) return false;
     const std::vector<Mon> mons = Monitors();
-    // (By name first; failing that, the one monitor showing the display's native size.)
+    // (By name first; failing that, the one monitor showing the device's native size.)
     for (int pass = 0; pass < 2; ++pass)
-        for (int i = 0; i < n; ++i)
+    {
+        const Mon* hit = nullptr; int hits = 0;
+        for (const Mon& m : mons)
         {
-            if (!list[i].zondision) continue;   // (an SR display listed by the SDK is not one for this output)
-            const Mon* hit = nullptr; int hits = 0;
-            for (const Mon& m : mons)
-            {
-                const bool match = pass == 0 ? SameName(m.name, list[i].name)
-                                             : (m.rc.right - m.rc.left == list[i].width && m.rc.bottom - m.rc.top == list[i].height);
-                if (match) { hit = &m; ++hits; }
-            }
-            if (hit && (pass == 0 || hits == 1))
-            {
-                out = hit->rc;
-                if (name) *name = list[i].name;
-                return true;
-            }
+            const bool match = pass == 0 ? SameName(m.name, d.name)
+                                         : (m.rc.right - m.rc.left == d.width && m.rc.bottom - m.rc.top == d.height);
+            if (match) { hit = &m; ++hits; }
         }
+        if (hit && (pass == 0 || hits == 1))
+        {
+            out = hit->rc;
+            if (name) *name = d.name;
+            return true;
+        }
+    }
     return false;
 }
 
@@ -197,25 +294,26 @@ bool Start(std::string& msg)
 {
     if (!Load()) { msg = "ZimoAdapter.dll or Zondision's SDK is missing"; return false; }
     if (g_started) return true;
-    // (Only a Zondision display: the SDK also lists Leia SR displays, and its first
-    // 3D display could be one of those.)
-    int id = 0;
-    {
-        ZimoDisplay list[8]{};
-        const int n = (std::min)(pList(list, 8), 8);
-        for (int i = 0; i < n && !id; ++i) if (list[i].zondision) id = list[i].id;
-    }
-    if (!id) { msg = "no Zondision display found"; return false; }
+    ZimoDisplay d{};
+    if (!Choose(g_mode, d)) { msg = std::string("no Zondision device for ") + ModeName(g_mode) + " found"; return false; }
+    g_tab = false;
     char ver[64] = {};
-    const int r = pStart(id, ver, sizeof(ver));
+    int features = -1;
+    const int r = pStart(d.id, SdkMode(), &features, ver, sizeof(ver));
     if (r != 0)
     {
-        char b[200]; _snprintf_s(b, _TRUNCATE, "session not started: %s (%d)", pDescribe(r), r);
+        char b[240]; _snprintf_s(b, _TRUNCATE, "session not started (%s, %s): %s (%d)", d.name, ModeName(g_mode), pDescribe(r), r);
         msg = b;
         return false;
     }
     g_started = true;
-    msg = std::string("session started (SDK ") + ver + ")";
+    if (d.zondision) g_features = features;
+    g_want3D = false; g_blackFrom = 0; g_switching = false;
+    if (g_mode == Mode::MultiviewTB || g_mode == Mode::MultiviewDepth) pSetDepth(g_depth);
+    char b[240];
+    _snprintf_s(b, _TRUNCATE, "session started on %s (display %d), %s; the display %s (SDK %s)", d.name, d.id, ModeName(g_mode),
+                features >= 2 ? "has multiview firmware" : features == 1 ? "weaves with its own chip" : "weaves on the GPU only", ver);
+    msg = b;
     return true;
 }
 
@@ -224,6 +322,8 @@ bool Set3D(bool on)
     if (!g_started) return false;
     const int r = pSet3D(on ? 1 : 0);
     if (r != 0) Log("Zondision: %s not taken: %s (%d)", on ? "3D" : "2D", pDescribe(r), r);
+    if (r == 0 && on != g_want3D && ChipMode()) g_blackFrom = GetTickCount64();   // (the switch is coming: black)
+    g_want3D = on && r == 0;
     return r == 0;
 }
 
@@ -232,9 +332,52 @@ void Stop()
     if (!g_started) return;
     pStop();
     g_started = false;
+    g_want3D = false; g_tab = false; g_blackFrom = 0; g_switching = false;
 }
 
 bool IsStarted() { return g_started; }
+
+bool SetTopBottom(bool tab)
+{
+    tab = tab && g_started && g_mode == Mode::EyeTracked && g_features >= 2;
+    if (tab == g_tab) return g_tab;
+    const bool was = g_tab;
+    g_tab = tab;
+    const int r = pSetMode(SdkMode());
+    if (r != 0)
+    {
+        Log("Zondision: %s not taken: %s (%d)", tab ? "top and bottom" : "side by side", pDescribe(r), r);
+        g_tab = was;
+        pSetMode(SdkMode());
+        return g_tab;
+    }
+    Log("Zondision: the display takes %s", g_tab ? "top and bottom" : "side by side");
+    if (g_want3D) g_blackFrom = GetTickCount64();
+    return g_tab;
+}
+
+bool TopBottom() { return g_tab; }
+
+void SetDepth(int depth)
+{
+    depth = depth < 0 ? 0 : depth > 62 ? 62 : depth;
+    if (depth == g_depth) return;
+    g_depth = depth;
+    if (g_started && (g_mode == Mode::MultiviewTB || g_mode == Mode::MultiviewDepth)) pSetDepth(depth);
+}
+
+void SetBlackoutEnabled(bool on) { g_blackoutOn = on; if (!on) { g_blackFrom = 0; g_switching = false; } }
+
+// Black from asking for the switch until the display says it is done -- at most 2 s
+// (Zondision's ZLFDDisableBlackScreenTimeout); and if it never says a switch began,
+// half a second (their sample waits that long for it).
+bool Blackout()
+{
+    if (!g_blackoutOn || !g_started || !g_blackFrom) return false;
+    const ULONGLONG t = GetTickCount64() - g_blackFrom;
+    if (t > 2000 || (!g_switching && t > 500)) { g_blackFrom = 0; g_switching = false; return false; }
+    return true;
+}
 
 bool GetHeadPose(double pos[3], double orient[3])
 {
@@ -268,6 +411,21 @@ void Poll()
                                         "USB", "3DS service", "film", "monitor" };
     int act = 0, value = 0;
     while (pStatus(&act, &value))
+    {
         Log("Zondision: %s %d", act >= 0 && act < 8 ? kAct[act] : "status", value);
+        if (act == 1)   // (a switch begins: black until it ends)
+        {
+            if (ChipMode()) { g_switching = true; g_blackFrom = GetTickCount64(); }
+        }
+        else if (act == 3) { g_switching = false; g_blackFrom = 0; }
+        // (Zondision's service back after a restart: 3D asked for again -- the adapter
+        // starts the session afresh when the service has forgotten it. A monitor
+        // plugged back in is asked again by the adapter itself.)
+        else if (act == 5 && value == 1 && g_want3D)
+        {
+            const int r = pSet3D(1);
+            Log("Zondision: 3D asked for again after the service came back: %s", r == 0 ? "taken" : pDescribe(r));
+        }
+    }
 }
 }

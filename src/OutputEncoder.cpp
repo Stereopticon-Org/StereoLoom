@@ -9,15 +9,17 @@ namespace srw
 namespace
 {
     // One triangle over the viewport; uv 0..1 across it. Mode: 0 anaglyph, 1 side by
-    // side, 2 top and bottom, 3 rows, 4 columns, 5 checkerboard, 6 HDMI frame packing. Each eye is looked up
-    // at uv * scale + offset (its half of the side-by-side picture).
+    // side, 2 top and bottom, 3 rows, 4 columns, 5 checkerboard, 6 HDMI frame packing,
+    // 7 one eye a frame (misc.w: which), 8 picture | depth map (misc.w: the depth map
+    // turned round, black near to white near), 9 black. Each eye is looked up at
+    // uv * scale + offset (its half of the input picture).
     const char kHLSL[] = R"(
 cbuffer C : register(b0)
 {
     float4 uvL;  float4 uvR;
     float4 ml0;  float4 ml1;  float4 ml2;
     float4 mr0;  float4 mr1;  float4 mr2;
-    float4 misc;            // x mode, y / z the render target's origin on the display
+    float4 misc;            // x mode, y / z the render target's origin on the display, w per mode
 };
 Texture2D    t : register(t0);
 SamplerState s : register(s0);
@@ -44,6 +46,15 @@ float4 PSMain(V i) : SV_Target
         const float3 c = float3(dot(ml0.xyz, l), dot(ml1.xyz, l), dot(ml2.xyz, l))
                        + float3(dot(mr0.xyz, r), dot(mr1.xyz, r), dot(mr2.xyz, r));
         return float4(saturate(c), 1);
+    }
+    if (mode == 9) return float4(0, 0, 0, 1);
+    if (mode == 7) return float4(Eye(misc.w > 0.5, i.uv).rgb, 1);
+    if (mode == 8)
+    {
+        const bool depth = i.uv.x >= 0.5;
+        float3 c = Eye(depth, float2(frac(i.uv.x * 2), i.uv.y)).rgb;
+        if (depth && misc.w > 0.5) c = 1.0 - c;
+        return float4(c, 1);
     }
     if (mode == 1) return float4(Eye(i.uv.x >= 0.5, float2(frac(i.uv.x * 2), i.uv.y)).rgb, 1);
     if (mode == 2) return float4(Eye(i.uv.y >= 0.5, float2(i.uv.x, frac(i.uv.y * 2))).rgb, 1);
@@ -149,23 +160,29 @@ void OutputEncoder::Release()
 
 void OutputEncoder::SetOptions(DisplayOutput output, int anaColours, int anaStyle, bool swapEyes)
 {
-    if (output == DisplayOutput::Zondision) output = DisplayOutput::SideBySide;
     if (output == m_output && anaColours == m_anaColours && anaStyle == m_anaStyle && swapEyes == m_swap) return;
     m_output = output; m_anaColours = anaColours; m_anaStyle = anaStyle; m_swap = swapEyes;
     m_dirty = true;
 }
 
-void OutputEncoder::SetInput(ID3D11ShaderResourceView* srv, int perEyeWidth, int height)
+void OutputEncoder::SetInput(ID3D11ShaderResourceView* srv, int perEyeWidth, int height, bool topBottom)
 {
-    if (srv == m_srv && perEyeWidth == m_eyeW && height == m_h) return;
-    m_srv = srv; m_eyeW = perEyeWidth; m_h = height;
+    if (srv == m_srv && perEyeWidth == m_eyeW && height == m_h && topBottom == m_inTab) return;
+    m_srv = srv; m_eyeW = perEyeWidth; m_h = height; m_inTab = topBottom;
+    m_dirty = true;
+}
+
+void OutputEncoder::SetZondisionLayout(int layout, bool depthLeft, bool blackNear)
+{
+    if (layout == m_zLayout && depthLeft == m_depthLeft && blackNear == m_blackNear) return;
+    m_zLayout = layout; m_depthLeft = depthLeft; m_blackNear = blackNear;
     m_dirty = true;
 }
 
 void OutputEncoder::Fill()
 {
     // (Each eye's place in the input texture, which may be larger than the picture.)
-    float texW = (float)(m_eyeW * 2), texH = (float)m_h;
+    float texW = (float)(m_inTab ? m_eyeW : m_eyeW * 2), texH = (float)(m_inTab ? m_h * 2 : m_h);
     if (m_srv)
     {
         ID3D11Resource* res = nullptr; m_srv->GetResource(&res);
@@ -181,8 +198,12 @@ void OutputEncoder::Fill()
     const float sx = (float)m_eyeW / texW, sy = (float)m_h / texH;
     float* c = m_cbData;
     memset(c, 0, sizeof(m_cbData));
-    float l[4] = { sx, sy, 0.0f, 0.0f }, r[4] = { sx, sy, sx, 0.0f };
-    if (m_swap) { float t[4]; memcpy(t, l, sizeof(t)); memcpy(l, r, sizeof(l)); memcpy(r, t, sizeof(r)); }
+    float l[4] = { sx, sy, 0.0f, 0.0f }, r[4] = { sx, sy, m_inTab ? 0.0f : sx, m_inTab ? sy : 0.0f };
+    const bool zondision = m_output == DisplayOutput::Zondision;
+    // (Picture | depth map: the halves in that order for the display, whatever the
+    // eyes-swapped setting -- a depth map on the left is swapped round.)
+    const bool swap = zondision && m_zLayout == ZLayout::ColourDepth ? m_depthLeft : m_swap;
+    if (swap) { float t[4]; memcpy(t, l, sizeof(t)); memcpy(l, r, sizeof(l)); memcpy(r, t, sizeof(r)); }
     memcpy(c + 0, l, sizeof(l));
     memcpy(c + 4, r, sizeof(r));
     float ml[9], mr[9];
@@ -190,7 +211,19 @@ void OutputEncoder::Fill()
     for (int row = 0; row < 3; ++row)
         for (int k = 0; k < 3; ++k) { c[8 + row * 4 + k] = ml[row * 3 + k]; c[20 + row * 4 + k] = mr[row * 3 + k]; }
     int mode = 0;
-    switch (m_output)
+    c[35] = 0.0f;
+    if (zondision)
+    {
+        switch (m_zLayout)
+        {
+        case ZLayout::TopBottom:   mode = 2; break;
+        case ZLayout::Rows:        mode = 3; break;
+        case ZLayout::Alternate:   mode = 7; break;
+        case ZLayout::ColourDepth: mode = 8; c[35] = m_blackNear ? 1.0f : 0.0f; break;
+        default:                   mode = 1; break;   // (side by side, and AR glasses' full side by side)
+        }
+    }
+    else switch (m_output)
     {
     case DisplayOutput::SideBySide:        mode = 1; break;
     case DisplayOutput::FullSideBySide:    mode = 1; break;   // (the same picture, on a double-wide display mode)
@@ -205,13 +238,17 @@ void OutputEncoder::Fill()
     default:                               mode = 0; break;
     }
     c[32] = (float)mode;
+    m_mode = mode;
 }
 
 void OutputEncoder::Draw(int originX, int originY)
 {
     if (!m_ps || !m_srv || !m_ctx) return;
     if (m_dirty) { Fill(); m_dirty = false; }
+    m_cbData[32] = (float)(m_black ? 9 : m_mode);
     m_cbData[33] = (float)originX; m_cbData[34] = (float)originY;
+    // (One eye a frame, for shutter glasses: the other eye each time it is drawn.)
+    if (m_mode == 7) { m_cbData[35] = m_field ? 1.0f : 0.0f; m_field = !m_field; }
     m_ctx->UpdateSubresource(m_cb, 0, nullptr, m_cbData, 0, 0);
     m_ctx->IASetInputLayout(nullptr);
     m_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

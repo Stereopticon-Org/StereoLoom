@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define ZIMO_ADAPTER_API_VERSION 1
+#define ZIMO_ADAPTER_API_VERSION 2
 
 typedef struct
 {
@@ -25,6 +25,9 @@ typedef struct
     int  zondision;       // a Zondision glasses-free display (ZLFD: the Zimo M1)
     int  sr;              // a Leia SR display (Zondision's SDK knows those too; Stereo Loom weaves them itself)
     char serial[16];
+    int  shutter;         // a Zondision shutter-glasses monitor
+    int  polarized;       // a Zondision polarised-glasses monitor
+    int  ar;              // Zondision AR glasses
 } ZimoDisplay;
 
 typedef struct
@@ -42,10 +45,21 @@ typedef int  (__cdecl* Zimo_ApiVersionFn)(void);
 typedef int  (__cdecl* Zimo_LoadFn)(void);
 // The 3D displays the SDK knows of: how many (up to max are filled in).
 typedef int  (__cdecl* Zimo_ListDisplaysFn)(ZimoDisplay* out, int max);
-// A session with display `id` (0: the SDK's first), weaving side by side in the
-// display's own hardware. 0: started; else the SDK's error (Zimo_Describe).
-// sdkVersion (may be null) gets the SDK's version text.
-typedef int  (__cdecl* Zimo_StartFn)(int id, char* sdkVersion, int sdkVersionSize);
+// The ways the display can be driven: the SDK's WeavingMode values.
+enum { ZIMO_SBS = 2, ZIMO_TB = 3, ZIMO_RGBDEPTH = 4, ZIMO_MULTIVIEW_TB = 5, ZIMO_AR = 6, ZIMO_POLARIZED = 7, ZIMO_SHUTTER = 8 };
+// What the display can do (the SDK's PlatformFeatures): 0 GPU weaving only, 1 its own
+// chip weaves (eye-tracked side by side), 2 multiview firmware too (top and bottom,
+// multiview, picture + depth).
+// A session with display `id` (0: the SDK's choice) in `mode` (ZIMO_...). 0: started;
+// else the SDK's error (Zimo_Describe). features (may be null) gets what the display
+// can do; sdkVersion (may be null) the SDK's version text.
+typedef int  (__cdecl* Zimo_StartFn)(int id, int mode, int* features, char* sdkVersion, int sdkVersionSize);
+// Another mode for the running session (ZIMO_...): taken at once if 3D is on. 0: done.
+typedef int  (__cdecl* Zimo_SetModeFn)(int mode);
+// The multiview modes' 3D strength, 0 to 62 (Zondision's default 16). 0: done.
+typedef int  (__cdecl* Zimo_SetDepthFn)(int depth);
+// The 3D display picked in Zondision's own control panel (its id), 0 if none / unknown.
+typedef int  (__cdecl* Zimo_PreferredDisplayFn)(void);
 // 3D on (1) or off (0, 2D). 0: done, else the SDK's error.
 typedef int  (__cdecl* Zimo_Set3DFn)(int on);
 // The latest eye positions; 0 until the first.

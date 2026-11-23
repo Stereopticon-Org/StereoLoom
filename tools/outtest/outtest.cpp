@@ -97,6 +97,53 @@ int main()
     //  green -.04*200-.038*50-.016*50 + .378*50+.734*50-.018*200 = -10.7+55.6-3.6 = 41.3;
     //  blue -.015*200-.021*50-.005*50 + (-.072*50-.113*50+1.226*200) = -4.3+(-9.25+245.2) = 231.65)
     expect("Anaglyph red/cyan Optimised (Dubois)", 4, 4, 118, 41, 232);
+    // Zondision's layouts (OutputEncoder::ZLayout).
+    using ZL = OutputEncoder::ZLayout;
+    enc.SetZondisionLayout(ZL::SideBySide);
+    run(DisplayOutput::Zondision, 0, 0, false, 0, 0);
+    expect("Zondision side by side: left half is L", 1, 4, 200, 50, 50);
+    expect("Zondision side by side: right half is R", 6, 4, 50, 50, 200);
+    enc.SetZondisionLayout(ZL::TopBottom);
+    run(DisplayOutput::Zondision, 0, 0, false, 0, 0);
+    expect("Zondision top and bottom: top is L", 4, 1, 200, 50, 50);
+    expect("Zondision top and bottom: bottom is R", 4, 6, 50, 50, 200);
+    enc.SetZondisionLayout(ZL::Rows);
+    run(DisplayOutput::Zondision, 0, 0, false, 0, 0);
+    expect("Zondision polarised: row 1 is R", 3, 1, 50, 50, 200);
+    enc.SetZondisionLayout(ZL::Alternate);
+    run(DisplayOutput::Zondision, 0, 0, false, 0, 0);
+    expect("Zondision shutter: first frame is L", 4, 4, 200, 50, 50);
+    run(DisplayOutput::Zondision, 0, 0, false, 0, 0);
+    expect("Zondision shutter: next frame is R", 4, 4, 50, 50, 200);
+    // (Picture + depth: the "depth map" half here is R's colour 50 50 200, turned
+    // round for black near: 205 205 55.)
+    enc.SetZondisionLayout(ZL::ColourDepth, false, true);
+    run(DisplayOutput::Zondision, 0, 0, false, 0, 0);
+    expect("Zondision picture + depth: picture left", 1, 4, 200, 50, 50);
+    expect("Zondision picture + depth: depth turned round", 6, 4, 205, 205, 55);
+    enc.SetZondisionLayout(ZL::ColourDepth, true, false);
+    run(DisplayOutput::Zondision, 0, 0, false, 0, 0);
+    expect("Zondision depth on the left: swapped round", 1, 4, 50, 50, 200);
+    enc.SetBlack(true);
+    run(DisplayOutput::Zondision, 0, 0, false, 0, 0);
+    expect("Zondision black while switching", 4, 4, 0, 0, 0);
+    enc.SetBlack(false);
+    // A top-and-bottom input (L over R, 8 x 4 each, in the 32 x 16 texture: rows 0-3 L,
+    // 4-7 R of the first 8 columns) drawn top and bottom: as it is.
+    {
+        for (int y = 0; y < TH; ++y) for (int x = 0; x < TW; ++x)
+            pix[y * TW + x] = (x < 8 && y < 4) ? 0xFF3232C8u : (x < 8 && y < 8) ? 0xFFC83232u : 0xFF00FF00u;
+        g_ctx->UpdateSubresource(in, 0, nullptr, pix, TW * 4, 0);
+        enc.SetInput(srv, 8, 4, true);
+        enc.SetZondisionLayout(ZL::TopBottom);
+        run(DisplayOutput::Zondision, 0, 0, false, 0, 0);
+        expect("Top-and-bottom input, top and bottom: top L", 4, 1, 200, 50, 50);
+        expect("Top-and-bottom input, top and bottom: bottom R", 4, 6, 50, 50, 200);
+        enc.SetZondisionLayout(ZL::SideBySide);
+        run(DisplayOutput::Zondision, 0, 0, false, 0, 0);
+        expect("Top-and-bottom input, side by side: left L", 1, 4, 200, 50, 50);
+        expect("Top-and-bottom input, side by side: right R", 6, 4, 50, 50, 200);
+    }
     printf("%d failed\n", fails);
     return fails ? 1 : 0;
 }

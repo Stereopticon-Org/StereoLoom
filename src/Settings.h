@@ -11,6 +11,12 @@ namespace srw::Settings
     // Whether Stereo Loom is registered to launch on user login (a value in
     // HKCU\Software\Microsoft\Windows\CurrentVersion\Run named SRLoom).
     bool ReadRunAtStartup();
+    // An exe's version from its version resource (major.minor.patch.build, 16 bits each,
+    // build being a beta's number or 65535 for a release);
+    // 0 when it has none (Stereo Loom before 4.1, SR Loom). This exe's: ExeVersion({}).
+    unsigned long long ExeVersion(const std::wstring& path);
+    // The path the auto-run entry starts ("" when off).
+    std::wstring RunAtStartupPath();
     void WriteRunAtStartup(bool enable);
     void RepairRunAtStartup();   // (the entry's exe gone -- e.g. SRLoom.exe renamed: this exe instead)
 
@@ -186,6 +192,19 @@ namespace srw::Settings
     // HDMI frame packing: 0 1080p (1920 x 2205), 1 720p (1280 x 1470). OutputFramePacking.
     int  ReadOutputFramePacking();
     void WriteOutputFramePacking(int v);
+    // Zondision: how the device is driven (Zondision::Mode, 0 eye tracked .. 5 AR
+    // glasses), the multiview modes' 3D strength (0-62, default 16), and black frames
+    // while the display switches 2D / 3D (default on). ZondisionMode, ZondisionDepth,
+    // ZondisionBlackout.
+    int  ReadZondisionMode();
+    void WriteZondisionMode(int v);
+    int  ReadZondisionDepth();
+    void WriteZondisionDepth(int v);
+    bool ReadZondisionBlackout();
+    void WriteZondisionBlackout(bool on);
+    // Updates: also offered the betas (pre-releases built from main). GetBetas, default off.
+    bool ReadGetBetas();
+    void WriteGetBetas(bool on);
     bool ReadOutputSwapEyes();
     void WriteOutputSwapEyes(bool on);
     // Anti-crosstalk through the runtime's weaver settings: 0 the display's default,

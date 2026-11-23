@@ -273,10 +273,13 @@ target_include_directories(StereoLoom PRIVATE
     ${SR_INCLUDE_DIRS}
 )
 
+# A beta build's number (the beta workflow passes its run number); 0 for a release.
+set(SRLOOM_BETA 0 CACHE STRING "Beta number (0 for a release)")
 target_compile_definitions(StereoLoom PRIVATE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
     _CRT_SECURE_NO_WARNINGS
+    SRLOOM_VERSION_BETA=${SRLOOM_BETA}
 )
 
 target_link_libraries(StereoLoom PRIVATE
@@ -307,6 +310,14 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     target_link_libraries(StereoLoom PRIVATE delayimp)
     foreach(SRDLL SimulatedRealityCore SimulatedRealityDirectX SimulatedRealityDisplays SimulatedRealityFaceTrackers simulatedreality DimencoWeaving)
         target_link_options(StereoLoom PRIVATE /DELAYLOAD:${SRDLL}.dll)
+    endforeach()
+    # Windows' graphics and media DLLs delay-loaded too, so WinMain can load Windows'
+    # own copies (System32) before anything else asks for them: a d3d11.dll / dxgi.dll
+    # of another program's lying beside the exe (geo-11, 3DMigoto, ReShade ... in a
+    # Downloads folder) would otherwise be taken in their place, and stop the exe
+    # starting ("CreateDirect3D11DeviceFromDXGIDevice not found") or hook its own device.
+    foreach(SYSDLL dxgi d3d11 d3d12 d3d9 D3DCOMPILER_47 dcomp mfplat MFReadWrite)
+        target_link_options(StereoLoom PRIVATE /DELAYLOAD:${SYSDLL}.dll)
     endforeach()
 endif()
 
@@ -485,3 +496,9 @@ if(TARGET ZimoAdapter)
     target_link_libraries(zimotest PRIVATE shell32 ole32)
     add_dependencies(zimotest ZimoAdapter)
 endif()
+
+# updtest: the update checker and the in-place update (tools/updtest). Not part of the app:
+#   cmake --build build/x64 --config Release --target updtest
+add_executable(updtest EXCLUDE_FROM_ALL tools/updtest/updtest.cpp src/UpdateChecker.cpp src/Settings.cpp)
+target_include_directories(updtest PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(updtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)

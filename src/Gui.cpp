@@ -963,7 +963,7 @@ bool Gui::Render(GuiState& state)
                     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x,
                                                      nameBottom - ImGui::GetTextLineHeight()));
                     ImGui::PushStyleColor(ImGuiCol_Text, g_dim);
-                    char ver[32]; snprintf(ver, sizeof(ver), "v%s", kAppVersion);
+                    char ver[48]; snprintf(ver, sizeof(ver), "v%s", kAppVersionDisplay);
                     ImGui::TextUnformatted(ver);
                     ImGui::PopStyleColor();
 
@@ -1045,11 +1045,20 @@ bool Gui::Render(GuiState& state)
                     else if (m_updateCheck == UpdateCheck::Available)
                     {
                         ImGui::PushStyleColor(ImGuiCol_Text, g_accent);
-                        ImGui::Text("Update available: %s -- opened in browser", m_updateTag.c_str());
+                        ImGui::Text("Update available: %s (Install it from the banner above)",
+                                    UpdateChecker::DisplayVersion(m_updateTag).c_str());
                         ImGui::PopStyleColor();
                     }
                     else if (m_updateCheck == UpdateCheck::Failed)
                         iconLine("\xEE\x9C\x91", IM_COL32(210, 105, 74, 255), "Check failed");
+
+                    // Betas: the pre-releases built from main, offered as updates too.
+                    {
+                        bool betas = state.getBetas;
+                        if (ImGui::Checkbox("Get Betas", &betas)) post(ID_TRAY_GET_BETAS);
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Also offer the test builds made from each change, before a release");
+                    }
 
                     ImGui::PushStyleColor(ImGuiCol_Text, g_accent);
                     if (ImGui::Selectable("Open Github", false,
@@ -1101,18 +1110,30 @@ bool Gui::Render(GuiState& state)
     if (!state.updateTag.empty())
     {
         const float padX = ImGui::GetStyle().WindowPadding.x;
-        char label[96];
-        _snprintf_s(label, _TRUNCATE, "Update available: %s  -  Download", state.updateTag.c_str());
+        char label[128];
+        const bool downloading = state.updateProgress >= 0;
+        if (downloading)
+            _snprintf_s(label, _TRUNCATE, "Downloading %s... %d%%", state.updateTag.c_str(), state.updateProgress);
+        else if (state.updateCanInstall)
+            _snprintf_s(label, _TRUNCATE, "Update available: %s  -  Install Now", state.updateTag.c_str());
+        else
+            _snprintf_s(label, _TRUNCATE, "Update available: %s  -  Download", state.updateTag.c_str());
         ImGui::SetCursorPosX(padX);
         ImGui::PushStyleColor(ImGuiCol_Button,        g_accent);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_accent);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  g_accent);
         ImGui::PushStyleColor(ImGuiCol_Text,          g_accentText);
-        if (ImGui::Button(label, ImVec2(ImGui::GetWindowSize().x - 2.0f * padX, 0)))
-            post(ID_TRAY_OPEN_UPDATE);
+        if (ImGui::Button(label, ImVec2(ImGui::GetWindowSize().x - 2.0f * padX, 0)) && !downloading)
+            post(state.updateCanInstall ? ID_TRAY_INSTALL_UPDATE : ID_TRAY_OPEN_UPDATE);
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) post(ID_TRAY_OPEN_UPDATE);
         ImGui::PopStyleColor(4);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Open the Stereo Loom %s release page on GitHub", state.updateTag.c_str());
+        if (ImGui::IsItemHovered() && !downloading)
+        {
+            if (state.updateCanInstall)
+                ImGui::SetTooltip("Download Stereo Loom %s and restart into it\nRight-click for what's new", state.updateTag.c_str());
+            else
+                ImGui::SetTooltip("Open the Stereo Loom %s release page on GitHub", state.updateTag.c_str());
+        }
         ImGui::Dummy(ImVec2(0, 2.0f * m_dpiScale));
     }
 
@@ -2462,8 +2483,58 @@ bool Gui::Render(GuiState& state)
                 {
                     static int s_zAge = 0; static bool s_zOk = false, s_zDisp = false;
                     if (s_zAge-- <= 0) { s_zOk = Zondision::Available(); RECT r{}; s_zDisp = s_zOk && Zondision::FindDisplay(r); s_zAge = 120; }
+                    static unsigned s_zModes = 0; static int s_zMode = -1, s_zDepth = 16; static bool s_zBlack = true;
+                    if (s_zAge == 120 || s_zMode < 0)
+                    {
+                        s_zModes = s_zOk ? Zondision::AvailableModes() : 0;
+                        s_zMode = Settings::ReadZondisionMode(); s_zDepth = Settings::ReadZondisionDepth(); s_zBlack = Settings::ReadZondisionBlackout();
+                    }
                     if (!s_zOk)        ImGui::TextDisabled("Zondision's software (3DS) or ZimoAdapter.dll not found.");
-                    else if (!s_zDisp) ImGui::TextDisabled("No Zondision display found.");
+                    else if (!s_zDisp) ImGui::TextDisabled("No Zondision device found for this mode.");
+                    if (s_zOk)
+                    {
+                        using ZM = Zondision::Mode;
+                        // (The modes the devices connected offer -- and the one chosen, even if
+                        // its device is not there now.)
+                        row("Mode", "How the Zondision device is driven. Glasses-free: the display follows your eyes. "
+                                    "Multiview: many views at once, no eye tracking (displays with multiview firmware). "
+                                    "Multiview (picture + depth): from an RGB + Depth source. Shutter, Polarised and AR: "
+                                    "Zondision's glasses, shown when connected.");
+                        if (ImGui::BeginCombo("##zmode", Zondision::ModeName((ZM)s_zMode), ImGuiComboFlags_HeightLargest))
+                        {
+                            for (int k = 0; k < (int)ZM::Count; ++k)
+                                if ((s_zModes & (1u << k)) || k == s_zMode)
+                                    if (ImGui::Selectable(Zondision::ModeName((ZM)k), k == s_zMode)) { s_zMode = k; Settings::WriteZondisionMode(k); }
+                            ImGui::EndCombo();
+                        }
+                        const bool multiview = s_zMode == (int)ZM::MultiviewTB || s_zMode == (int)ZM::MultiviewDepth;
+                        if (multiview)
+                        {
+                            row("3D Strength", "How deep the multiview 3D is (Zondision's 0 to 62; 16 is their default).");
+                            if (ImGui::SliderInt("##zdepth", &s_zDepth, 0, 62)) Settings::WriteZondisionDepth(s_zDepth);
+                        }
+                        if (s_zMode == (int)ZM::MultiviewDepth)
+                        {
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextDisabled("Needs the RGB + Depth input: the picture and its depth map go to the display as they are.");
+                            ImGui::PopTextWrapPos();
+                        }
+                        if (s_zMode == (int)ZM::Shutter)
+                        {
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextDisabled("Experimental: one eye each refresh. Use Swap Eyes if the eyes come out the wrong way round.");
+                            ImGui::PopTextWrapPos();
+                        }
+                        if (s_zMode <= (int)ZM::MultiviewDepth)
+                        {
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextUnformatted("Hide 3D Switch Flicker");
+                            otip("The screen goes black for a moment while the display switches between 2D and 3D, instead of flickering.");
+                            ImGui::SameLine();
+                            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - RowToggleW() - ImGui::GetStyle().WindowPadding.x);
+                            if (ToggleSwitch("##zblack", s_zBlack)) { s_zBlack = !s_zBlack; Settings::WriteZondisionBlackout(s_zBlack); }
+                        }
+                    }
                 }
                 else if (cur == (int)DisplayOutput::SR && !SRWeaver::RuntimePresent())
                     ImGui::TextDisabled("No SR Platform on this PC: Anaglyph (or a Zondision display) is used instead.");
@@ -3542,9 +3613,15 @@ LRESULT Gui::WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 g_gui->m_updateCheck = Gui::UpdateCheck::Available;
                 g_gui->m_updateTag   = info->tag;
                 g_gui->m_updateUrl   = info->url;
-                // Open the release page in the user's default browser too,
-                // since that's the actionable thing they want.
-                ShellExecuteA(nullptr, "open", info->url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                // Hand it to the main window too (the banner's Install Now uses
+                // its exe); it only announces it if it had not seen it.
+                if (g_gui->m_mainHwnd)
+                {
+                    auto* copy = new ReleaseInfo(*info);
+                    copy->forced = false;
+                    if (!PostMessageW(g_gui->m_mainHwnd, WM_APP_UPDATE_RESULT, reinterpret_cast<WPARAM>(copy), 0))
+                        delete copy;
+                }
                 break;
             case ReleaseInfo::UpToDate:
                 g_gui->m_updateCheck = Gui::UpdateCheck::UpToDate;

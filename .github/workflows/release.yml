@@ -8,7 +8,7 @@ name: Release
 # the runner is a personal PC and this repository is public.
 on:
   push:
-    tags: ['v*']
+    tags: ['v*', '!v*-beta*']   # (betas: beta.yml)
   workflow_dispatch:
     inputs:
       tag:
@@ -50,8 +50,8 @@ jobs:
       - name: Check the version matches the tag
         shell: pwsh
         run: |
-          $v = (Select-String -Path src\Common.h -Pattern 'kAppVersion = "([^"]+)"').Matches[0].Groups[1].Value
-          if ("v$v" -ne $env:TAG) { throw "kAppVersion is $v but the tag is $env:TAG" }
+          $v = (Select-String -Path src\version.h -Pattern 'SRLOOM_VERSION_STR\s+"([^"]+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne $env:TAG) { throw "The version (src\version.h) is $v but the tag is $env:TAG" }
 
       - name: Build
         shell: pwsh

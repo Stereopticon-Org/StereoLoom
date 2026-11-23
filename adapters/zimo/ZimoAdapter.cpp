@@ -67,6 +67,8 @@ namespace
     Client_SubscribeStatusChangeFunc   pSubscribeStatus = nullptr;
     Client_UnSubscribeStatusChangeFunc pUnSubscribeStatus = nullptr;
     Get3DDisplayListFunc           pGet3DDisplayList = nullptr;
+    Client_SetK3DepthFunc          pSetK3Depth = nullptr;        // (optional)
+    GetPreferredDisplayIDFunc      pGetPreferredDisplay = nullptr;   // (optional: newer SDKs)
 
     INT_PTR       g_session = 0;
     bool          g_started = false;
@@ -79,7 +81,7 @@ namespace
     bool          g_haveEyes = false;
     std::deque<std::pair<int, int>> g_status;
 
-    void __cdecl OnEyes(EyeParams* p)
+    void __cdecl OnEyes(EyeParams* p, INT_PTR)        // (SDK 5.0.4.5+: the session id too)
     {
         if (!p) return;
         std::lock_guard<std::mutex> lk(g_mutex);
@@ -91,16 +93,18 @@ namespace
         g_haveEyes = true;
     }
 
-    void __cdecl OnStatus(_3DS_STATUS* s)
+    void __cdecl OnStatus(_3DS_STATUS* s, INT_PTR)
     {
         if (!s) return;
         {
             std::lock_guard<std::mutex> lk(g_mutex);
             if (g_status.size() < 64) g_status.emplace_back((int)s->act, s->value);
         }
-        // (The display's chip was reset -- a resolution change: it may have
-        // forgotten the mode, so 3D is asked for again. Zondision's sample.)
-        if (s->act == ACT_ASICRESETTING && g_want3D.load() && pSet3DMode && g_started)
+        // (The display's chip was reset -- a resolution change -- or the monitor
+        // was plugged back in: it may have forgotten the mode, so 3D is asked for
+        // again. Zondision's sample.)
+        const bool back = s->act == ACT_ASICRESETTING || (s->act == ACT_MONITORSTATUS && s->value == 1);
+        if (back && g_want3D.load() && pSet3DMode && g_started)
             pSet3DMode(_3D, g_session);
     }
 
@@ -146,6 +150,11 @@ __declspec(dllexport) int __cdecl Zimo_Load(void)
                  && Find(pSubscribeEyeData, "Client_SubscribeEyeData") && Find(pUnSubscribeEyeData, "Client_UnSubscribeEyeData")
                  && Find(pSubscribeStatus, "Client_SubscribeStatusChange") && Find(pUnSubscribeStatus, "Client_UnSubscribeStatusChange")
                  && Find(pGet3DDisplayList, "Get3DDisplayList");
+    if (ok)
+    {
+        Find(pSetK3Depth, "Client_SetK3Depth");
+        Find(pGetPreferredDisplay, "GetPreferredDisplayID");
+    }
     if (!ok)
     {
         FreeLibrary(g_dll);
@@ -175,6 +184,9 @@ __declspec(dllexport) int __cdecl Zimo_ListDisplays(ZimoDisplay* out, int max)
         d.zondision = list[i].ZLFDRegistered ? 1 : 0;
         d.sr = list[i].SRRegistered ? 1 : 0;
         memcpy(d.serial, list[i].SerialNumber, sizeof(list[i].SerialNumber) < sizeof(d.serial) ? sizeof(list[i].SerialNumber) : sizeof(d.serial) - 1);
+        d.shutter = list[i].ShutterRegistered ? 1 : 0;
+        d.polarized = list[i].PolarizedRegistered ? 1 : 0;
+        d.ar = list[i].ARRegistered ? 1 : 0;
     }
     delete[] list;
     return count;
@@ -196,17 +208,17 @@ __declspec(dllexport) void __cdecl Zimo_Stop(void)
     g_status.clear();
 }
 
-__declspec(dllexport) int __cdecl Zimo_Start(int id, char* sdkVersion, int sdkVersionSize)
+__declspec(dllexport) int __cdecl Zimo_Start(int id, int mode, int* features, char* sdkVersion, int sdkVersionSize)
 {
     if (g_started) Zimo_Stop();
     if (const int r = Zimo_Load()) return r;
     memset(&g_cfg, 0, sizeof(g_cfg));
     g_windowRect = WindowRect{};
     kKey.Into(g_cfg.appKey, sizeof(g_cfg.appKey));
-    g_cfg.clientType      = GamePlayer;
+    g_cfg.clientType      = Game3DTransposer;   // (Stereo Loom turns games and video into 3D for the display)
     g_cfg.cameraBehaviour = CAMERA_FOLLOW_3D;   // (the camera off whenever 3D is)
     g_cfg.windowRectClient = &g_windowRect;
-    g_cfg.weavingMode     = HARDWARE_WEAVING_SBS;   // (the display's own chip weaves side by side)
+    g_cfg.weavingMode     = mode >= HARDWARE_WEAVING_SBS && mode <= SHUTTER ? (WeavingMode)mode : HARDWARE_WEAVING_SBS;
     g_cfg.ipcType         = Socket;
     if (id > 0)
     {
@@ -227,6 +239,7 @@ __declspec(dllexport) int __cdecl Zimo_Start(int id, char* sdkVersion, int sdkVe
     }
     g_started = true;
     if (sdkVersion && sdkVersionSize > 0) strncpy_s(sdkVersion, sdkVersionSize, g_cfg.SDKVersion, _TRUNCATE);
+    if (features) *features = (int)g_cfg.platformFeatures;
     // (Never 2D on its own when nobody is seen: Stereo Loom keeps the 3D on.)
     pSetAuto2D(Off, g_session);
     pSubscribeStatus(OnStatus, g_session);
@@ -255,6 +268,31 @@ __declspec(dllexport) int __cdecl Zimo_Set3D(int on)
         }
     }
     return (int)r;
+}
+
+// (The SDK keeps the session's config and reads the mode from it when 3D is set:
+// Zondision's sample changes modes this way, without a new session.)
+__declspec(dllexport) int __cdecl Zimo_SetMode(int mode)
+{
+    if (!g_started) return (int)SESSION_NOT_FOUND;
+    if (mode < HARDWARE_WEAVING_SBS || mode > SHUTTER) return (int)INVALID_PARAM;
+    if (g_cfg.weavingMode == (WeavingMode)mode) return 0;
+    g_cfg.weavingMode = (WeavingMode)mode;
+    return g_want3D.load() ? (int)pSet3DMode(_3D, g_session) : 0;
+}
+
+__declspec(dllexport) int __cdecl Zimo_SetDepth(int depth)
+{
+    if (!g_started) return (int)SESSION_NOT_FOUND;
+    if (!pSetK3Depth) return (int)FEATURENOTSUPPORTED;
+    return (int)pSetK3Depth((UINT)(depth < 0 ? 0 : depth > 62 ? 62 : depth), g_session);
+}
+
+__declspec(dllexport) int __cdecl Zimo_PreferredDisplay(void)
+{
+    if (Zimo_Load() != 0 || !pGetPreferredDisplay) return 0;
+    int id = 0;
+    return pGetPreferredDisplay(&id) == SUCCESS && id > 0 ? id : 0;
 }
 
 __declspec(dllexport) int __cdecl Zimo_GetEyes(ZimoEyes* out)

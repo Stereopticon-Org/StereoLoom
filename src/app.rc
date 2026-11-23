@@ -1,4 +1,36 @@
 #include "resource.h"
+#include "version.h"
+#include <winver.h>
+
+// The version stamped on the exe (Explorer's Details tab; and read by a newer copy,
+// which takes over from an older one already running -- main.cpp).
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    SRLOOM_VERSION_MAJOR, SRLOOM_VERSION_MINOR, SRLOOM_VERSION_PATCH, SRLOOM_VERSION_BUILD
+ PRODUCTVERSION SRLOOM_VERSION_MAJOR, SRLOOM_VERSION_MINOR, SRLOOM_VERSION_PATCH, SRLOOM_VERSION_BUILD
+ FILEFLAGSMASK  0x3fL
+ FILEFLAGS      0x0L
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080904b0"
+        BEGIN
+            VALUE "CompanyName",      "Stereopticon"
+            VALUE "FileDescription",  "Stereo Loom"
+            VALUE "FileVersion",      SRLOOM_VERSION_STR
+            VALUE "InternalName",     "StereoLoom"
+            VALUE "OriginalFilename", "StereoLoom.exe"
+            VALUE "ProductName",      "Stereo Loom"
+            VALUE "ProductVersion",   SRLOOM_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x809, 1200
+    END
+END
 
 // Application icon: Stereo Loom's logo (the Stereopticon logo set), the dark tile.
 IDI_TRAY            ICON "../assets/stereo_loom.ico"

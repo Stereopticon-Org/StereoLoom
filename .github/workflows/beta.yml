@@ -1,0 +1,119 @@
+name: Beta
+
+# Each push to main: a beta of the next version, built on the self-hosted runner
+# (the build PC) and published as a pre-release, v<version>-beta.<run number>.
+# Copies of Stereo Loom with Get Betas on are offered it.
+#
+# Skipped while src/version.h still names a version already released: bump it to
+# the next version after each release. The newest three betas are kept.
+#
+# Never runs on pull requests, since the runner is a personal PC and this
+# repository is public.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: beta
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: [self-hosted, Windows, X64, stereoloom]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path src\version.h -Pattern 'SRLOOM_VERSION_STR\s+"([^"]+)"').Matches[0].Groups[1].Value
+          git ls-remote --exit-code --tags origin "refs/tags/v$v" | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "v$v is already released: bump src\version.h to the next version for its betas"
+            "skip=1" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $n = "${{ github.run_number }}"
+          "skip=0" >> $env:GITHUB_OUTPUT
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "number=$n" >> $env:GITHUB_OUTPUT
+          "tag=v$v-beta.$n" >> $env:GITHUB_OUTPUT
+
+      # The runner's .env file sets STEREOLOOM_LIB (the SDK folder) and, if there
+      # is one, STEREOLOOM_ZIMO_KEY (the path of Zondision's private key header).
+      - name: Check the build PC's setup
+        if: steps.ver.outputs.skip == '0'
+        shell: pwsh
+        run: |
+          if (-not $env:STEREOLOOM_LIB -or -not (Test-Path "$env:STEREOLOOM_LIB\Simulated Reality")) {
+            throw "STEREOLOOM_LIB is not set to the SDK folder in the runner's .env file"
+          }
+          if ($env:STEREOLOOM_ZIMO_KEY -and (Test-Path $env:STEREOLOOM_ZIMO_KEY)) {
+            Copy-Item $env:STEREOLOOM_ZIMO_KEY adapters\zimo\ZimoKey.private.h -Force
+            Write-Host "Zondision: Stereo Loom's own key"
+          } else {
+            Write-Host "Zondision: the evaluation key"
+          }
+
+      - name: Build
+        if: steps.ver.outputs.skip == '0'
+        shell: pwsh
+        run: |
+          cmake -S . -B build\beta -A x64 "-DSRLOOM_LIB_DIR=$env:STEREOLOOM_LIB" "-DSRLOOM_BETA=${{ steps.ver.outputs.number }}"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build\beta --config Release --target StereoLoom zimotest -- /m /nologo /verbosity:minimal
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Check the carried Zondision DLLs load
+        if: steps.ver.outputs.skip == '0'
+        shell: pwsh
+        run: |
+          if (Test-Path build\beta\Release\zimotest.exe) { & build\beta\Release\zimotest.exe; if ($LASTEXITCODE) { exit $LASTEXITCODE } }
+
+      - name: Publish the beta
+        if: steps.ver.outputs.skip == '0'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          NUMBER: ${{ steps.ver.outputs.number }}
+        run: |
+          # What changed since the last beta (or the last release).
+          $prev = gh release list --limit 30 --json tagName,isDraft --jq '.[] | select(.isDraft | not) | .tagName' | Select-Object -First 1
+          $range = if ($prev) { "$prev..HEAD" } else { "HEAD~10..HEAD" }
+          $changes = git log --no-merges --format="%s" $range | ForEach-Object {
+            if ($_.Length -gt 240) { "- " + $_.Substring(0, 240) + "..." } else { "- $_" }
+          }
+          $notes = @(
+            "A beta of Stereo Loom $VERSION, built from $($env:GITHUB_SHA.Substring(0, 7)): a test build, not a release.",
+            "",
+            "Changes since $(if ($prev) { $prev } else { 'the last few' }):",
+            ""
+          ) + $changes
+          $notes | Set-Content -Encoding utf8 beta-notes.md
+          gh release create $env:TAG build\beta\Release\StereoLoom.exe --prerelease --target $env:GITHUB_SHA `
+            --title "Stereo Loom $VERSION beta $NUMBER" --notes-file beta-notes.md
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+          # Keep the newest three betas.
+          $betas = gh release list --limit 100 --json tagName,isPrerelease,createdAt | ConvertFrom-Json |
+            Where-Object { $_.isPrerelease -and $_.tagName -like 'v*-beta.*' } |
+            Sort-Object createdAt -Descending
+          $betas | Select-Object -Skip 3 | ForEach-Object {
+            Write-Host "Removing the old beta $($_.tagName)"
+            gh release delete $_.tagName --yes --cleanup-tag
+          }
+
+      # (the key never stays in the workspace)
+      - name: Clean up
+        if: always()
+        shell: pwsh
+        run: Remove-Item adapters\zimo\ZimoKey.private.h, beta-notes.md -ErrorAction SilentlyContinue

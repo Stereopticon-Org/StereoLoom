@@ -1028,7 +1028,8 @@ namespace
         // chosen, this output is used instead -- a Zondision display's where there
         // is one, else anaglyph (WinMain). SR: none needed.
         DisplayOutput srStandIn = DisplayOutput::SR;
-        ULONGLONG  displayChangedAtMs = 0;  // (WM_DISPLAYCHANGE: when; HandleDisplayChange once it settles)
+        ULONGLONG  displayChangedAtMs = 0;
+        ULONGLONG  srReconnectAtMs = 0;     // (the last session restart for the SR display coming back)  // (WM_DISPLAYCHANGE: when; HandleDisplayChange once it settles)
         double     paceHz = 0.0;            // (the refresh rate the renderer paces for: the SR display's current one)
         RECT       srDisplayRect  = { 0, 0, 1920, 1080 };  // filled from SR SDK
         HMONITOR   sourceMonitor  = nullptr; // monitor being captured (passthrough / display picker)
@@ -1047,6 +1048,9 @@ namespace
         // release page when the user clicks the toast balloon.
         std::string pendingUpdateUrl;
         std::string pendingUpdateTag;
+        ReleaseInfo pendingRelease;           // (its exe: what Install Update downloads)
+        bool        updateFailed = false;     // the last Install Update did not work (the release page was opened)
+        int         oldExeCleanupTries = 0;   // StereoLoom.exe.old left by an update, still to remove
     };
 
     AppState* g_app = nullptr;
@@ -3892,6 +3896,15 @@ namespace
 
     // The Display Output to use (Settings DisplayOutput), with Leia SR's stand-in
     // where there is no SR Platform.
+    // Zondision's settings: the mode (the next session's), the multiview strength and the
+    // black frames (live), and where an RGB + Depth source's depth map is.
+    void ApplyZondisionOptions(AppState& app)
+    {
+        Zondision::SetMode((Zondision::Mode)Settings::ReadZondisionMode());
+        Zondision::SetDepth(Settings::ReadZondisionDepth());
+        Zondision::SetBlackoutEnabled(Settings::ReadZondisionBlackout());
+        app.weaver.SetDepthLayout((app.rgbdFlags & 1) != 0, (app.rgbdFlags & 2) != 0);
+    }
     DisplayOutput WantedOutput(AppState& app)
     {
         DisplayOutput o = (DisplayOutput)Settings::ReadDisplayOutput();
@@ -3905,6 +3918,7 @@ namespace
         app.weaver.SetOutput(o, o == DisplayOutput::SR ? std::wstring() : Settings::ReadOutputDisplay());
         app.weaver.SetOutputOptions(Settings::ReadOutputAnaColours(), Settings::ReadOutputAnaStyle(), Settings::ReadOutputSwapEyes());
         app.weaver.SetFramePacking(Settings::ReadOutputFramePacking());
+        ApplyZondisionOptions(app);
     }
 
     bool StartSRSession(AppState& app)
@@ -7592,8 +7606,25 @@ namespace
         // values where it used to mix light: to be judged by eye.)
         const bool rawSBS = app.weaveRaw && srcEncoded && !app.weaver.IsDX12() && !app.renderer.IsDX12() && app.renderer.IsDComp();
         // (Not in HDR: the conversion is where the picture is brought into the weave's range.)
-        const bool identitySBS = liveSource && (halfSbsFmt || katangaFmt) && !swapNow && noConv && (!srcEncoded || rawSBS) && !app.hdrActive &&
-                                 !app.lookOn;   // (look-around works on the converter's picture)
+        // Zondision: a Half Top-and-Bottom source goes to the display as it is where its
+        // chip takes top and bottom (multiview firmware: eye tracked, or multiview); an
+        // RGB + Depth source as it is in the picture + depth mode. No conversion pass.
+        const bool zondisionUp = app.weaver.IsPlainUp() && app.weaver.Output() == DisplayOutput::Zondision;
+        const Zondision::Mode zMode = Zondision::GetMode();
+        const bool passable = liveSource && noConv && (!srcEncoded || rawSBS) && !app.hdrActive && !app.lookOn;
+        bool zTab = false, zDepth = false;
+        if (zondisionUp)
+        {
+            const bool tabNow = passable && !swapNow && app.format == StereoFormat::HalfTAB;
+            if (zMode == Zondision::Mode::EyeTracked) zTab = Zondision::SetTopBottom(tabNow) && tabNow;
+            else if (zMode == Zondision::Mode::MultiviewTB) zTab = tabNow;
+            zDepth = zMode == Zondision::Mode::MultiviewDepth && passable && app.format == StereoFormat::RGBD;
+        }
+        const bool identitySBS = (liveSource && (halfSbsFmt || katangaFmt) && !swapNow && noConv && (!srcEncoded || rawSBS) && !app.hdrActive &&
+                                  !app.lookOn) ||   // (look-around works on the converter's picture)
+                                 zTab || zDepth;
+        static bool s_zTabWas = false;
+        if (zTab != s_zTabWas) { s_zTabWas = zTab; app.captureRebind = true; }   // (the input's shape changed: named again)
         app.renderer.SetRawWeave(identitySBS && srcEncoded);
 
         if (identitySBS)
@@ -7606,7 +7637,8 @@ namespace
                 else if (app.dxgiActive) srvFmt = app.captureDxgi.SRVFormat();
                 else                     srvFmt = app.capture.SRVFormat();
                 if (srcEncoded) { D3D11_SHADER_RESOURCE_VIEW_DESC vd{}; srcSRV->GetDesc(&vd); srvFmt = vd.Format; }   // (as it is viewed: undecoded)
-                app.weaver.SetInputView(srcSRV, srcW / 2, srcH, srvFmt);
+                if (zTab) app.weaver.SetInputView(srcSRV, srcW, srcH / 2, srvFmt, true);
+                else      app.weaver.SetInputView(srcSRV, srcW / 2, srcH, srvFmt);
                 app.captureRebind = false;
             }
         }
@@ -8745,7 +8777,7 @@ namespace
                               {} };
                 ms.profileNames.reserve(app->profiles.size());
                 for (const auto& p : app->profiles) ms.profileNames.push_back(p.name);
-                if (!app->pendingUpdateUrl.empty()) ms.updateTag = app->pendingUpdateTag;
+                if (!app->pendingUpdateUrl.empty()) ms.updateTag = UpdateChecker::DisplayVersion(app->pendingUpdateTag);
                 ms.autoInput = app->autoInput;
                 // The menu on its own thread: its message loop ran on this one
                 // -- the render thread -- and the weave froze for as long as the
@@ -8798,10 +8830,12 @@ namespace
                 case ReleaseInfo::Available:
                     app->pendingUpdateUrl = info->url;
                     app->pendingUpdateTag = info->tag;
+                    app->pendingRelease   = *info;
+                    app->updateFailed     = false;
                     _snprintf_s(title, _TRUNCATE, "Stereo Loom update available");
                     _snprintf_s(body, _TRUNCATE,
-                                "Version %s is out (you have %s). Click to open the release page.",
-                                info->tag.c_str(), kAppVersion);
+                                "Version %s is out (you have %s). Install it from the panel or the tray menu; click here for what's new.",
+                                UpdateChecker::DisplayVersion(info->tag).c_str(), kAppVersionDisplay);
                     Log("UpdateChecker: notified -- latest %s, current %s",
                         info->tag.c_str(), kAppVersion);
                     break;
@@ -8810,7 +8844,7 @@ namespace
                     app->pendingUpdateTag.clear();
                     _snprintf_s(title, _TRUNCATE, "Stereo Loom is up to date");
                     _snprintf_s(body, _TRUNCATE,
-                                "You're on the latest release (%s).", kAppVersion);
+                                "You're on the latest release (%s).", kAppVersionDisplay);
                     Log("UpdateChecker: user-checked, already up to date");
                     break;
                 case ReleaseInfo::Failed:
@@ -8836,6 +8870,27 @@ namespace
                     Shell_NotifyIconA(NIM_MODIFY, &nid);
                 }
                 delete info;
+            }
+            return 0;
+
+        case WM_APP_UPDATE_DOWNLOADED:
+            // Install Update's download: ready -> swap it in, start it, and close
+            // this copy; failed -> the release page, to download it by hand.
+            if (app)
+            {
+                if (wParam && UpdateChecker::InstallAndRestart())
+                {
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                app->updateFailed = true;
+                if (!app->pendingUpdateUrl.empty())
+                    ShellExecuteA(nullptr, "open", app->pendingUpdateUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                NOTIFYICONDATAA nid{ sizeof(nid) };
+                nid.hWnd = hwnd; nid.uID = 1; nid.uFlags = NIF_INFO; nid.dwInfoFlags = NIIF_WARNING;
+                _snprintf_s(nid.szInfoTitle, _TRUNCATE, "The update could not be installed");
+                _snprintf_s(nid.szInfo, _TRUNCATE, "The release page is open to download it by hand.");
+                Shell_NotifyIconA(NIM_MODIFY, &nid);
             }
             return 0;
 
@@ -9164,6 +9219,24 @@ namespace
 
             switch (cmd)
             {
+            case ID_TRAY_INSTALL_UPDATE:
+                // Banner / tray "Install update": the release's exe, if it has one;
+                // otherwise (or if this copy cannot replace itself) its page.
+                if (!app->pendingRelease.assetUrl.empty() && !app->updateFailed)
+                    UpdateChecker::DownloadAsync(hwnd, WM_APP_UPDATE_DOWNLOADED, app->pendingRelease);
+                else if (!app->pendingUpdateUrl.empty())
+                    ShellExecuteA(nullptr, "open", app->pendingUpdateUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                return 0;
+            case ID_TRAY_GET_BETAS:
+                // Betas on / off: forget what was found, and look again.
+                Settings::WriteGetBetas(!Settings::ReadGetBetas());
+                UpdateChecker::ResetCache();
+                app->pendingRelease = ReleaseInfo{};
+                app->pendingUpdateTag.clear();
+                app->pendingUpdateUrl.clear();
+                app->updateFailed = false;
+                UpdateChecker::StartAsync(hwnd, WM_APP_UPDATE_RESULT, false);
+                return 0;
             case ID_TRAY_OPEN_UPDATE:
                 // Tray "Update available" item / GUI update banner.
                 if (!app->pendingUpdateUrl.empty())
@@ -9665,7 +9738,10 @@ static void LoopBody(AppState& app, bool frame, bool panel)
         if (app.gui.IsVisible())
         {
             GuiState gs;
-            if (!app.pendingUpdateUrl.empty()) gs.updateTag = app.pendingUpdateTag;
+            if (!app.pendingUpdateUrl.empty()) gs.updateTag = UpdateChecker::DisplayVersion(app.pendingUpdateTag);
+            gs.updateProgress = UpdateChecker::DownloadProgress();
+            gs.updateCanInstall = !app.pendingRelease.assetUrl.empty() && !app.updateFailed;
+            gs.getBetas = Settings::ReadGetBetas();
             gs.weaving       = app.weavingEnabled;
             gs.mode          = app.mode;
             gs.source        = app.source;
@@ -10077,6 +10153,16 @@ static void LoopBody(AppState& app, bool frame, bool panel)
         // that case.
         PollProfileFullscreenState(app);
         PollKatangaAutoReceive(app);   // throttled to 500ms internally
+        if (app.oldExeCleanupTries > 0)
+        {
+            static DWORD s_lastCleanupMs = 0;
+            const DWORD nowMs = GetTickCount();
+            if (nowMs - s_lastCleanupMs >= 500)
+            {
+                s_lastCleanupMs = nowMs;
+                app.oldExeCleanupTries = UpdateChecker::CleanUpOld() ? 0 : app.oldExeCleanupTries - 1;
+            }
+        }
         // Late Latching switch (panel): apply to the running weaver.
         {
             static DWORD s_last = 0;
@@ -10136,8 +10222,34 @@ static void LoopBody(AppState& app, bool frame, bool panel)
                 const int wantWeaver = Settings::ReadWeaverChoice();
                 // ... and so does another Display Output, or its display.
                 // (Frame packing's size in the next byte up: another size, another session.)
+                // (Zondision's mode there too: another mode, another session.)
                 const int wantOutput = (int)WantedOutput(app) |
-                    (WantedOutput(app) == DisplayOutput::FramePacking ? Settings::ReadOutputFramePacking() << 8 : 0);
+                    (WantedOutput(app) == DisplayOutput::FramePacking ? Settings::ReadOutputFramePacking() << 8 : 0) |
+                    (WantedOutput(app) == DisplayOutput::Zondision ? Settings::ReadZondisionMode() << 8 : 0);
+                // (The multiview strength, black frames: as they are, no restart. The mode
+                // waits for the session below.)
+                Zondision::SetDepth(Settings::ReadZondisionDepth());
+                Zondision::SetBlackoutEnabled(Settings::ReadZondisionBlackout());
+                app.weaver.SetDepthLayout((app.rgbdFlags & 1) != 0, (app.rgbdFlags & 2) != 0);
+                // The SR display plugged back in, or its runtime asking to be started
+                // again: a new session, at most every 3 s.
+                if (app.weaver.TakeReconnect() && app.weaver.HasWeaver() && !app.weaver.IsPlainUp() &&
+                    GetTickCount64() - app.srReconnectAtMs > 3000)
+                {
+                    app.srReconnectAtMs = GetTickCount64();
+                    Log("SR: the display came back -- restarting the session");
+                    app.weaver.StopSR();
+                    app.srStopAtMs = 0;
+                    if (app.weavingEnabled)
+                    {
+                        StartSRSession(app);
+                        const bool katangaArmed = (app.format == StereoFormat::Katanga && !app.katanga.IsReceiving());
+                        if (katangaArmed) app.weaver.LensDisable(); else app.weaver.LensEnable();
+                        app.lateLatchingApplied = -1;
+                        app.captureRebind = true;
+                    }
+                    HandleDisplayChange(app);
+                }
                 const std::wstring wantDevice = wantOutput == (int)DisplayOutput::SR ? std::wstring() : Settings::ReadOutputDisplay();
                 // (Anaglyph colours, the eyes swapped: as they are, no restart.)
                 app.weaver.SetOutputOptions(Settings::ReadOutputAnaColours(), Settings::ReadOutputAnaStyle(), Settings::ReadOutputSwapEyes());
@@ -10292,8 +10404,31 @@ static LONG WINAPI SrLoomCrashHandler(EXCEPTION_POINTERS* ep)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Windows' own graphics and media DLLs, loaded from System32 before anything uses them
+// (they are delay-loaded, see CMakeLists): a DLL of the same name beside the exe -- a
+// d3d11.dll / dxgi.dll left by geo-11, 3DMigoto or ReShade in a Downloads folder --
+// would otherwise be loaded in their place. Once Windows' copy is in, every later
+// load of that name (ours, and the system DLLs' own imports) gets it.
+static void LoadSystemGraphicsDlls()
+{
+    static const wchar_t* kDlls[] = { L"dxgi.dll", L"d3d11.dll", L"d3d12.dll", L"d3d9.dll",
+                                      L"D3DCOMPILER_47.dll", L"dcomp.dll", L"mfplat.dll", L"MFReadWrite.dll" };
+    for (const wchar_t* name : kDlls)
+        LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+}
+
+// A same-named DLL beside the exe that Windows' copy has been chosen over: said in the log.
+static void LogShadowedDlls()
+{
+    static const char* kDlls[] = { "dxgi.dll", "d3d11.dll", "d3d12.dll", "d3d9.dll", "D3DCOMPILER_47.dll", "dcomp.dll" };
+    for (const char* name : kDlls)
+        if (GetFileAttributesA(ExePath(name).c_str()) != INVALID_FILE_ATTRIBUTES)
+            Log("WinMain: a %s beside StereoLoom.exe (another program's) is not used; Windows' own is", name);
+}
+
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
 {
+    LoadSystemGraphicsDlls();
     // Install the crash handler first so any later init failure that
     // segfaults / access-violates leaves a useful trail in srweaver.log.
     SetUnhandledExceptionFilter(SrLoomCrashHandler);
@@ -10304,7 +10439,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // stalls in games. (Must come before any window is created.)
     ImmDisableIME((DWORD)-1);
     TscPerMs();   // (starts the CPU-time calibration for the hitch log)
-    Log("WinMain: Stereo Loom v%s starting (pid %lu)", kAppVersion, GetCurrentProcessId());
+    Log("WinMain: Stereo Loom v%s starting (pid %lu)", kAppVersionDisplay, GetCurrentProcessId());
+    // Restarted by an update: the previous copy closes first.
+    UpdateChecker::WaitForUpdatedFrom(lpCmdLine);
+    LogShadowedDlls();
 
     // Single instance. Two Stereo Loom processes fight over the SR display /
     // weaver / hotkeys / tray. A second launch just opens the running
@@ -10313,10 +10451,38 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     const DWORD instanceGle = GetLastError();
     if (s_instanceMutex && instanceGle == ERROR_ALREADY_EXISTS)
     {
-        Log("WinMain: another Stereo Loom is already running -- opening its panel and exiting");
-        if (HWND other = FindWindowA(kWindowClass, nullptr))
-            PostMessageA(other, WM_COMMAND, MAKEWPARAM(ID_TRAY_OPEN_PANEL, 0), 0);
-        return 0;
+        // A newer version than the one running (another exe: a new download) takes
+        // over -- the old one is asked to quit, and this one carries on. Otherwise the
+        // running one's panel is opened and this one ends.
+        HWND other = FindWindowA(kWindowClass, nullptr);
+        bool takeOver = false;
+        if (other)
+        {
+            DWORD pid = 0;
+            GetWindowThreadProcessId(other, &pid);
+            HANDLE proc = pid ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid) : nullptr;
+            wchar_t otherPath[MAX_PATH] = {}, selfPath[MAX_PATH] = {};
+            DWORD n = MAX_PATH;
+            GetModuleFileNameW(nullptr, selfPath, MAX_PATH);
+            if (proc && QueryFullProcessImageNameW(proc, 0, otherPath, &n) && _wcsicmp(otherPath, selfPath) != 0)
+            {
+                const unsigned long long mine = Settings::ExeVersion({}), theirs = Settings::ExeVersion(otherPath);
+                if (mine > theirs)
+                {
+                    Log("WinMain: an older Stereo Loom is running (%ls) -- closing it and taking over", otherPath);
+                    PostMessageA(other, WM_COMMAND, MAKEWPARAM(ID_TRAY_EXIT, 0), 0);
+                    takeOver = WaitForSingleObject(proc, 15000) == WAIT_OBJECT_0;
+                    if (!takeOver) Log("WinMain: it did not close -- leaving it running");
+                }
+            }
+            if (proc) CloseHandle(proc);
+        }
+        if (!takeOver)
+        {
+            Log("WinMain: another Stereo Loom is already running -- opening its panel and exiting");
+            if (other) PostMessageA(other, WM_COMMAND, MAKEWPARAM(ID_TRAY_OPEN_PANEL, 0), 0);
+            return 0;
+        }
     }
     {
         const char* sr = SRWeaver::GetSRPlatformVersion();
@@ -10332,12 +10498,16 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // Media Foundation: needed to decode quilt video files (mp4/mov/etc.).
     VideoSource::Startup();
 
-    Settings::RepairRunAtStartup();   // (SR Loom's SRLoom.exe is now StereoLoom.exe)
+    Settings::RepairRunAtStartup();   // (SR Loom's SRLoom.exe is now StereoLoom.exe; or an older copy's)
+    // The old exe an update left behind (retried from the main loop while its
+    // process is still closing).
+    const bool oldExeGone = UpdateChecker::CleanUpOld();
 
     // Testing aid: "-noexclude" leaves the window visible to screen capture.
     const bool excludeFromCapture = !(lpCmdLine && strstr(lpCmdLine, "-noexclude"));
 
     AppState app;
+    app.oldExeCleanupTries = oldExeGone ? 0 : 60;   // (every 500 ms: up to 30 s)
     g_app = &app;
 
     // Connect to the SR service to ask where the SR display is -- with the
@@ -10880,8 +11050,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // (throttled to once an hour; also re-run whenever the panel is opened).
     // A newer tag posts WM_APP_UPDATE_RESULT; auto-checks are silent on
     // up-to-date / failure -- only the About popup's forced check reports those.
-    if (UpdateChecker::CachedUpdate(app.pendingUpdateTag, app.pendingUpdateUrl))
+    if (UpdateChecker::CachedUpdate(app.pendingRelease))
+    {
+        app.pendingUpdateTag = app.pendingRelease.tag;
+        app.pendingUpdateUrl = app.pendingRelease.url;
         Log("UpdateChecker: cached update available -- %s", app.pendingUpdateTag.c_str());
+    }
     UpdateChecker::StartAsync(app.hwnd, WM_APP_UPDATE_RESULT, false);
     // RegisterHotKey(app.hwnd, kHotkeyDetect,  MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'D'); // auto-detect disabled
 
