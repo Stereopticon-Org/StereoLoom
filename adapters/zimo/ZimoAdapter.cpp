@@ -79,7 +79,7 @@ namespace
     bool          g_haveEyes = false;
     std::deque<std::pair<int, int>> g_status;
 
-    void __cdecl OnEyes(EyeParams* p)
+    void __cdecl OnEyes(EyeParams* p, INT_PTR)        // (SDK 5.0.4.5+: the session id too)
     {
         if (!p) return;
         std::lock_guard<std::mutex> lk(g_mutex);
@@ -91,7 +91,7 @@ namespace
         g_haveEyes = true;
     }
 
-    void __cdecl OnStatus(_3DS_STATUS* s)
+    void __cdecl OnStatus(_3DS_STATUS* s, INT_PTR)
     {
         if (!s) return;
         {

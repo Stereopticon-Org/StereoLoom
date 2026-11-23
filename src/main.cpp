@@ -10292,8 +10292,31 @@ static LONG WINAPI SrLoomCrashHandler(EXCEPTION_POINTERS* ep)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Windows' own graphics and media DLLs, loaded from System32 before anything uses them
+// (they are delay-loaded, see CMakeLists): a DLL of the same name beside the exe -- a
+// d3d11.dll / dxgi.dll left by geo-11, 3DMigoto or ReShade in a Downloads folder --
+// would otherwise be loaded in their place. Once Windows' copy is in, every later
+// load of that name (ours, and the system DLLs' own imports) gets it.
+static void LoadSystemGraphicsDlls()
+{
+    static const wchar_t* kDlls[] = { L"dxgi.dll", L"d3d11.dll", L"d3d12.dll", L"d3d9.dll",
+                                      L"D3DCOMPILER_47.dll", L"dcomp.dll", L"mfplat.dll", L"MFReadWrite.dll" };
+    for (const wchar_t* name : kDlls)
+        LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+}
+
+// A same-named DLL beside the exe that Windows' copy has been chosen over: said in the log.
+static void LogShadowedDlls()
+{
+    static const char* kDlls[] = { "dxgi.dll", "d3d11.dll", "d3d12.dll", "d3d9.dll", "D3DCOMPILER_47.dll", "dcomp.dll" };
+    for (const char* name : kDlls)
+        if (GetFileAttributesA(ExePath(name).c_str()) != INVALID_FILE_ATTRIBUTES)
+            Log("WinMain: a %s beside StereoLoom.exe (another program's) is not used; Windows' own is", name);
+}
+
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
 {
+    LoadSystemGraphicsDlls();
     // Install the crash handler first so any later init failure that
     // segfaults / access-violates leaves a useful trail in srweaver.log.
     SetUnhandledExceptionFilter(SrLoomCrashHandler);
@@ -10305,6 +10328,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     ImmDisableIME((DWORD)-1);
     TscPerMs();   // (starts the CPU-time calibration for the hitch log)
     Log("WinMain: Stereo Loom v%s starting (pid %lu)", kAppVersion, GetCurrentProcessId());
+    LogShadowedDlls();
 
     // Single instance. Two Stereo Loom processes fight over the SR display /
     // weaver / hotkeys / tray. A second launch just opens the running

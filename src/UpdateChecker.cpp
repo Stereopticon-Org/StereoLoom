@@ -136,9 +136,13 @@ namespace
             while (ia < a.size() && a[ia] >= '0' && a[ia] <= '9') va = va * 10 + (a[ia++] - '0');
             while (ib < b.size() && b[ib] >= '0' && b[ib] <= '9') vb = vb * 10 + (b[ib++] - '0');
             if (va != vb) return va - vb;
-            // Skip a single dot (or whatever non-digit separator) between components.
-            if (ia < a.size() && a[ia] == '.') ++ia; else break;
-            if (ib < b.size() && b[ib] == '.') ++ib; else break;
+            // Past a dot to the next component; a version that has run out of
+            // components counts its missing ones as 0 ("4.0.1" is newer than "4.0").
+            const bool moreA = ia < a.size() && a[ia] == '.';
+            const bool moreB = ib < b.size() && b[ib] == '.';
+            if (!moreA && !moreB) break;
+            if (moreA) ++ia; else ia = a.size();
+            if (moreB) ++ib; else ib = b.size();
         }
         return 0;
     }

@@ -308,6 +308,14 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     foreach(SRDLL SimulatedRealityCore SimulatedRealityDirectX SimulatedRealityDisplays SimulatedRealityFaceTrackers simulatedreality DimencoWeaving)
         target_link_options(StereoLoom PRIVATE /DELAYLOAD:${SRDLL}.dll)
     endforeach()
+    # Windows' graphics and media DLLs delay-loaded too, so WinMain can load Windows'
+    # own copies (System32) before anything else asks for them: a d3d11.dll / dxgi.dll
+    # of another program's lying beside the exe (geo-11, 3DMigoto, ReShade ... in a
+    # Downloads folder) would otherwise be taken in their place, and stop the exe
+    # starting ("CreateDirect3D11DeviceFromDXGIDevice not found") or hook its own device.
+    foreach(SYSDLL dxgi d3d11 d3d12 d3d9 D3DCOMPILER_47 dcomp mfplat MFReadWrite)
+        target_link_options(StereoLoom PRIVATE /DELAYLOAD:${SYSDLL}.dll)
+    endforeach()
 endif()
 
 # The 3D Vision output (src/Vision3D): NV3D-Lib (github.com/oneup03/NV3D-Lib,
