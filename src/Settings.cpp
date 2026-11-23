@@ -7,6 +7,8 @@
 
 #include <windows.h>   // WIN32_LEAN_AND_MEAN is set project-wide via CMakeLists.txt
 #include <string>
+#include <vector>
+#pragma comment(lib, "version.lib")   // (GetFileVersionInfo: ExeVersion)
 
 namespace
 {
@@ -71,16 +73,44 @@ namespace srw::Settings
         return s == ERROR_SUCCESS;
     }
 
+    unsigned long long ExeVersion(const std::wstring& pathIn)
+    {
+        std::wstring path = pathIn;
+        if (path.empty())
+        {
+            wchar_t self[MAX_PATH] = {};
+            if (!GetModuleFileNameW(nullptr, self, MAX_PATH)) return 0;
+            path = self;
+        }
+        DWORD dummy = 0;
+        const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &dummy);
+        if (!size) return 0;
+        std::vector<BYTE> buf(size);
+        if (!GetFileVersionInfoW(path.c_str(), 0, size, buf.data())) return 0;
+        VS_FIXEDFILEINFO* fi = nullptr; UINT len = 0;
+        if (!VerQueryValueW(buf.data(), L"\\", reinterpret_cast<void**>(&fi), &len) || !fi || len < sizeof(*fi)) return 0;
+        return (unsigned long long)HIWORD(fi->dwFileVersionMS) << 32 | (unsigned long long)LOWORD(fi->dwFileVersionMS) << 16 | HIWORD(fi->dwFileVersionLS);
+    }
+
+    std::wstring RunAtStartupPath()
+    {
+        std::wstring path = ReadText(kRunKey, kSrLoomValue);
+        if (path.size() > 1 && path[0] == L'"') { const size_t e = path.find(L'"', 1); path = path.substr(1, e == std::wstring::npos ? std::wstring::npos : e - 1); }
+        return path;
+    }
+
     // The auto-run entry pointing at an exe that is not there any more (SR Loom's
-    // SRLoom.exe, replaced by StereoLoom.exe; or the folder moved): pointed at this
-    // one, so starting with Windows carries on.
+    // SRLoom.exe, replaced by StereoLoom.exe; or the folder moved), or at an older
+    // copy than this one (a new version downloaded elsewhere): pointed at this one,
+    // so Windows starts the newest.
     void RepairRunAtStartup()
     {
-        const std::wstring v = ReadText(kRunKey, kSrLoomValue);
-        if (v.empty()) return;
-        std::wstring path = v;
-        if (path.size() > 1 && path[0] == L'"') { const size_t e = path.find(L'"', 1); path = path.substr(1, e == std::wstring::npos ? std::wstring::npos : e - 1); }
-        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return;
+        const std::wstring path = RunAtStartupPath();
+        if (path.empty()) return;
+        wchar_t self[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, self, MAX_PATH);
+        if (_wcsicmp(path.c_str(), self) == 0) return;
+        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES && ExeVersion(path) >= ExeVersion({})) return;
         WriteRunAtStartup(true);
     }
 

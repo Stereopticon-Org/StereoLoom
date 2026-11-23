@@ -1,6 +1,8 @@
 // Common.h — shared types, enums and small helpers for SR Weaver.
 #pragma once
 
+#include "version.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -24,10 +26,9 @@
 
 namespace srw
 {
-    // Current Stereo Loom version. Compared (after stripping any leading 'v') to
-    // the GitHub Releases latest-tag by the update checker. Bump in lockstep
-    // with the git tag for new releases.
-    constexpr const char* kAppVersion = "4.1";
+    // Current Stereo Loom version (version.h). Compared (after stripping any leading
+    // 'v') to the GitHub Releases latest-tag by the update checker.
+    constexpr const char* kAppVersion = SRLOOM_VERSION_STR;
 
     // GitHub repo path for the update checker + "About" links.
     constexpr const char* kRepoSlug = "Stereopticon-Org/StereoLoom";

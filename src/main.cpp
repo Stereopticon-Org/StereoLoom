@@ -10392,10 +10392,38 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     const DWORD instanceGle = GetLastError();
     if (s_instanceMutex && instanceGle == ERROR_ALREADY_EXISTS)
     {
-        Log("WinMain: another Stereo Loom is already running -- opening its panel and exiting");
-        if (HWND other = FindWindowA(kWindowClass, nullptr))
-            PostMessageA(other, WM_COMMAND, MAKEWPARAM(ID_TRAY_OPEN_PANEL, 0), 0);
-        return 0;
+        // A newer version than the one running (another exe: a new download) takes
+        // over -- the old one is asked to quit, and this one carries on. Otherwise the
+        // running one's panel is opened and this one ends.
+        HWND other = FindWindowA(kWindowClass, nullptr);
+        bool takeOver = false;
+        if (other)
+        {
+            DWORD pid = 0;
+            GetWindowThreadProcessId(other, &pid);
+            HANDLE proc = pid ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid) : nullptr;
+            wchar_t otherPath[MAX_PATH] = {}, selfPath[MAX_PATH] = {};
+            DWORD n = MAX_PATH;
+            GetModuleFileNameW(nullptr, selfPath, MAX_PATH);
+            if (proc && QueryFullProcessImageNameW(proc, 0, otherPath, &n) && _wcsicmp(otherPath, selfPath) != 0)
+            {
+                const unsigned long long mine = Settings::ExeVersion({}), theirs = Settings::ExeVersion(otherPath);
+                if (mine > theirs)
+                {
+                    Log("WinMain: an older Stereo Loom is running (%ls) -- closing it and taking over", otherPath);
+                    PostMessageA(other, WM_COMMAND, MAKEWPARAM(ID_TRAY_EXIT, 0), 0);
+                    takeOver = WaitForSingleObject(proc, 15000) == WAIT_OBJECT_0;
+                    if (!takeOver) Log("WinMain: it did not close -- leaving it running");
+                }
+            }
+            if (proc) CloseHandle(proc);
+        }
+        if (!takeOver)
+        {
+            Log("WinMain: another Stereo Loom is already running -- opening its panel and exiting");
+            if (other) PostMessageA(other, WM_COMMAND, MAKEWPARAM(ID_TRAY_OPEN_PANEL, 0), 0);
+            return 0;
+        }
     }
     {
         const char* sr = SRWeaver::GetSRPlatformVersion();
@@ -10411,7 +10439,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int)
     // Media Foundation: needed to decode quilt video files (mp4/mov/etc.).
     VideoSource::Startup();
 
-    Settings::RepairRunAtStartup();   // (SR Loom's SRLoom.exe is now StereoLoom.exe)
+    Settings::RepairRunAtStartup();   // (SR Loom's SRLoom.exe is now StereoLoom.exe; or an older copy's)
 
     // Testing aid: "-noexclude" leaves the window visible to screen capture.
     const bool excludeFromCapture = !(lpCmdLine && strstr(lpCmdLine, "-noexclude"));

@@ -215,7 +215,7 @@ __declspec(dllexport) int __cdecl Zimo_Start(int id, int mode, int* features, ch
     memset(&g_cfg, 0, sizeof(g_cfg));
     g_windowRect = WindowRect{};
     kKey.Into(g_cfg.appKey, sizeof(g_cfg.appKey));
-    g_cfg.clientType      = GamePlayer;
+    g_cfg.clientType      = Game3DTransposer;   // (Stereo Loom turns games and video into 3D for the display)
     g_cfg.cameraBehaviour = CAMERA_FOLLOW_3D;   // (the camera off whenever 3D is)
     g_cfg.windowRectClient = &g_windowRect;
     g_cfg.weavingMode     = mode >= HARDWARE_WEAVING_SBS && mode <= SHUTTER ? (WeavingMode)mode : HARDWARE_WEAVING_SBS;

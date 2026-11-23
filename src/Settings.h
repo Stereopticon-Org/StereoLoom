@@ -11,6 +11,11 @@ namespace srw::Settings
     // Whether Stereo Loom is registered to launch on user login (a value in
     // HKCU\Software\Microsoft\Windows\CurrentVersion\Run named SRLoom).
     bool ReadRunAtStartup();
+    // An exe's version from its version resource (major << 32 | minor << 16 | patch);
+    // 0 when it has none (Stereo Loom before 4.1, SR Loom). This exe's: ExeVersion({}).
+    unsigned long long ExeVersion(const std::wstring& path);
+    // The path the auto-run entry starts ("" when off).
+    std::wstring RunAtStartupPath();
     void WriteRunAtStartup(bool enable);
     void RepairRunAtStartup();   // (the entry's exe gone -- e.g. SRLoom.exe renamed: this exe instead)
 
