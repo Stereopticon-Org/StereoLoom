@@ -48,6 +48,7 @@ namespace
 {
     constexpr char kGuiClass[] = "SRWeaverGuiWindow";
     constexpr char kGithubUrl[] = "https://github.com/Stereopticon-Org/StereoLoom";
+    constexpr char kDonateUrl[] = "https://opencollective.com/stereopticon/donate";
     Gui* g_gui = nullptr;   // single instance, for the static WndProc
 
     // DWMWINDOWATTRIBUTE values (Win11 22000+) — used by number to avoid depending
@@ -288,6 +289,45 @@ namespace
         dl->AddCircle(c, r, col, 28, 2.0f);
         dl->PathArcTo(c, r, kPi * 0.5f, kPi * 1.5f, 16);   // left half
         dl->PathFillConvex(col);
+        return clicked;
+    }
+
+    // The heart: opens Stereo Loom's Open Collective page, to support it. A quiet
+    // outline in the dim colour, filled only when hovered, so it never nags.
+    // Custom-drawn (no icon font needed). Returns clicked.
+    bool DonateButton(const char* id)
+    {
+        const float h = ImGui::GetFrameHeight();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton(id, ImVec2(h, h));
+        const bool clicked = ImGui::IsItemClicked();
+        const bool hov = ImGui::IsItemHovered();
+        if (hov) ImGui::SetTooltip("Support Stereo Loom on Open Collective");
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        // A heart on a 24-unit grid centred on (12,12), scaled to the button.
+        const float k = h * 0.30f / 10.0f;
+        const float cx = p.x + h * 0.5f, cy = p.y + h * 0.5f + h * 0.02f;
+        auto P = [&](float x, float y) { return ImVec2(cx + (x - 12.0f) * k, cy + (y - 12.0f) * k); };
+        auto path = [&]
+        {
+            dl->PathLineTo(P(12, 21));
+            dl->PathBezierCubicCurveTo(P(5.4f, 15.4f), P(2, 12.3f), P(2, 8.5f));
+            dl->PathBezierCubicCurveTo(P(2, 5.4f), P(4.4f, 3), P(7.5f, 3));
+            dl->PathBezierCubicCurveTo(P(9.2f, 3), P(10.9f, 3.8f), P(12, 5.1f));
+            dl->PathBezierCubicCurveTo(P(13.1f, 3.8f), P(14.8f, 3), P(16.5f, 3));
+            dl->PathBezierCubicCurveTo(P(19.6f, 3), P(22, 5.4f), P(22, 8.5f));
+            dl->PathBezierCubicCurveTo(P(22, 12.3f), P(18.6f, 15.4f), P(12, 21));
+        };
+        if (hov)
+        {
+            const ImU32 heart = ImGui::GetColorU32(ImVec4(0.91f, 0.30f, 0.42f, 1.0f));
+            path(); dl->PathFillConcave(heart);
+            path(); dl->PathStroke(heart, ImDrawFlags_Closed, 2.0f);
+        }
+        else
+        {
+            path(); dl->PathStroke(ImGui::GetColorU32(g_dim), ImDrawFlags_Closed, 2.0f);
+        }
         return clicked;
     }
 
@@ -1077,6 +1117,10 @@ bool Gui::Render(GuiState& state)
                         m_updateCheck = UpdateCheck::Idle;
                 }
             }
+            // The heart (support Stereo Loom), beside the "i".
+            ImGui::SetCursorScreenPos(ImVec2(win.x + pad + h, win.y + rowY));
+            if (DonateButton("##donate"))
+                ShellExecuteA(nullptr, "open", kDonateUrl, nullptr, nullptr, SW_SHOWNORMAL);
             ImGui::SetCursorScreenPos(ImVec2(win.x + winW - h - pad, win.y + rowY));
             // The theme button: a menu of Auto (as Windows), Light, Dark; the choice is kept.
             if (IconThemeButton("##theme")) ImGui::OpenPopup("##themeMenu");
@@ -1309,6 +1353,19 @@ bool Gui::Render(GuiState& state)
         dl->AddText(ImVec2(mn.x + fp + s * 2 + gap, cy - ts.y * 0.5f), col, lbl);
 
         if (clicked) m_expanded = !m_expanded;
+
+        // Compact only: the heart, quietly at the left of the Options row (the
+        // expanded panel has it beside the "i" instead).
+        if (!m_expanded)
+        {
+            const ImVec2 after = ImGui::GetCursorScreenPos();
+            const float hh = ImGui::GetFrameHeight();
+            ImGui::SetCursorScreenPos(ImVec2(ImGui::GetWindowPos().x + ImGui::GetStyle().WindowPadding.x,
+                                             (mn.y + mx.y - hh) * 0.5f));
+            if (DonateButton("##donateCompact"))
+                ShellExecuteA(nullptr, "open", kDonateUrl, nullptr, nullptr, SW_SHOWNORMAL);
+            ImGui::SetCursorScreenPos(after);
+        }
     }
 
     if (m_expanded)

@@ -6,7 +6,8 @@
 //   - Stereo Loom's own key lives in ZimoKey.private.h, beside this file, which is
 //     never committed (.gitignore). A release build of this DLL has it compiled in.
 //   - Without that file, the build uses Zondision's evaluation key -- published by
-//     Zondision in its SDK sample, free to release, and limited in time.
+//     Zondision in its SDK sample, free to release, and limited in time. It is kept
+//     here already scrambled , so it is not readable in the source either.
 // Either way the key is stored XOR-scrambled (worked out at compile time), so it is
 // not lying in the DLL as plain text, and the clear copy is wiped once the SDK has
 // it. (That keeps it out of casual view; it is not, and cannot be, secret from a
@@ -29,9 +30,7 @@
 #include "ZimoKey.private.h"            // #define ZIMO_APP_KEY "..." (Stereo Loom's own)
 #define ZIMO_KEY_KIND 1
 #else
-// Zondision's evaluation key, from their SDK sample (expires 2027-01-01).
-#define ZIMO_APP_KEY "2PWjTduaSJjYBxoAtXshzIZWGh0LJ6Au-z2d_08_f81300ee263843b6-25ab3c9933b64075aa46135eba4bb782"
-#define ZIMO_KEY_KIND 0
+#define ZIMO_KEY_KIND 0                 // (Zondision's evaluation key: below, scrambled)
 #endif
 
 namespace
@@ -52,7 +51,30 @@ namespace
             if (outSize) out[(N < outSize ? N : outSize) - 1] = '\0';
         }
     };
+#if ZIMO_KEY_KIND
     constexpr Scrambled<sizeof(ZIMO_APP_KEY)> kKey(ZIMO_APP_KEY);
+#else
+    // Zondision's evaluation key, from their SDK sample (expires 2027-01-01), as
+    // Scrambled holds it: each byte (and the closing 0) XORed with KeyByte(i).
+    struct ScrambledBytes
+    {
+        static constexpr unsigned char d[] = {
+            0x95, 0xCA, 0x8A, 0x7A, 0x07, 0xF2, 0xBC, 0x6D, 0x47, 0x93, 0xF4, 0x3A, 0x62, 0x9D, 0xC5, 0x2E,
+            0xB5, 0x44, 0x28, 0xFE, 0xAF, 0x59, 0x75, 0x3D, 0x49, 0x2B, 0xB4, 0x95, 0x50, 0x69, 0xD1, 0xA0,
+            0x46, 0x6C, 0xE3, 0xF8, 0x00, 0x2A, 0xFD, 0xDF, 0x8E, 0x9D, 0x53, 0x6C, 0x2C, 0xE9, 0xF3, 0x36,
+            0xC7, 0x1E, 0x5C, 0x9A, 0xD5, 0x17, 0x39, 0xA8, 0xAF, 0x7D, 0x3D, 0xB4, 0xF4, 0x60, 0x7F, 0xE0,
+            0x06, 0x31, 0xF6, 0xEA, 0x7D, 0x3A, 0xE1, 0xA3, 0x89, 0x90, 0x57, 0x7F, 0xBE, 0xFC, 0x31, 0x72,
+            0x5C, 0x06, 0xC2, 0xDA, 0x4F, 0x0A, 0x60, 0xAA, 0x84, 0x7B,
+        };
+        void Into(char* out, size_t outSize) const
+        {
+            constexpr size_t N = sizeof(d);
+            for (size_t i = 0; i < N && i < outSize; ++i) out[i] = (char)(d[i] ^ KeyByte(i));
+            if (outSize) out[(N < outSize ? N : outSize) - 1] = '\0';
+        }
+    };
+    constexpr ScrambledBytes kKey{};
+#endif
 
     // ---- The SDK, loaded at run time ----------------------------------------
     HMODULE g_dll = nullptr;
